@@ -1,0 +1,355 @@
+// DBL HRM — Prisma schema (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  HR_MANAGER
+  MANAGEMENT
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum EmployeeSource {
+  ZINGHR
+  MANUAL
+}
+
+enum SeatCategory {
+  OFFICER
+  STAFF
+  WORKER
+}
+
+enum RequisitionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PROFILE_GENERATED
+  POSTED
+}
+
+enum RequirementType {
+  EXISTING
+  NEW
+}
+
+enum RequisitionSource {
+  FACTORY
+  HO
+}
+
+enum Priority {
+  TOP
+  MODERATE
+  ORDINARY
+}
+
+enum EmploymentNature {
+  PERMANENT
+  TEMPORARY
+  CONTRACTUAL
+}
+
+enum ComputerRequirement {
+  NOT_APPLICABLE
+  DESKTOP
+  LAPTOP
+}
+
+enum SeatingArrangement {
+  EXISTING
+  NEW
+}
+
+enum ApprovalRole {
+  DEPARTMENT_HEAD
+  FACTORY_HR
+  SBU_HEAD
+  CORPORATE_HR
+  CHRO
+}
+
+enum StepStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  INFO_REQUESTED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+  NEED_MORE_INFO
+  ESCALATED
+}
+
+/// GLOBAL roles apply org-wide; UNIT roles are scoped to specific units.
+enum RoleScope {
+  GLOBAL
+  UNIT
+}
+
+// ---------------------------------------------------------------------------
+// Identity & people
+// ---------------------------------------------------------------------------
+
+model User {
+  id              String           @id @default(cuid())
+  employeeCode    String           @unique @map("employee_code")
+  name            String
+  email           String?
+  phone           String?
+  passwordHash    String           @map("password_hash")
+  role            UserRole         @default(EMPLOYEE)
+  status          UserStatus       @default(ACTIVE)
+  employee        Employee?
+  roleAssignments RoleAssignment[]
+  notifications   Notification[]
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+/// In-app notification, delivered live over websockets and persisted for the bell.
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  message   String
+  /// Optional frontend route to open, e.g. /requisitions/:id
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+/// Dynamic, configurable access role (e.g. Factory HR, Department Head, CHRO).
+model Role {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  name        String
+  description String?
+  scope       RoleScope        @default(UNIT)
+  /// System roles are seeded and cannot be deleted.
+  isSystem    Boolean          @default(false) @map("is_system")
+  assignments RoleAssignment[]
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  @@map("roles")
+}
+
+/// Grants a user a role, optionally scoped to a unit (null = all units / global).
+model RoleAssignment {
+  id        String   @id @default(cuid())
+  roleId    String   @map("role_id")
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unitId    String?  @map("unit_id")
+  unit      Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([roleId, userId, unitId])
+  @@index([userId])
+  @@map("role_assignments")
+}
+
+/// Organizational profile, primarily fed by the ZingHR daily sync.
+model Employee {
+  id              String         @id @default(cuid())
+  userId          String         @unique @map("user_id")
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeCode    String         @map("employee_code")
+  designation     String?
+  department      String?
+  section         String?
+  grade           String?
+  category        String?
+  unitName        String?        @map("unit_name")
+  unitId          String?        @map("unit_id")
+  unit            Unit?          @relation(fields: [unitId], references: [id])
+  location        String?
+  gender          String?
+  dateOfBirth     DateTime?      @map("date_of_birth")
+  joiningDate     DateTime?      @map("joining_date")
+  exitDate        DateTime?      @map("exit_date")
+  lineManagerName String?        @map("line_manager_name")
+  lineManagerCode String?        @map("line_manager_code")
+  source          EmployeeSource @default(MANUAL)
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@index([unitId])
+  @@index([department])
+  @@map("employees")
+}
+
+// ---------------------------------------------------------------------------
+// Unit configuration → drives the organogram
+// ---------------------------------------------------------------------------
+
+model Unit {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  isActive        Boolean          @default(true) @map("is_active")
+  departments     Department[]
+  positions       Position[]
+  employees       Employee[]
+  roleAssignments RoleAssignment[]
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("units")
+}
+
+model Department {
+  id        String     @id @default(cuid())
+  unitId    String     @map("unit_id")
+  unit      Unit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  name      String
+  positions Position[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  @@unique([unitId, name])
+  @@map("departments")
+}
+
+/// A sanctioned seat in the organogram (unit + department + designation).
+model Position {
+  id           String       @id @default(cuid())
+  unitId       String       @map("unit_id")
+  unit         Unit         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  departmentId String       @map("department_id")
+  department   Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  designation  String
+  category     SeatCategory @default(OFFICER)
+  sanctioned   Int          @default(0)
+  /// Currently occupied seats (manually maintained). vacant = sanctioned − filled.
+  filled       Int          @default(0)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@unique([unitId, departmentId, designation])
+  @@map("positions")
+}
+
+// ---------------------------------------------------------------------------
+// Requisition (Phase 1)
+// ---------------------------------------------------------------------------
+
+model Requisition {
+  id                 String                @id @default(cuid())
+  code               String                @unique
+  designation        String
+  requirementType    RequirementType       @map("requirement_type")
+  source             RequisitionSource
+  requiredPosts      Int                   @map("required_posts")
+  totalVacantPosts   Int                   @map("total_vacant_posts")
+  unitFactory        String                @map("unit_factory")
+  department         String
+  placeOfPosting     String                @map("place_of_posting")
+  vacantDate         DateTime?             @map("vacant_date")
+  whenNeededDate     DateTime?             @map("when_needed_date")
+  priority           Priority              @default(MODERATE)
+  employmentNature   EmploymentNature      @default(PERMANENT) @map("employment_nature")
+  contractualPurpose String?               @map("contractual_purpose")
+  jobDescription     String                @map("job_description")
+  education          String
+  experience         String
+  others             String?
+  computer           ComputerRequirement   @default(NOT_APPLICABLE)
+  computerReason     String?               @map("computer_reason")
+  seating            SeatingArrangement    @default(EXISTING)
+  preferredSources   String[]              @map("preferred_sources")
+  status             RequisitionStatus     @default(PENDING_APPROVAL)
+  roleProfile        Json?                 @map("role_profile")
+  posting            Json?
+  raisedBy           String?               @map("raised_by")
+  raisedById         String?               @map("raised_by_id")
+  approvalSteps      ApprovalStep[]
+  activities         RequisitionActivity[]
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([unitFactory])
+  @@map("requisitions")
+}
+
+model ApprovalStep {
+  id            String       @id @default(cuid())
+  requisitionId String       @map("requisition_id")
+  requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  orderIndex    Int          @map("order_index")
+  role          ApprovalRole
+  title         String
+  subtitle      String
+  assignee      String       @default("")
+  status        StepStatus   @default(PENDING)
+  note          String       @default("")
+  actedAt       DateTime?    @map("acted_at")
+
+  @@unique([requisitionId, orderIndex])
+  @@map("approval_steps")
+}
+
+model RequisitionActivity {
+  id            String           @id @default(cuid())
+  requisitionId String           @map("requisition_id")
+  requisition   Requisition      @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  actor         String
+  action        ApprovalDecision
+  note          String           @default("")
+  at            DateTime         @default(now())
+
+  @@index([requisitionId])
+  @@map("requisition_activities")
+}
+
+// ---------------------------------------------------------------------------
+// Integration bookkeeping
+// ---------------------------------------------------------------------------
+
+model SyncLog {
+  id         String    @id @default(cuid())
+  source     String    @default("zinghr")
+  total      Int       @default(0)
+  processed  Int       @default(0)
+  inserted   Int       @default(0)
+  updated    Int       @default(0)
+  skipped    Int       @default(0)
+  failed     Int       @default(0)
+  /// running | success | failed
+  status     String    @default("running")
+  message    String?
+  /// Terminal-style log lines streamed to the UI.
+  logs       String[]
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+
+  @@map("sync_logs")
+}

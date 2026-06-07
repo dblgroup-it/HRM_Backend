@@ -1,0 +1,205 @@
+import { PrismaClient, SeatCategory } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
+
+const prisma = new PrismaClient();
+
+interface SeatSeed {
+  designation: string;
+  sanctioned: number;
+  filled?: number;
+  category?: SeatCategory;
+}
+interface DeptSeed {
+  name: string;
+  seats: SeatSeed[];
+}
+interface UnitSeed {
+  name: string;
+  departments: DeptSeed[];
+}
+
+const UNITS: UnitSeed[] = [
+  {
+    name: 'Jinnat Textile Mills Ltd.',
+    departments: [
+      {
+        name: 'Production & QC',
+        seats: [
+          { designation: 'Assistant Production Officer', sanctioned: 6, filled: 3 },
+          { designation: 'Production Officer', sanctioned: 6, filled: 6 },
+          { designation: 'Senior Officer - Production', sanctioned: 4, filled: 4 },
+          { designation: 'Machine Operator', sanctioned: 159, filled: 156, category: 'WORKER' },
+        ],
+      },
+      {
+        name: 'Quality',
+        seats: [
+          { designation: 'Quality Officer', sanctioned: 4, filled: 4 },
+          { designation: 'Quality Assistant Manager', sanctioned: 2, filled: 1 },
+        ],
+      },
+      {
+        name: 'Maintenance',
+        seats: [{ designation: 'Maintenance Engineer', sanctioned: 3 }],
+      },
+      {
+        name: 'Human Resources',
+        seats: [{ designation: 'HR Officer', sanctioned: 3 }],
+      },
+      {
+        name: 'IT & Systems',
+        seats: [{ designation: 'IT Officer', sanctioned: 2 }],
+      },
+    ],
+  },
+  {
+    name: 'Jinnat Apparels Ltd',
+    departments: [
+      {
+        name: 'Merchandising',
+        seats: [
+          { designation: 'Senior Merchandiser', sanctioned: 4 },
+          { designation: 'Merchandiser', sanctioned: 8 },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'DBL Group — Head Office',
+    departments: [
+      {
+        name: 'Human Resources',
+        seats: [{ designation: 'HR Business Partner', sanctioned: 4 }],
+      },
+      {
+        name: 'Finance & Accounts',
+        seats: [{ designation: 'Financial Analyst', sanctioned: 3 }],
+      },
+    ],
+  },
+];
+
+// A few employees so organogram "filled" counts are meaningful.
+const EMPLOYEES = [
+  { code: '151001', name: 'Tanvir Ahmed', unit: 'Jinnat Textile Mills Ltd.', dept: 'Production & QC', designation: 'Assistant Production Officer' },
+  { code: '151002', name: 'Nusrat Jahan', unit: 'Jinnat Textile Mills Ltd.', dept: 'Production & QC', designation: 'Assistant Production Officer' },
+  { code: '151003', name: 'Rafiul Islam', unit: 'Jinnat Textile Mills Ltd.', dept: 'Production & QC', designation: 'Assistant Production Officer' },
+  { code: '151004', name: 'Sabbir Khan', unit: 'Jinnat Textile Mills Ltd.', dept: 'Quality', designation: 'Quality Officer' },
+];
+
+async function main() {
+  console.log('Seeding…');
+
+  // Admin (matches the frontend demo login).
+  const adminPass = await bcrypt.hash('password123', 10);
+  await prisma.user.upsert({
+    where: { employeeCode: 'ADMIN-001' },
+    update: {},
+    create: {
+      employeeCode: 'ADMIN-001',
+      name: 'Ayesha Rahman',
+      email: 'admin@dbl-group.com',
+      passwordHash: adminPass,
+      role: 'ADMIN',
+    },
+  });
+
+  // Access-control roles (dynamic, but seed the standard ones).
+  const ROLES = [
+    { key: 'super_user', name: 'Super User', scope: 'GLOBAL', description: 'Full system access.' },
+    { key: 'chro', name: 'CHRO', scope: 'GLOBAL', description: 'Chief Human Resources Officer.' },
+    { key: 'corporate_hr', name: 'Corporate HR', scope: 'GLOBAL', description: 'Corporate HR — final approver.' },
+    { key: 'factory_hr', name: 'Factory HR', scope: 'UNIT', description: 'Unit / factory HR.' },
+    { key: 'department_head', name: 'Department / Division Head', scope: 'UNIT', description: 'Raises and signs requisitions.' },
+    { key: 'sbu_head', name: 'SBU Head', scope: 'UNIT', description: 'Strategic Business Unit head.' },
+  ] as const;
+  for (const r of ROLES) {
+    await prisma.role.upsert({
+      where: { key: r.key },
+      update: { name: r.name, scope: r.scope, description: r.description },
+      create: { ...r, isSystem: true },
+    });
+  }
+
+  // Units → departments → positions.
+  for (const unit of UNITS) {
+    const createdUnit = await prisma.unit.upsert({
+      where: { name: unit.name },
+      update: {},
+      create: { name: unit.name },
+    });
+
+    for (const dept of unit.departments) {
+      const createdDept = await prisma.department.upsert({
+        where: { unitId_name: { unitId: createdUnit.id, name: dept.name } },
+        update: {},
+        create: { unitId: createdUnit.id, name: dept.name },
+      });
+
+      for (const seat of dept.seats) {
+        await prisma.position.upsert({
+          where: {
+            unitId_departmentId_designation: {
+              unitId: createdUnit.id,
+              departmentId: createdDept.id,
+              designation: seat.designation,
+            },
+          },
+          update: { sanctioned: seat.sanctioned, filled: seat.filled ?? 0 },
+          create: {
+            unitId: createdUnit.id,
+            departmentId: createdDept.id,
+            designation: seat.designation,
+            category: seat.category ?? 'OFFICER',
+            sanctioned: seat.sanctioned,
+            filled: seat.filled ?? 0,
+          },
+        });
+      }
+    }
+  }
+
+  // Employees.
+  for (const emp of EMPLOYEES) {
+    const unit = await prisma.unit.findUnique({ where: { name: emp.unit } });
+    const pass = await bcrypt.hash(emp.code, 10);
+    const user = await prisma.user.upsert({
+      where: { employeeCode: emp.code },
+      update: { name: emp.name },
+      create: {
+        employeeCode: emp.code,
+        name: emp.name,
+        passwordHash: pass,
+        role: 'MANAGEMENT',
+      },
+    });
+    await prisma.employee.upsert({
+      where: { userId: user.id },
+      update: {
+        designation: emp.designation,
+        department: emp.dept,
+        unitName: emp.unit,
+        unitId: unit?.id,
+        source: 'MANUAL',
+      },
+      create: {
+        userId: user.id,
+        employeeCode: emp.code,
+        designation: emp.designation,
+        department: emp.dept,
+        unitName: emp.unit,
+        unitId: unit?.id,
+        source: 'MANUAL',
+      },
+    });
+  }
+
+  console.log('Seed complete.');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(() => prisma.$disconnect());
