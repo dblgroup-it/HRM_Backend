@@ -106,6 +106,16 @@ enum RoleScope {
   UNIT
 }
 
+/// Candidate pipeline stage (Phase 2). Mirrors the Drive subfolders.
+enum CandidateStage {
+  APPLIED
+  SHORTLISTED
+  INTERVIEW
+  FINAL
+  SELECTED
+  REJECTED
+}
+
 // ---------------------------------------------------------------------------
 // Identity & people
 // ---------------------------------------------------------------------------
@@ -290,14 +300,39 @@ model Requisition {
   posting            Json?
   raisedBy           String?               @map("raised_by")
   raisedById         String?               @map("raised_by_id")
+  /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.
+  drive              Json?
   approvalSteps      ApprovalStep[]
   activities         RequisitionActivity[]
+  candidates         Candidate[]
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
 
   @@index([status])
   @@index([unitFactory])
   @@map("requisitions")
+}
+
+/// A CV / applicant against a requisition (Phase 2 — CV collection).
+model Candidate {
+  id            String         @id @default(cuid())
+  requisitionId String         @map("requisition_id")
+  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  name          String
+  email         String?
+  phone         String?
+  /// Where the CV came from: drive | email | manual | upload
+  source        String         @default("manual")
+  stage         CandidateStage @default(APPLIED)
+  /// Google Drive file id + view link for the CV document.
+  cvFileId      String?        @map("cv_file_id")
+  cvUrl         String?        @map("cv_url")
+  notes         String?
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  @@index([requisitionId, stage])
+  @@map("candidates")
 }
 
 model ApprovalStep {

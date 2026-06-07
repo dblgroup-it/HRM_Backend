@@ -18,6 +18,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { OrganogramService } from '../organogram/organogram.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
+import { RecruitmentService } from '../candidates/recruitment.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
@@ -31,6 +32,7 @@ import { buildChainSteps, synthesizeRoleProfile } from './requisition.workflow';
 const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
   activities: { orderBy: { at: 'asc' } },
+  candidates: { select: { stage: true } },
 } satisfies Prisma.RequisitionInclude;
 
 type RequisitionFull = Prisma.RequisitionGetPayload<{
@@ -44,6 +46,7 @@ export class RequisitionService {
     private readonly organogram: OrganogramService,
     private readonly permissions: PermissionsService,
     private readonly notifications: NotificationsService,
+    private readonly recruitment: RecruitmentService,
   ) {}
 
   async create(
@@ -528,6 +531,10 @@ export class RequisitionService {
       },
       include: reqWithRelations,
     });
+    // Spin up the Google Drive recruitment workspace (folders + CV link) so the
+    // requisition is ready to collect CVs the moment it's published.
+    const drive = await this.recruitment.ensureWorkspace(updated);
+    if (drive) updated.drive = drive as unknown as Prisma.JsonValue;
     const serialized = serialize(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'posted',
@@ -612,6 +619,24 @@ function low(value: string): string {
   return value.toLowerCase();
 }
 
+/** Per-stage candidate counts for a requisition (Phase 2 pipeline). */
+function candidateStats(rows: { stage: string }[]) {
+  const s = {
+    applied: 0,
+    shortlisted: 0,
+    interview: 0,
+    final: 0,
+    selected: 0,
+    rejected: 0,
+    total: rows.length,
+  };
+  for (const r of rows) {
+    const key = r.stage.toLowerCase() as keyof typeof s;
+    if (key !== 'total' && key in s) s[key] += 1;
+  }
+  return s;
+}
+
 function serialize(req: RequisitionFull) {
   return {
     id: req.id,
@@ -655,6 +680,8 @@ function serialize(req: RequisitionFull) {
     })),
     roleProfile: req.roleProfile ?? null,
     posting: req.posting ?? null,
+    drive: req.drive ?? null,
+    candidateStats: candidateStats(req.candidates),
     raisedBy: req.raisedBy ?? '',
     createdAt: req.createdAt.toISOString(),
     updatedAt: req.updatedAt.toISOString(),

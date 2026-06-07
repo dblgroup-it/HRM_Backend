@@ -14,7 +14,9 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { UnitsModule } from './modules/units/units.module';
 import { OrganogramModule } from './modules/organogram/organogram.module';
 import { RequisitionModule } from './modules/requisition/requisition.module';
+import { CandidatesModule } from './modules/candidates/candidates.module';
 import { ZingHrModule } from './modules/integrations/zinghr/zinghr.module';
+import { GoogleModule } from './modules/integrations/google/google.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 
@@ -29,7 +31,9 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     UnitsModule,
     OrganogramModule,
     RequisitionModule,
+    CandidatesModule,
     ZingHrModule,
+    GoogleModule,
     RbacModule,
     RealtimeModule,
   ],

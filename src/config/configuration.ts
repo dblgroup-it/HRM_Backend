@@ -15,6 +15,19 @@ export interface AppConfig {
     syncCron: string;
     syncEnabled: boolean;
   };
+  google: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    refreshToken: string;
+    rootFolderId: string;
+    rootFolderName: string;
+  };
+  mail: {
+    user: string;
+    appPassword: string;
+    from: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -33,5 +46,21 @@ export default (): AppConfig => ({
     employeeCodePrefix: process.env.ZINGHR_EMPLOYEE_CODE_PREFIX ?? '151',
     syncCron: process.env.ZINGHR_SYNC_CRON ?? '36 20 * * *',
     syncEnabled: (process.env.ZINGHR_SYNC_ENABLED ?? 'true') === 'true',
+  },
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+    redirectUri:
+      process.env.GOOGLE_OAUTH_REDIRECT_URI ??
+      'http://localhost:4000/api/integrations/google/oauth/callback',
+    refreshToken: process.env.GOOGLE_REFRESH_TOKEN ?? '',
+    rootFolderId: process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID ?? '',
+    rootFolderName:
+      process.env.GOOGLE_DRIVE_ROOT_FOLDER_NAME ?? 'DBL HRM Recruitment',
+  },
+  mail: {
+    user: process.env.MAIL_USER ?? '',
+    appPassword: (process.env.MAIL_APP_PASSWORD ?? '').replace(/\s+/g, ''),
+    from: process.env.MAIL_FROM ?? process.env.MAIL_USER ?? '',
   },
 });
