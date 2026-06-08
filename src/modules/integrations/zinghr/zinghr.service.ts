@@ -59,7 +59,7 @@ export class ZingHrService implements OnModuleInit {
     }
     this.running = true;
     const log = await this.prisma.syncLog.create({
-      data: { source: 'zinghr', status: 'running' },
+      data: { source: 'zinghr', status: 'running', logs: [] },
     });
 
     // Fire-and-forget — progress is written to the SyncLog row as it goes.

@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import { User } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { buildAvatarUrl } from '../../common/avatar.util';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
@@ -73,7 +74,7 @@ export class AuthService {
       jobTitle: profile?.designation ?? null,
       department: profile?.department ?? null,
       unit: profile?.unitName ?? null,
-      avatarUrl: null,
+      avatarUrl: buildAvatarUrl(user.id, user.avatarFileId),
     };
   }
 }

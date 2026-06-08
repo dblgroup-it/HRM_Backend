@@ -122,6 +122,20 @@ export class DriveService {
     };
   }
 
+  /** Stream a file's bytes + its real mime type (used by the avatar proxy). */
+  async getFileMedia(
+    fileId: string,
+  ): Promise<{ stream: Readable; mimeType: string }> {
+    const api = this.api();
+    const meta = await api.files.get({ fileId, fields: 'mimeType' });
+    const mimeType = meta.data.mimeType ?? 'application/octet-stream';
+    const res = await api.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' },
+    );
+    return { stream: res.data as unknown as Readable, mimeType };
+  }
+
   async uploadFile(
     parentId: string,
     file: { name: string; mimeType: string; buffer: Buffer },

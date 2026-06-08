@@ -16,7 +16,11 @@ import {
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
 import { CandidatesService, type UploadedCv } from './candidates.service';
-import { CreateCandidateDto, UpdateCandidateDto } from './dto/candidate.dto';
+import {
+  CreateCandidateDto,
+  EmailCandidateDto,
+  UpdateCandidateDto,
+} from './dto/candidate.dto';
 
 /** 10 MB cap per CV upload. */
 const CV_UPLOAD = { limits: { fileSize: 10 * 1024 * 1024 } };
@@ -73,6 +77,15 @@ export class CandidatesController {
     @UploadedFile() cv: UploadedCv,
   ) {
     return this.candidates.uploadCv(id, user.id, cv);
+  }
+
+  @Post('candidates/:id/email')
+  email(
+    @Param('id') id: string,
+    @Body() dto: EmailCandidateDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.candidates.emailCandidate(id, user.id, dto);
   }
 
   @Delete('candidates/:id')

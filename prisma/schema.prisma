@@ -129,6 +129,8 @@ model User {
   passwordHash    String           @map("password_hash")
   role            UserRole         @default(EMPLOYEE)
   status          UserStatus       @default(ACTIVE)
+  /// Google Drive file id of the user's profile picture (served via the avatar proxy).
+  avatarFileId    String?          @map("avatar_file_id")
   employee        Employee?
   roleAssignments RoleAssignment[]
   notifications   Notification[]
