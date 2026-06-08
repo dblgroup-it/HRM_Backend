@@ -112,11 +112,15 @@ export class UnitsService {
         unitId: department.unitId,
         departmentId,
         designation: dto.designation,
+        section: dto.section?.trim() || null,
         category: dto.category ?? 'OFFICER',
         sanctioned: dto.sanctioned,
         filled: dto.filled ?? 0,
       },
       update: {
+        ...(dto.section !== undefined
+          ? { section: dto.section.trim() || null }
+          : {}),
         category: dto.category ?? 'OFFICER',
         sanctioned: dto.sanctioned,
         filled: dto.filled ?? 0,
@@ -132,6 +136,9 @@ export class UnitsService {
         data: {
           ...(dto.designation !== undefined
             ? { designation: dto.designation }
+            : {}),
+          ...(dto.section !== undefined
+            ? { section: dto.section.trim() || null }
             : {}),
           ...(dto.category !== undefined ? { category: dto.category } : {}),
           ...(dto.sanctioned !== undefined

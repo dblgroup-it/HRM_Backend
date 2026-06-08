@@ -19,6 +19,7 @@ import { OrganogramService } from '../organogram/organogram.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
+import { DriveService } from '../integrations/google/drive.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
@@ -47,6 +48,7 @@ export class RequisitionService {
     private readonly permissions: PermissionsService,
     private readonly notifications: NotificationsService,
     private readonly recruitment: RecruitmentService,
+    private readonly drive: DriveService,
   ) {}
 
   async create(
@@ -56,6 +58,9 @@ export class RequisitionService {
     await this.ensureUnitAccess(raiser.id, dto.unitFactory);
 
     // Authoritative New vs Replacement decision from the organogram.
+    // NEW (needs SBU for factory) when the requested posts exceed the vacant
+    // sanctioned seats — i.e. you're asking for headcount beyond what's vacant.
+    // Replacement only when required ≤ vacant.
     const lookup = await this.organogram.lookup(
       dto.unitFactory,
       dto.department,
@@ -63,7 +68,7 @@ export class RequisitionService {
       raiser.id,
     );
     const requirementType =
-      lookup.requirement === 'existing' ? 'EXISTING' : 'NEW';
+      dto.requiredPosts > lookup.vacant ? 'NEW' : 'EXISTING';
     const source = dto.source.toUpperCase() as RequisitionSource;
 
     const steps = buildChainSteps(requirementType, source, {
@@ -100,6 +105,7 @@ export class RequisitionService {
         totalVacantPosts: dto.totalVacantPosts,
         unitFactory: dto.unitFactory,
         department: dto.department,
+        section: dto.section ?? null,
         placeOfPosting: dto.placeOfPosting,
         vacantDate: toDate(dto.vacantDate),
         whenNeededDate: toDate(dto.whenNeededDate),
@@ -551,6 +557,86 @@ export class RequisitionService {
     return serialized;
   }
 
+  // --- attachments ---------------------------------------------------------
+
+  /** Upload a supporting file into the requisition's Drive "Attachments" folder. */
+  async addAttachment(
+    id: string,
+    file:
+      | { originalname: string; mimetype: string; buffer: Buffer; size: number }
+      | undefined,
+    actor: { id: string; name: string },
+  ) {
+    if (!file) throw new BadRequestException('No file provided');
+    const req = await this.load(id, actor.id);
+    const ws = await this.recruitment.ensureWorkspace(req);
+    if (!ws) {
+      throw new BadRequestException(
+        'Google Drive is not connected, so attachments can’t be stored',
+      );
+    }
+    const folder = await this.drive.ensureFolder(
+      '00 Requisition Attachments',
+      ws.rootFolderId,
+    );
+    const uploaded = await this.drive.uploadFile(folder, {
+      name: file.originalname,
+      mimeType: file.mimetype,
+      buffer: file.buffer,
+    });
+    const attachments = [
+      ...readAttachments(req),
+      {
+        name: file.originalname,
+        fileId: uploaded.id,
+        url: uploaded.url,
+        size: file.size,
+        uploadedBy: actor.name,
+        uploadedAt: new Date().toISOString(),
+      },
+    ];
+    const updated = await this.prisma.requisition.update({
+      where: { id },
+      data: { attachments: attachments as unknown as Prisma.InputJsonValue },
+      include: reqWithRelations,
+    });
+    const serialized = serialize(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'attachment_added',
+      record: serialized,
+    });
+    return serialized;
+  }
+
+  async removeAttachment(
+    id: string,
+    fileId: string,
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.load(id, actor.id);
+    const list = readAttachments(req);
+    if (!list.some((a) => a.fileId === fileId)) {
+      throw new NotFoundException('Attachment not found');
+    }
+    try {
+      await this.drive.discardFile(fileId);
+    } catch {
+      // best-effort — still remove the reference
+    }
+    const next = list.filter((a) => a.fileId !== fileId);
+    const updated = await this.prisma.requisition.update({
+      where: { id },
+      data: { attachments: next as unknown as Prisma.InputJsonValue },
+      include: reqWithRelations,
+    });
+    const serialized = serialize(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'attachment_removed',
+      record: serialized,
+    });
+    return serialized;
+  }
+
   // --- internals ----------------------------------------------------------
 
   private async load(id: string, userId?: string): Promise<RequisitionFull> {
@@ -648,6 +734,7 @@ function serialize(req: RequisitionFull) {
     totalVacantPosts: req.totalVacantPosts,
     unitFactory: req.unitFactory,
     department: req.department,
+    section: req.section ?? '',
     placeOfPosting: req.placeOfPosting,
     vacantDate: req.vacantDate?.toISOString() ?? null,
     whenNeededDate: req.whenNeededDate?.toISOString() ?? null,
@@ -681,6 +768,7 @@ function serialize(req: RequisitionFull) {
     roleProfile: req.roleProfile ?? null,
     posting: req.posting ?? null,
     drive: req.drive ?? null,
+    attachments: Array.isArray(req.attachments) ? req.attachments : [],
     candidateStats: candidateStats(req.candidates),
     raisedBy: req.raisedBy ?? '',
     createdAt: req.createdAt.toISOString(),
@@ -692,4 +780,19 @@ function toDate(value?: string): Date | null {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+interface RequisitionAttachment {
+  name: string;
+  fileId: string;
+  url: string;
+  size: number;
+  uploadedBy?: string;
+  uploadedAt: string;
+}
+
+function readAttachments(req: RequisitionFull): RequisitionAttachment[] {
+  return Array.isArray(req.attachments)
+    ? (req.attachments as unknown as RequisitionAttachment[])
+    : [];
 }

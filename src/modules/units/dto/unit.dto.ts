@@ -45,6 +45,10 @@ export class UpsertPositionDto {
   designation!: string;
 
   @IsOptional()
+  @IsString()
+  section?: string;
+
+  @IsOptional()
   @IsEnum(SeatCategory)
   category?: SeatCategory;
 
@@ -65,6 +69,10 @@ export class UpdatePositionDto {
   @IsString()
   @MinLength(2)
   designation?: string;
+
+  @IsOptional()
+  @IsString()
+  section?: string;
 
   @IsOptional()
   @IsEnum(SeatCategory)

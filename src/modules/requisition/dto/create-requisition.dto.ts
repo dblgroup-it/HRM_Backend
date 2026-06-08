@@ -40,7 +40,7 @@ export class CreateRequisitionDto {
 
   @Type(() => Number)
   @IsInt()
-  @Min(1)
+  @Min(0)
   totalVacantPosts!: number;
 
   @IsString()
@@ -50,6 +50,10 @@ export class CreateRequisitionDto {
   @IsString()
   @IsNotEmpty()
   department!: string;
+
+  @IsOptional()
+  @IsString()
+  section?: string;
 
   @IsString()
   @IsNotEmpty()

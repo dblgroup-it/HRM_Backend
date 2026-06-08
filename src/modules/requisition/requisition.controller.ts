@@ -1,12 +1,16 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
   Patch,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 import {
   CurrentUser,
@@ -80,5 +84,32 @@ export class RequisitionController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.requisitionService.post(id, dto, { id: user.id, name: user.name });
+  }
+
+  /** Attach a supporting file (optional). 15 MB cap; stored on Drive. */
+  @Post(':id/attachments')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024 } }))
+  addAttachment(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @UploadedFile()
+    file?: { originalname: string; mimetype: string; buffer: Buffer; size: number },
+  ) {
+    return this.requisitionService.addAttachment(id, file, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  @Delete(':id/attachments/:fileId')
+  removeAttachment(
+    @Param('id') id: string,
+    @Param('fileId') fileId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.removeAttachment(id, fileId, {
+      id: user.id,
+      name: user.name,
+    });
   }
 }

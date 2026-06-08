@@ -258,6 +258,8 @@ model Position {
   departmentId String       @map("department_id")
   department   Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   designation  String
+  /// Optional section within the department (e.g. IT Support under IT).
+  section      String?
   category     SeatCategory @default(OFFICER)
   sanctioned   Int          @default(0)
   /// Currently occupied seats (manually maintained). vacant = sanctioned − filled.
@@ -283,6 +285,7 @@ model Requisition {
   totalVacantPosts   Int                   @map("total_vacant_posts")
   unitFactory        String                @map("unit_factory")
   department         String
+  section            String?
   placeOfPosting     String                @map("place_of_posting")
   vacantDate         DateTime?             @map("vacant_date")
   whenNeededDate     DateTime?             @map("when_needed_date")
@@ -304,6 +307,8 @@ model Requisition {
   raisedById         String?               @map("raised_by_id")
   /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.
   drive              Json?
+  /// Optional supporting files (JD, approvals, etc.) — array of { name, fileId, url, size, uploadedAt }.
+  attachments        Json?
   approvalSteps      ApprovalStep[]
   activities         RequisitionActivity[]
   candidates         Candidate[]
