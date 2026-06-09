@@ -28,6 +28,14 @@ export interface AppConfig {
     appPassword: string;
     from: string;
   };
+  ai: {
+    provider: string;
+    gemini: { apiKey: string; model: string };
+    anthropic: { apiKey: string; model: string };
+  };
+  it: {
+    webhookUrl: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -62,5 +70,20 @@ export default (): AppConfig => ({
     user: process.env.MAIL_USER ?? '',
     appPassword: (process.env.MAIL_APP_PASSWORD ?? '').replace(/\s+/g, ''),
     from: process.env.MAIL_FROM ?? process.env.MAIL_USER ?? '',
+  },
+  ai: {
+    provider: process.env.AI_PROVIDER ?? 'gemini',
+    gemini: {
+      apiKey: process.env.GEMINI_API_KEY ?? '',
+      model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+    },
+    anthropic: {
+      apiKey: process.env.ANTHROPIC_API_KEY ?? '',
+      model: process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001',
+    },
+  },
+  it: {
+    // Optional: IT provisioning webhook. When unset, HR enters email/asset id manually.
+    webhookUrl: process.env.IT_WEBHOOK_URL ?? '',
   },
 });

@@ -13,6 +13,7 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
+import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { RecruitmentService } from './recruitment.service';
 import {
@@ -42,8 +43,12 @@ export class CandidatesService {
     private readonly notifications: NotificationsService,
     private readonly drive: DriveService,
     private readonly mail: MailService,
+    private readonly ai: AiGraderService,
     private readonly recruitment: RecruitmentService,
   ) {}
+
+  /** Minimum AI match score (%) to auto-advance a CV to "AI Shortlisted". */
+  private readonly AI_SHORTLIST_THRESHOLD = 60;
 
   // --- workspace -----------------------------------------------------------
 
@@ -52,6 +57,7 @@ export class CandidatesService {
     return {
       connected: this.recruitment.driveConnected(),
       mailConfigured: this.mail.isConfigured(),
+      aiScreening: this.ai.isConfigured(),
       drive: (req.drive as unknown as RequisitionDriveMap | null) ?? null,
     };
   }
@@ -63,6 +69,12 @@ export class CandidatesService {
       throw new ServiceUnavailableException(
         'Google Drive is not connected. Complete the Drive setup first.',
       );
+    }
+    // Safety: ensure the CV folder is private (revoke any legacy public sharing).
+    try {
+      await this.drive.revokeAnyoneAccess(drive.allCvFolderId);
+    } catch {
+      /* best effort — folder may already be private */
     }
     return { connected: true, drive };
   }
@@ -76,6 +88,36 @@ export class CandidatesService {
       orderBy: { createdAt: 'desc' },
     });
     return rows.map(serializeCandidate);
+  }
+
+  /** Suitable-but-not-selected candidates kept for future recall (talent pool). */
+  async listTalentPool(userId: string) {
+    await this.requireRecruitmentRole(userId);
+    const rows = await this.prisma.candidate.findMany({
+      where: { talentPool: true },
+      include: {
+        requisition: {
+          select: {
+            id: true,
+            code: true,
+            designation: true,
+            unitFactory: true,
+            department: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return rows.map((c) => ({
+      ...serializeCandidate(c),
+      requisition: {
+        id: c.requisition.id,
+        code: c.requisition.code,
+        designation: c.requisition.designation,
+        unit: c.requisition.unitFactory,
+        department: c.requisition.department,
+      },
+    }));
   }
 
   /**
@@ -107,6 +149,13 @@ export class CandidatesService {
         })),
       });
       this.notifications.broadcastChange('candidate', reqId, { action: 'synced' });
+
+      // Auto-screen the newly imported CVs in the background.
+      const created = await this.prisma.candidate.findMany({
+        where: { requisitionId: reqId, cvFileId: { in: fresh.map((f) => f.id) } },
+        select: { id: true },
+      });
+      this.autoScreenMany(created.map((c) => c.id), reqId);
     }
 
     const rows = await this.prisma.candidate.findMany({
@@ -152,6 +201,7 @@ export class CandidatesService {
     });
 
     this.notifications.broadcastChange('candidate', reqId, { action: 'created' });
+    if (cvFileId) this.autoScreen(created.id);
     return serializeCandidate(created);
   }
 
@@ -168,6 +218,7 @@ export class CandidatesService {
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.notes !== undefined) data.notes = dto.notes;
+    if (dto.talentPool !== undefined) data.talentPool = dto.talentPool;
 
     if (dto.stage) {
       const stage = dto.stage.toUpperCase() as CandidateStage;
@@ -215,6 +266,8 @@ export class CandidatesService {
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'cv_uploaded',
     });
+    // A CV just arrived — screen it in the background (if still at Applied).
+    if (updated.stage === 'APPLIED') this.autoScreen(updated.id);
     return serializeCandidate(updated);
   }
 
@@ -283,6 +336,182 @@ export class CandidatesService {
     return { sent: true, to: cand.email };
   }
 
+  // --- AI CV screening -----------------------------------------------------
+
+  aiScreeningEnabled(): boolean {
+    return this.ai.isConfigured();
+  }
+
+  /** Screen one candidate's CV against the role (manual / re-screen). */
+  async screenCandidate(id: string, userId: string) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: { requisition: true },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException('AI screening is not configured');
+    }
+    if (!cand.cvFileId) {
+      throw new BadRequestException('This candidate has no CV to screen');
+    }
+    const updated = await this.runScreen(cand);
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'screened',
+    });
+    return serializeCandidate(updated ?? cand);
+  }
+
+  /** Screen every un-screened applied candidate in a requisition. */
+  async screenRequisition(reqId: string, userId: string) {
+    await this.requireReq(reqId, userId);
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException('AI screening is not configured');
+    }
+    const pending = await this.prisma.candidate.findMany({
+      where: {
+        requisitionId: reqId,
+        stage: 'APPLIED',
+        cvFileId: { not: null },
+        screenedAt: null,
+      },
+      include: { requisition: true },
+    });
+
+    let screened = 0;
+    let shortlisted = 0;
+    // Sequential to stay within provider rate limits.
+    for (const c of pending) {
+      try {
+        const u = await this.runScreen(c);
+        if (u) {
+          screened++;
+          if (u.stage === 'AI_SHORTLISTED') shortlisted++;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Screening candidate ${c.id} failed: ${(err as Error).message}`,
+        );
+      }
+    }
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'screened_bulk',
+    });
+    const rows = await this.prisma.candidate.findMany({
+      where: { requisitionId: reqId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return { screened, shortlisted, candidates: rows.map(serializeCandidate) };
+  }
+
+  /** Run the AI screen + persist the score; auto-advance APPLIED → AI_SHORTLISTED. */
+  private async runScreen(
+    cand: Prisma.CandidateGetPayload<{ include: { requisition: true } }>,
+  ): Promise<CandidateRow | null> {
+    if (!cand.cvFileId || !this.ai.isConfigured()) return null;
+    const { buffer, mimeType } = await this.drive.getFileBuffer(cand.cvFileId);
+    const rp = (cand.requisition.roleProfile as {
+      responsibilities?: string[];
+      requirements?: string[];
+    } | null) ?? null;
+
+    const result = await this.ai.screenCv({
+      cvMimeType: mimeType,
+      cvBase64: buffer.toString('base64'),
+      designation: cand.requisition.designation,
+      jobDescription: cand.requisition.jobDescription,
+      education: cand.requisition.education,
+      experience: cand.requisition.experience,
+      others: cand.requisition.others,
+      responsibilities: Array.isArray(rp?.responsibilities)
+        ? rp?.responsibilities
+        : undefined,
+      requirements: Array.isArray(rp?.requirements)
+        ? rp?.requirements
+        : undefined,
+    });
+
+    const data: Prisma.CandidateUpdateInput = {
+      matchScore: result.score,
+      matchSummary: result.summary || null,
+      screenedAt: new Date(),
+    };
+    // Backfill contact details the AI found in the CV — only when we don't
+    // already have them (never overwrite details entered by a person).
+    if (!cand.email && result.email) data.email = result.email;
+    if (!cand.phone && result.phone) data.phone = result.phone;
+    if (cand.stage === 'APPLIED' && result.score >= this.AI_SHORTLIST_THRESHOLD) {
+      data.stage = 'AI_SHORTLISTED';
+      // Move the CV into the "02 AI Shortlisted" Drive folder.
+      const ws =
+        (cand.requisition.drive as unknown as RequisitionDriveMap | null) ?? null;
+      if (ws?.allCvFolderId && cand.cvFileId) {
+        try {
+          await this.drive.moveFile(
+            cand.cvFileId,
+            this.drive.stageFolderId(ws, 'AI_SHORTLISTED'),
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Could not move CV ${cand.cvFileId} to AI Shortlisted: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
+    return this.prisma.candidate.update({ where: { id: cand.id }, data });
+  }
+
+  /** Fire-and-forget screen used right after a CV first arrives. */
+  private autoScreen(candidateId: string): void {
+    if (!this.ai.isConfigured()) return;
+    void (async () => {
+      try {
+        const cand = await this.prisma.candidate.findUnique({
+          where: { id: candidateId },
+          include: { requisition: true },
+        });
+        if (cand?.cvFileId && cand.stage === 'APPLIED') {
+          await this.runScreen(cand);
+          this.notifications.broadcastChange('candidate', cand.requisitionId, {
+            action: 'screened',
+          });
+        }
+      } catch (err) {
+        this.logger.warn(`Auto-screen failed: ${(err as Error).message}`);
+      }
+    })();
+  }
+
+  /**
+   * Background-screen a batch of freshly-imported CVs **sequentially** (to stay
+   * within provider rate limits), broadcasting after each so the pipeline
+   * updates live as scores come in. Fire-and-forget — never blocks the caller.
+   */
+  private autoScreenMany(candidateIds: string[], reqId: string): void {
+    if (!this.ai.isConfigured() || candidateIds.length === 0) return;
+    void (async () => {
+      for (const id of candidateIds) {
+        try {
+          const cand = await this.prisma.candidate.findUnique({
+            where: { id },
+            include: { requisition: true },
+          });
+          if (cand?.cvFileId && cand.stage === 'APPLIED' && !cand.screenedAt) {
+            await this.runScreen(cand);
+            this.notifications.broadcastChange('candidate', reqId, {
+              action: 'screened',
+            });
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Auto-screen (batch) failed for ${id}: ${(err as Error).message}`,
+          );
+        }
+      }
+    })();
+  }
+
   // --- public job application (no auth) ------------------------------------
 
   async publicJobInfo(reqId: string) {
@@ -318,7 +547,7 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    await this.prisma.candidate.create({
+    const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
         name: dto.name,
@@ -330,6 +559,8 @@ export class CandidatesService {
       },
     });
     this.notifications.broadcastChange('candidate', reqId, { action: 'application' });
+    // Auto-screen the fresh CV against the role in the background.
+    this.autoScreen(created.id);
     return { ok: true };
   }
 
@@ -354,6 +585,22 @@ export class CandidatesService {
     if (!allowed) {
       throw new ForbiddenException(
         'Only Corporate HR, CHRO or a super user can access recruitment for this requisition',
+      );
+    }
+  }
+
+  /** Global recruitment role check (for cross-requisition views like talent pool). */
+  private async requireRecruitmentRole(userId: string) {
+    const ok =
+      (await this.permissions.isSuperUser(userId)) ||
+      Boolean(
+        await this.prisma.roleAssignment.findFirst({
+          where: { userId, role: { key: { in: ['corporate_hr', 'chro'] } } },
+        }),
+      );
+    if (!ok) {
+      throw new ForbiddenException(
+        'Only Corporate HR, CHRO or a super user can view the talent pool',
       );
     }
   }
@@ -409,6 +656,10 @@ function serializeCandidate(c: CandidateRow) {
     cvFileId: c.cvFileId,
     cvUrl: c.cvUrl,
     notes: c.notes ?? '',
+    matchScore: c.matchScore,
+    matchSummary: c.matchSummary ?? '',
+    screenedAt: c.screenedAt ? c.screenedAt.toISOString() : null,
+    talentPool: c.talentPool,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   };

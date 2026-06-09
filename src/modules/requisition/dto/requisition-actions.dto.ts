@@ -1,9 +1,11 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -79,6 +81,29 @@ export class ApprovalActionDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+/** Corporate HR's manual edits to the (AI-)generated role profile. */
+export class UpdateRoleProfileDto {
+  @IsString()
+  @MaxLength(2000)
+  summary!: string;
+
+  @IsString()
+  @MaxLength(5000)
+  jobDescription!: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(500, { each: true })
+  @ArrayMaxSize(20)
+  responsibilities!: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(500, { each: true })
+  @ArrayMaxSize(20)
+  requirements!: string[];
 }
 
 export class PostRequisitionDto {

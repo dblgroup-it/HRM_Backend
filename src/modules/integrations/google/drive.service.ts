@@ -86,6 +86,23 @@ export class DriveService {
     });
   }
 
+  /**
+   * Revoke any public ("anyone with the link") access on a file/folder, leaving
+   * it private to the recruitment account. Used to lock down CV folders so
+   * external people can't view or delete each other's CVs.
+   */
+  async revokeAnyoneAccess(fileId: string): Promise<void> {
+    const res = await this.api().permissions.list({
+      fileId,
+      fields: 'permissions(id,type)',
+    });
+    for (const p of res.data.permissions ?? []) {
+      if (p.type === 'anyone' && p.id) {
+        await this.api().permissions.delete({ fileId, permissionId: p.id });
+      }
+    }
+  }
+
   /** Build (idempotently) the full folder tree for a requisition. */
   async createRequisitionTree(input: DriveTreeInput): Promise<RequisitionDriveMap> {
     const root = await this.ensureRootFolder();
@@ -101,19 +118,23 @@ export class DriveService {
 
     // Subfolders are created sequentially to avoid duplicate-name races.
     const allCvFolderId = await this.ensureFolder('01 All CVs', reqFolder);
-    const shortlistedFolderId = await this.ensureFolder('02 Shortlisted', reqFolder);
-    const interviewFolderId = await this.ensureFolder('03 Interview Docs', reqFolder);
-    const finalFolderId = await this.ensureFolder('04 Final Candidate', reqFolder);
-    const joiningFolderId = await this.ensureFolder('05 Selected — Joining Docs', reqFolder);
+    const aiShortlistedFolderId = await this.ensureFolder('02 AI Shortlisted', reqFolder);
+    const shortlistedFolderId = await this.ensureFolder('03 Shortlisted', reqFolder);
+    const interviewFolderId = await this.ensureFolder('04 Interview Docs', reqFolder);
+    const finalFolderId = await this.ensureFolder('05 Final Candidate', reqFolder);
+    const joiningFolderId = await this.ensureFolder('06 Selected — Joining Docs', reqFolder);
 
-    // The All CVs folder doubles as the public collection link.
-    await this.shareAnyoneWithLink(allCvFolderId, 'writer');
+    // The folders stay PRIVATE to the recruitment account — never shared
+    // "anyone with the link". External candidates submit through the secure
+    // Application page (server-side upload), so they can't view or delete other
+    // candidates' CVs.
 
     return {
       rootFolderId: reqFolder,
       rootFolderUrl: this.folderUrl(reqFolder),
       allCvFolderId,
       allCvFolderUrl: this.folderUrl(allCvFolderId),
+      aiShortlistedFolderId,
       shortlistedFolderId,
       interviewFolderId,
       finalFolderId,
@@ -134,6 +155,20 @@ export class DriveService {
       { responseType: 'stream' },
     );
     return { stream: res.data as unknown as Readable, mimeType };
+  }
+
+  /** Download a file's full bytes + real mime type (used by AI doc extraction). */
+  async getFileBuffer(
+    fileId: string,
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    const api = this.api();
+    const meta = await api.files.get({ fileId, fields: 'mimeType' });
+    const mimeType = meta.data.mimeType ?? 'application/octet-stream';
+    const res = await api.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'arraybuffer' },
+    );
+    return { buffer: Buffer.from(res.data as ArrayBuffer), mimeType };
   }
 
   async uploadFile(
@@ -227,6 +262,8 @@ export class DriveService {
   /** Destination folder for a candidate's CV given their pipeline stage. */
   stageFolderId(map: RequisitionDriveMap, stage: CandidateStage): string {
     switch (stage) {
+      case 'AI_SHORTLISTED':
+        return map.aiShortlistedFolderId ?? map.allCvFolderId;
       case 'SHORTLISTED':
         return map.shortlistedFolderId;
       case 'INTERVIEW':

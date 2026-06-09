@@ -15,10 +15,13 @@ import { UnitsModule } from './modules/units/units.module';
 import { OrganogramModule } from './modules/organogram/organogram.module';
 import { RequisitionModule } from './modules/requisition/requisition.module';
 import { CandidatesModule } from './modules/candidates/candidates.module';
+import { AssessmentModule } from './modules/assessment/assessment.module';
+import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { UsersModule } from './modules/users/users.module';
 import { ZingHrModule } from './modules/integrations/zinghr/zinghr.module';
 import { GoogleModule } from './modules/integrations/google/google.module';
 import { MailModule } from './modules/integrations/mail/mail.module';
+import { AiModule } from './modules/integrations/ai/ai.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 
@@ -34,10 +37,13 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     OrganogramModule,
     RequisitionModule,
     CandidatesModule,
+    AssessmentModule,
+    OnboardingModule,
     UsersModule,
     ZingHrModule,
     GoogleModule,
     MailModule,
+    AiModule,
     RbacModule,
     RealtimeModule,
   ],

@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsIn,
   IsOptional,
@@ -69,6 +70,10 @@ export class UpdateCandidateDto {
   @IsOptional()
   @IsIn(STAGES)
   stage?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  talentPool?: boolean;
 }
 
 export class EmailCandidateDto {

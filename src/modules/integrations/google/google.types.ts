@@ -5,9 +5,11 @@
 export interface RequisitionDriveMap {
   rootFolderId: string;
   rootFolderUrl: string;
-  /** 01 All CVs — shared "anyone with link" so it doubles as the collection link. */
+  /** 01 All CVs — private to recruitment; candidates submit via the apply page. */
   allCvFolderId: string;
   allCvFolderUrl: string;
+  /** 02 AI Shortlisted — CVs the AI screen advanced. */
+  aiShortlistedFolderId?: string;
   shortlistedFolderId: string;
   interviewFolderId: string;
   finalFolderId: string;

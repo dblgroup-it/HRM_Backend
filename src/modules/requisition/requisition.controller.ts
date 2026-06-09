@@ -23,6 +23,7 @@ import {
   PostRequisitionDto,
   QueryRequisitionsDto,
   UpdateRequisitionDto,
+  UpdateRoleProfileDto,
 } from './dto/requisition-actions.dto';
 
 @Controller('requisitions')
@@ -72,6 +73,19 @@ export class RequisitionController {
   @Post(':id/role-profile')
   generateRoleProfile(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.requisitionService.generateRoleProfile(id, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  /** Save manual edits to the role profile (Corporate HR / super). */
+  @Patch(':id/role-profile')
+  updateRoleProfile(
+    @Param('id') id: string,
+    @Body() dto: UpdateRoleProfileDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.updateRoleProfile(id, dto, {
       id: user.id,
       name: user.name,
     });

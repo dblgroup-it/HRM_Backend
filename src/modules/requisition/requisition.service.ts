@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -20,6 +21,7 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
 import { DriveService } from '../integrations/google/drive.service';
+import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
@@ -49,7 +51,10 @@ export class RequisitionService {
     private readonly notifications: NotificationsService,
     private readonly recruitment: RecruitmentService,
     private readonly drive: DriveService,
+    private readonly ai: AiGraderService,
   ) {}
+
+  private readonly logger = new Logger(RequisitionService.name);
 
   async create(
     dto: CreateRequisitionDto,
@@ -488,7 +493,7 @@ export class RequisitionService {
       );
     }
     await this.ensureCorporateHrContinuation(req, actor.id);
-    const roleProfile = synthesizeRoleProfile(req);
+    const roleProfile = await this.buildRoleProfile(req);
     const updated = await this.prisma.requisition.update({
       where: { id },
       data: {
@@ -511,6 +516,106 @@ export class RequisitionService {
       });
     }
     return serialized;
+  }
+
+  /** Save Corporate HR's manual edits to the role profile. */
+  async updateRoleProfile(
+    id: string,
+    dto: {
+      summary: string;
+      jobDescription: string;
+      responsibilities: string[];
+      requirements: string[];
+    },
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.load(id, actor.id);
+    if (req.status !== 'APPROVED' && req.status !== 'PROFILE_GENERATED') {
+      throw new BadRequestException(
+        'Role profile can only be edited after full approval',
+      );
+    }
+    await this.ensureCorporateHrContinuation(req, actor.id);
+
+    const clean = (lines: string[]) =>
+      lines.map((l) => l.trim()).filter(Boolean);
+    const roleProfile = {
+      summary: dto.summary.trim(),
+      jobDescription: dto.jobDescription.trim(),
+      responsibilities: clean(dto.responsibilities),
+      requirements: clean(dto.requirements),
+      generatedAt: new Date().toISOString(),
+      generatedBy: 'manual' as const,
+    };
+
+    const updated = await this.prisma.requisition.update({
+      where: { id },
+      data: {
+        roleProfile: roleProfile as unknown as Prisma.InputJsonValue,
+        status: 'PROFILE_GENERATED',
+      },
+      include: reqWithRelations,
+    });
+    const serialized = serialize(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'role_profile_updated',
+      record: serialized,
+    });
+    return serialized;
+  }
+
+  /**
+   * Build the role profile: ask the configured LLM (Gemini/Claude) to write it
+   * from the requisition's details, falling back to a deterministic template
+   * field-by-field if AI is off or returns nothing.
+   */
+  private async buildRoleProfile(req: {
+    designation: string;
+    department: string;
+    unitFactory: string;
+    placeOfPosting: string;
+    jobDescription: string;
+    education: string;
+    experience: string;
+    others: string | null;
+    requiredPosts: number;
+    employmentNature: EmploymentNature;
+  }) {
+    const base = synthesizeRoleProfile(req);
+    if (!this.ai.isConfigured()) {
+      return { ...base, generatedBy: 'template' as const };
+    }
+    try {
+      const ai = await this.ai.generateRoleProfile({
+        designation: req.designation,
+        department: req.department,
+        unitFactory: req.unitFactory,
+        placeOfPosting: req.placeOfPosting,
+        jobDescription: req.jobDescription,
+        education: req.education,
+        experience: req.experience,
+        others: req.others,
+        requiredPosts: req.requiredPosts,
+        employmentNature: String(req.employmentNature).toLowerCase(),
+      });
+      return {
+        summary: ai.summary || base.summary,
+        jobDescription: ai.jobDescription || base.jobDescription,
+        responsibilities: ai.responsibilities.length
+          ? ai.responsibilities
+          : base.responsibilities,
+        requirements: ai.requirements.length
+          ? ai.requirements
+          : base.requirements,
+        generatedAt: new Date().toISOString(),
+        generatedBy: 'ai' as const,
+      };
+    } catch (e) {
+      this.logger.warn(
+        `AI role profile failed, using template: ${(e as Error).message}`,
+      );
+      return { ...base, generatedBy: 'template' as const };
+    }
   }
 
   /** Step 4 — publish to candidate sources. Corporate HR owns this step. */
@@ -709,6 +814,7 @@ function low(value: string): string {
 function candidateStats(rows: { stage: string }[]) {
   const s = {
     applied: 0,
+    ai_shortlisted: 0,
     shortlisted: 0,
     interview: 0,
     final: 0,

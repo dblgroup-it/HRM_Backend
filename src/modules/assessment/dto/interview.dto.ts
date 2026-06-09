@@ -1,0 +1,75 @@
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
+
+export class ScheduleInterviewDto {
+  @IsIn(['first', 'second', 'final'])
+  kind!: string;
+
+  @IsIn(['online', 'offline', 'physical'])
+  mode!: string;
+
+  @IsOptional()
+  @IsString()
+  scheduledAt?: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  panelistUserIds!: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  notifyCandidate?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  notifyPanel?: boolean;
+}
+
+export class UpdateInterviewDto {
+  @IsOptional()
+  @IsIn(['first', 'second', 'final'])
+  kind?: string;
+
+  @IsOptional()
+  @IsIn(['online', 'offline', 'physical'])
+  mode?: string;
+
+  @IsOptional()
+  @IsString()
+  scheduledAt?: string;
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsOptional()
+  @IsIn(['scheduled', 'completed', 'cancelled'])
+  status?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  panelistUserIds?: string[];
+}
+
+export class SubmitEvaluationDto {
+  /** { rubricCriterionId: score } */
+  @IsObject()
+  scores!: Record<string, number>;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  comments?: string;
+}

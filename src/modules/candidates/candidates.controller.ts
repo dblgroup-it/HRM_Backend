@@ -39,6 +39,11 @@ export class CandidatesController {
     return this.candidates.setupWorkspace(reqId, user.id);
   }
 
+  @Get('candidates/talent-pool')
+  talentPool(@CurrentUser() user: AuthUser) {
+    return this.candidates.listTalentPool(user.id);
+  }
+
   @Get('requisitions/:reqId/candidates')
   list(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
     return this.candidates.list(reqId, user.id);
@@ -47,6 +52,18 @@ export class CandidatesController {
   @Post('requisitions/:reqId/candidates/sync-drive')
   syncDrive(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
     return this.candidates.syncFromDrive(reqId, user.id);
+  }
+
+  /** AI-screen all un-screened applied CVs in this requisition. */
+  @Post('requisitions/:reqId/candidates/screen')
+  screenAll(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.screenRequisition(reqId, user.id);
+  }
+
+  /** AI-screen (or re-screen) a single candidate's CV. */
+  @Post('candidates/:id/screen')
+  screen(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.screenCandidate(id, user.id);
   }
 
   @Post('requisitions/:reqId/candidates')

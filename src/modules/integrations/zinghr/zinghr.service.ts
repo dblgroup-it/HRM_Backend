@@ -26,7 +26,25 @@ export class ZingHrService implements OnModuleInit {
     private readonly scheduler: SchedulerRegistry,
   ) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
+    // Heal orphaned runs: a sync that was "running" when the process stopped
+    // (crash / redeploy / dev reload) can never finish, yet it would otherwise
+    // freeze the live-status console forever. On a fresh boot nothing is
+    // actually running, so close any such rows out as interrupted.
+    const healed = await this.prisma.syncLog.updateMany({
+      where: { status: 'running' },
+      data: {
+        status: 'failed',
+        message: 'Interrupted — the server restarted before the sync finished.',
+        finishedAt: new Date(),
+      },
+    });
+    if (healed.count > 0) {
+      this.logger.warn(
+        `Cleared ${healed.count} interrupted ZingHR sync run(s) from a previous restart`,
+      );
+    }
+
     const enabled = this.config.get<boolean>('zinghr.syncEnabled', true);
     const expression = this.config.get<string>(
       'zinghr.syncCron',

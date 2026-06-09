@@ -109,11 +109,43 @@ enum RoleScope {
 /// Candidate pipeline stage (Phase 2). Mirrors the Drive subfolders.
 enum CandidateStage {
   APPLIED
+  AI_SHORTLISTED
   SHORTLISTED
   INTERVIEW
   FINAL
   SELECTED
   REJECTED
+}
+
+/// Phase 3 assessment components in a requisition's assessment plan.
+enum AssessmentType {
+  WRITTEN
+  EXCEL
+  SKILL
+  VIVA
+}
+
+enum InterviewKind {
+  FIRST
+  SECOND
+  FINAL
+}
+
+enum InterviewMode {
+  ONLINE
+  OFFLINE
+  PHYSICAL
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum ExamQuestionKind {
+  MCQ
+  TEXT
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +166,9 @@ model User {
   employee        Employee?
   roleAssignments RoleAssignment[]
   notifications   Notification[]
+  committeeRoles  CommitteeMember[]
+  interviewPanels InterviewPanelist[]
+  evaluations     Evaluation[]
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
@@ -312,6 +347,12 @@ model Requisition {
   approvalSteps      ApprovalStep[]
   activities         RequisitionActivity[]
   candidates         Candidate[]
+  committeeMembers   CommitteeMember[]
+  rubricCriteria     RubricCriterion[]
+  assessments        AssessmentComponent[]
+  interviewRounds    InterviewRound[]
+  examQuestions      ExamQuestion[]
+  examAttempts       ExamAttempt[]
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
 
@@ -335,11 +376,209 @@ model Candidate {
   cvFileId      String?        @map("cv_file_id")
   cvUrl         String?        @map("cv_url")
   notes         String?
+  /// AI CV-screening: match score 0-100 against the role + a short rationale.
+  matchScore    Int?           @map("match_score")
+  matchSummary  String?        @map("match_summary")
+  screenedAt    DateTime?      @map("screened_at")
+  /// Phase 3: suitable-but-not-selected candidates kept for future recall.
+  talentPool    Boolean        @default(false) @map("talent_pool")
+  interviews    InterviewRound[]
+  examAttempts  ExamAttempt[]
+  onboarding    Onboarding?
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
 
   @@index([requisitionId, stage])
   @@map("candidates")
+}
+
+/// Phase 3 — a scheduled interview round for a candidate (first / second / final).
+model InterviewRound {
+  id            String              @id @default(cuid())
+  candidateId   String              @map("candidate_id")
+  candidate     Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requisitionId String              @map("requisition_id")
+  requisition   Requisition         @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  kind          InterviewKind       @default(FIRST)
+  mode          InterviewMode       @default(PHYSICAL)
+  scheduledAt   DateTime?           @map("scheduled_at")
+  /// Venue (physical) or meeting link (online).
+  location      String?
+  status        InterviewStatus     @default(SCHEDULED)
+  panelists     InterviewPanelist[]
+  evaluations   Evaluation[]
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  @@index([candidateId])
+  @@index([requisitionId])
+  @@map("interview_rounds")
+}
+
+/// Phase 3 — a committee member assigned to an interview round's panel.
+model InterviewPanelist {
+  id      String         @id @default(cuid())
+  roundId String         @map("round_id")
+  round   InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  userId  String         @map("user_id")
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roundId, userId])
+  @@index([userId])
+  @@map("interview_panelists")
+}
+
+/// Phase 3 — a question in a requisition's online exam (written / excel) bank.
+model ExamQuestion {
+  id            String           @id @default(cuid())
+  requisitionId String           @map("requisition_id")
+  requisition   Requisition      @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  examType      AssessmentType   @map("exam_type")
+  kind          ExamQuestionKind @default(MCQ)
+  prompt        String
+  /// MCQ options, e.g. ["A", "B", "C", "D"]
+  options       Json?
+  /// MCQ: the correct option text. TEXT: model answer used for AI grading.
+  answer        String?
+  marks         Int              @default(1)
+  orderIndex    Int              @default(0) @map("order_index")
+
+  @@index([requisitionId, examType])
+  @@map("exam_questions")
+}
+
+/// Phase 3 — a candidate's attempt at an online exam (token-linked, no login).
+model ExamAttempt {
+  id            String         @id @default(cuid())
+  candidateId   String         @map("candidate_id")
+  candidate     Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requisitionId String         @map("requisition_id")
+  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  examType      AssessmentType @map("exam_type")
+  /// Unguessable link token for the candidate's exam page.
+  token         String         @unique
+  /// pending | submitted | graded
+  status        String         @default("pending")
+  /// { questionId: answerText }
+  answers       Json?
+  /// per-question AI/auto grade: { questionId: { score, feedback } }
+  grades        Json?
+  autoScore     Int?           @map("auto_score")
+  totalScore    Int?           @map("total_score")
+  maxScore      Int            @default(0) @map("max_score")
+  startedAt     DateTime?      @map("started_at")
+  submittedAt   DateTime?      @map("submitted_at")
+  gradedAt      DateTime?      @map("graded_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  @@index([candidateId])
+  @@index([requisitionId])
+  @@map("exam_attempts")
+}
+
+/// Phase 4 & 5 — document collection, verification, offer & onboarding for a
+/// selected candidate. One per candidate.
+model Onboarding {
+  id              String          @id @default(cuid())
+  candidateId     String          @unique @map("candidate_id")
+  candidate       Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  /// Unguessable token for the candidate's document-submission + offer pages.
+  token           String          @unique
+  /// docs_pending | docs_submitted | offer_sent | offer_accepted | medical | hr_final | onboarded
+  status          String          @default("docs_pending")
+  offerSentAt     DateTime?       @map("offer_sent_at")
+  offerAcceptedAt DateTime?       @map("offer_accepted_at")
+  /// pending | cleared | rejected
+  medicalStatus   String          @default("pending") @map("medical_status")
+  medicalNote     String?         @map("medical_note")
+  medicalClearedAt DateTime?      @map("medical_cleared_at")
+  hrVerifiedAt    DateTime?       @map("hr_verified_at")
+  archivedAt      DateTime?       @map("archived_at")
+  itEmail         String?         @map("it_email")
+  itAssetId       String?         @map("it_asset_id")
+  itNotifiedAt    DateTime?       @map("it_notified_at")
+  docs            OnboardingDoc[]
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  @@map("onboardings")
+}
+
+/// A document the candidate submitted (stored on Drive), with AI extraction.
+model OnboardingDoc {
+  id           String     @id @default(cuid())
+  onboardingId String     @map("onboarding_id")
+  onboarding   Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  label        String
+  fileId       String     @map("file_id")
+  url          String
+  mimeType     String     @map("mime_type")
+  /// pending | verified | rejected
+  status       String     @default("pending")
+  /// AI (OCR + LLM) extracted structured fields.
+  aiExtract    Json?      @map("ai_extract")
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@index([onboardingId])
+  @@map("onboarding_docs")
+}
+
+/// Phase 3 — one panelist's rubric scores + comments for a candidate in a round.
+model Evaluation {
+  id          String         @id @default(cuid())
+  roundId     String         @map("round_id")
+  round       InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  evaluatorId String         @map("evaluator_id")
+  evaluator   User           @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
+  /// { rubricCriterionId: score, ... }
+  scores      Json
+  comments    String?
+  total       Int            @default(0)
+  submittedAt DateTime       @default(now()) @map("submitted_at")
+
+  @@unique([roundId, evaluatorId])
+  @@map("evaluations")
+}
+
+/// Phase 3 — a member of a requisition's interview committee (a synced user who
+/// logs in to mark candidates).
+model CommitteeMember {
+  id            String      @id @default(cuid())
+  requisitionId String      @map("requisition_id")
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  userId        String      @map("user_id")
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// interviewer | evaluator
+  role          String      @default("interviewer")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@unique([requisitionId, userId])
+  @@index([userId])
+  @@map("committee_members")
+}
+
+/// Phase 3 — a scored criterion in a requisition's interview rubric.
+model RubricCriterion {
+  id            String      @id @default(cuid())
+  requisitionId String      @map("requisition_id")
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  label         String
+  maxScore      Int         @default(10) @map("max_score")
+  orderIndex    Int         @default(0) @map("order_index")
+
+  @@map("rubric_criteria")
+}
+
+/// Phase 3 — a component of a requisition's assessment plan (written/excel/skill/viva).
+model AssessmentComponent {
+  id            String         @id @default(cuid())
+  requisitionId String         @map("requisition_id")
+  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  type          AssessmentType
+  maxScore      Int            @default(100) @map("max_score")
+  orderIndex    Int            @default(0) @map("order_index")
+
+  @@unique([requisitionId, type])
+  @@map("assessment_components")
 }
 
 model ApprovalStep {
