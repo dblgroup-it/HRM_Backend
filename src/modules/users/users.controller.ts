@@ -1,13 +1,16 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { IsBoolean } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 
@@ -20,9 +23,28 @@ import { UsersService, type UploadedImage } from './users.service';
 
 const AVATAR_UPLOAD = { limits: { fileSize: 2 * 1024 * 1024 } };
 
+class UpdatePreferencesDto {
+  @IsBoolean()
+  emailNotifications!: boolean;
+}
+
 @Controller('users')
 export class UsersController {
   constructor(private readonly users: UsersService) {}
+
+  /** Current user's notification preferences. */
+  @Get('me/preferences')
+  getPreferences(@CurrentUser() user: AuthUser) {
+    return this.users.getPreferences(user.id);
+  }
+
+  @Patch('me/preferences')
+  updatePreferences(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: UpdatePreferencesDto,
+  ) {
+    return this.users.updatePreferences(user.id, dto.emailNotifications);
+  }
 
   @Post('me/avatar')
   @UseInterceptors(FileInterceptor('image', AVATAR_UPLOAD))

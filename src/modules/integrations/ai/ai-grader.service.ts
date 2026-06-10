@@ -41,6 +41,9 @@ export interface RoleProfileInput {
   others?: string | null;
   requiredPosts: number;
   employmentNature?: string;
+  /** Optional context from an existing role profile (used for question gen). */
+  responsibilities?: string[];
+  requirements?: string[];
 }
 
 export interface RoleProfileResult {
@@ -48,6 +51,11 @@ export interface RoleProfileResult {
   jobDescription: string;
   responsibilities: string[];
   requirements: string[];
+}
+
+export interface InterviewQuestion {
+  category: string;
+  question: string;
 }
 
 export interface ScreenInput {
@@ -331,6 +339,55 @@ Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experien
     } catch {
       this.logger.warn(`Could not parse AI screening output: ${raw.slice(0, 120)}`);
       return { score: 0, summary: '', email: null, phone: null };
+    }
+  }
+
+  /** Generate role-specific interview questions for the panel. */
+  async generateInterviewQuestions(
+    input: RoleProfileInput,
+  ): Promise<InterviewQuestion[]> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const prompt = `You are an expert interviewer at DBL Group. Generate a focused set of interview questions for the role below, tailored to its responsibilities and requirements.
+
+Position: ${input.designation}
+Department: ${input.department}
+Job description: ${input.jobDescription || '(none)'}
+Required education: ${input.education}
+Required experience: ${input.experience}
+Key responsibilities:
+${(input.responsibilities ?? []).map((r) => `- ${r}`).join('\n') || '(none)'}
+Key requirements:
+${(input.requirements ?? []).map((r) => `- ${r}`).join('\n') || '(none)'}
+
+Produce 10-14 questions grouped by category (e.g. "Technical", "Role-specific", "Behavioral", "Situational"). Make them specific to THIS role, not generic. Respond with ONLY a compact JSON array and nothing else:
+[{"category":"<category>","question":"<question>"}]`;
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt)
+        : await this.callGemini(prompt);
+    return this.parseQuestions(raw);
+  }
+
+  private parseQuestions(raw: string): InterviewQuestion[] {
+    try {
+      const match = raw.match(/\[[\s\S]*\]/);
+      const arr = JSON.parse(match ? match[0] : raw) as unknown[];
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((q) => {
+          const o = q as { category?: unknown; question?: unknown };
+          return {
+            category: String(o.category ?? 'General').slice(0, 60),
+            question: String(o.question ?? '').slice(0, 500),
+          };
+        })
+        .filter((q) => q.question)
+        .slice(0, 20);
+    } catch {
+      this.logger.warn(`Could not parse AI questions: ${raw.slice(0, 120)}`);
+      return [];
     }
   }
 

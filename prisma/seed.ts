@@ -112,7 +112,7 @@ async function main() {
     { key: 'factory_hr', name: 'Factory HR', scope: 'UNIT', description: 'Unit / factory HR.' },
     { key: 'department_head', name: 'Department / Division Head', scope: 'UNIT', description: 'Raises and signs requisitions.' },
     { key: 'sbu_head', name: 'SBU Head', scope: 'UNIT', description: 'Strategic Business Unit head.' },
-    { key: 'medical_officer', name: 'Medical Officer', scope: 'UNIT', description: 'Records onboarding medical clearance.' },
+    { key: 'medical_officer', name: 'Medical Officer', scope: 'GLOBAL', description: 'Records onboarding medical clearance (all units).' },
   ] as const;
   for (const r of ROLES) {
     await prisma.role.upsert({

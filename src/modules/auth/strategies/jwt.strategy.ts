@@ -11,6 +11,8 @@ export interface JwtPayload {
   sub: string;
   employeeCode: string;
   role: UserRole;
+  /** Set on the short-lived token issued between password + 2FA steps. */
+  pending2fa?: boolean;
 }
 
 @Injectable()
@@ -27,6 +29,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthUser> {
+    // A pending-2FA token only authorizes the /auth/login/2fa step.
+    if (payload.pending2fa) {
+      throw new UnauthorizedException('Two-factor verification required');
+    }
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
     });

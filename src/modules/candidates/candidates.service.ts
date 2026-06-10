@@ -14,6 +14,7 @@ import { NotificationsService } from '../realtime/notifications.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
+import { SettingsService } from '../settings/settings.service';
 import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { RecruitmentService } from './recruitment.service';
 import {
@@ -44,11 +45,9 @@ export class CandidatesService {
     private readonly drive: DriveService,
     private readonly mail: MailService,
     private readonly ai: AiGraderService,
+    private readonly settings: SettingsService,
     private readonly recruitment: RecruitmentService,
   ) {}
-
-  /** Minimum AI match score (%) to auto-advance a CV to "AI Shortlisted". */
-  private readonly AI_SHORTLIST_THRESHOLD = 60;
 
   // --- workspace -----------------------------------------------------------
 
@@ -222,6 +221,11 @@ export class CandidatesService {
 
     if (dto.stage) {
       const stage = dto.stage.toUpperCase() as CandidateStage;
+      if (stage === 'AI_SHORTLISTED') {
+        throw new BadRequestException(
+          '“AI Shortlisted” is set automatically by AI screening and can’t be assigned manually.',
+        );
+      }
       data.stage = stage;
       // Mirror the move in Drive: shift the CV into the stage's folder.
       const ws =
@@ -441,7 +445,8 @@ export class CandidatesService {
     // already have them (never overwrite details entered by a person).
     if (!cand.email && result.email) data.email = result.email;
     if (!cand.phone && result.phone) data.phone = result.phone;
-    if (cand.stage === 'APPLIED' && result.score >= this.AI_SHORTLIST_THRESHOLD) {
+    const { shortlistThreshold } = await this.settings.getAiConfig();
+    if (cand.stage === 'APPLIED' && result.score >= shortlistThreshold) {
       data.stage = 'AI_SHORTLISTED';
       // Move the CV into the "02 AI Shortlisted" Drive folder.
       const ws =
@@ -467,6 +472,7 @@ export class CandidatesService {
     if (!this.ai.isConfigured()) return;
     void (async () => {
       try {
+        if (!(await this.settings.getAiConfig()).autoScreen) return;
         const cand = await this.prisma.candidate.findUnique({
           where: { id: candidateId },
           include: { requisition: true },
@@ -491,6 +497,7 @@ export class CandidatesService {
   private autoScreenMany(candidateIds: string[], reqId: string): void {
     if (!this.ai.isConfigured() || candidateIds.length === 0) return;
     void (async () => {
+      if (!(await this.settings.getAiConfig()).autoScreen) return;
       for (const id of candidateIds) {
         try {
           const cand = await this.prisma.candidate.findUnique({

@@ -165,6 +165,7 @@ export class InterviewService {
             designation: true,
             unitFactory: true,
             rubricCriteria: true,
+            interviewQuestions: true,
           },
         },
         evaluations: { where: { evaluatorId: userId } },
@@ -196,6 +197,12 @@ export class InterviewService {
         rubric: [...r.requisition.rubricCriteria]
           .sort((a, b) => a.orderIndex - b.orderIndex)
           .map((c) => ({ id: c.id, label: c.label, maxScore: c.maxScore })),
+        interviewQuestions: Array.isArray(r.requisition.interviewQuestions)
+          ? (r.requisition.interviewQuestions as {
+              category: string;
+              question: string;
+            }[])
+          : [],
         myEvaluation: mine
           ? {
               scores: mine.scores as Record<string, number>,

@@ -30,6 +30,26 @@ export class UsersService {
     private readonly drive: DriveService,
   ) {}
 
+  async getPreferences(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { emailNotifications: true, email: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return {
+      emailNotifications: user.emailNotifications,
+      hasEmail: Boolean(user.email),
+    };
+  }
+
+  async updatePreferences(userId: string, emailNotifications: boolean) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { emailNotifications },
+    });
+    return { emailNotifications };
+  }
+
   async uploadAvatar(userId: string, file?: UploadedImage) {
     if (!file) throw new BadRequestException('Please choose an image');
     if (!file.mimetype.startsWith('image/')) {

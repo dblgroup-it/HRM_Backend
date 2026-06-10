@@ -22,6 +22,7 @@ import { ZingHrModule } from './modules/integrations/zinghr/zinghr.module';
 import { GoogleModule } from './modules/integrations/google/google.module';
 import { MailModule } from './modules/integrations/mail/mail.module';
 import { AiModule } from './modules/integrations/ai/ai.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 
@@ -44,6 +45,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     GoogleModule,
     MailModule,
     AiModule,
+    SettingsModule,
     RbacModule,
     RealtimeModule,
   ],

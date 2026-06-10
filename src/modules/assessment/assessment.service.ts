@@ -2,11 +2,13 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { AssessmentType } from '@prisma/client';
+import { AssessmentType, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import {
   AddCommitteeMemberDto,
   SetPlanDto,
@@ -18,10 +20,11 @@ export class AssessmentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
+    private readonly ai: AiGraderService,
   ) {}
 
   async getSetup(reqId: string, userId: string) {
-    await this.loadReq(reqId, userId);
+    const req = await this.loadReq(reqId, userId);
     const [committee, rubric, plan] = await Promise.all([
       this.prisma.committeeMember.findMany({
         where: { requisitionId: reqId },
@@ -58,7 +61,48 @@ export class AssessmentService {
         type: p.type.toLowerCase(),
         maxScore: p.maxScore,
       })),
+      aiEnabled: this.ai.isConfigured(),
+      interviewQuestions: Array.isArray(req.interviewQuestions)
+        ? (req.interviewQuestions as { category: string; question: string }[])
+        : [],
     };
+  }
+
+  /** AI-generate role-specific interview questions and store them. */
+  async generateInterviewQuestions(reqId: string, userId: string) {
+    const req = await this.loadReq(reqId, userId);
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const rp =
+      (req.roleProfile as {
+        responsibilities?: string[];
+        requirements?: string[];
+      } | null) ?? null;
+    const questions = await this.ai.generateInterviewQuestions({
+      designation: req.designation,
+      department: req.department,
+      unitFactory: req.unitFactory,
+      placeOfPosting: req.placeOfPosting,
+      jobDescription: req.jobDescription,
+      education: req.education,
+      experience: req.experience,
+      others: req.others,
+      requiredPosts: req.requiredPosts,
+      responsibilities: Array.isArray(rp?.responsibilities)
+        ? rp?.responsibilities
+        : undefined,
+      requirements: Array.isArray(rp?.requirements)
+        ? rp?.requirements
+        : undefined,
+    });
+    await this.prisma.requisition.update({
+      where: { id: reqId },
+      data: {
+        interviewQuestions: questions as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return this.getSetup(reqId, userId);
   }
 
   async addCommitteeMember(

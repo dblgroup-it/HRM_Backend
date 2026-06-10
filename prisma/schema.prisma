@@ -152,6 +152,15 @@ enum ExamQuestionKind {
 // Identity & people
 // ---------------------------------------------------------------------------
 
+/// Key-value app settings (e.g. AI configuration), editable by super users.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
 model User {
   id              String           @id @default(cuid())
   employeeCode    String           @unique @map("employee_code")
@@ -163,6 +172,15 @@ model User {
   status          UserStatus       @default(ACTIVE)
   /// Google Drive file id of the user's profile picture (served via the avatar proxy).
   avatarFileId    String?          @map("avatar_file_id")
+  /// Per-user toggle: also send notifications to this user's email.
+  emailNotifications Boolean       @default(true) @map("email_notifications")
+  /// Two-factor auth: enabled flag, method ('email' | 'totp'), and TOTP secret.
+  twoFactorEnabled  Boolean        @default(false) @map("two_factor_enabled")
+  twoFactorMethod   String?        @map("two_factor_method")
+  twoFactorSecret   String?        @map("two_factor_secret")
+  /// Transient one-time code (hashed) for email 2FA + its expiry.
+  otpHash           String?        @map("otp_hash")
+  otpExpiresAt      DateTime?      @map("otp_expires_at")
   employee        Employee?
   roleAssignments RoleAssignment[]
   notifications   Notification[]
@@ -338,6 +356,8 @@ model Requisition {
   status             RequisitionStatus     @default(PENDING_APPROVAL)
   roleProfile        Json?                 @map("role_profile")
   posting            Json?
+  /// AI-generated interview questions — array of { category, question }.
+  interviewQuestions Json?                 @map("interview_questions")
   raisedBy           String?               @map("raised_by")
   raisedById         String?               @map("raised_by_id")
   /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.

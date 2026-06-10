@@ -22,6 +22,7 @@ import { NotificationsService } from '../realtime/notifications.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
+import { SettingsService } from '../settings/settings.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
@@ -35,7 +36,7 @@ import { buildChainSteps, synthesizeRoleProfile } from './requisition.workflow';
 const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
   activities: { orderBy: { at: 'asc' } },
-  candidates: { select: { stage: true } },
+  candidates: { select: { stage: true, onboarding: { select: { status: true } } } },
 } satisfies Prisma.RequisitionInclude;
 
 type RequisitionFull = Prisma.RequisitionGetPayload<{
@@ -52,6 +53,7 @@ export class RequisitionService {
     private readonly recruitment: RecruitmentService,
     private readonly drive: DriveService,
     private readonly ai: AiGraderService,
+    private readonly settings: SettingsService,
   ) {}
 
   private readonly logger = new Logger(RequisitionService.name);
@@ -351,6 +353,33 @@ export class RequisitionService {
     });
 
     const updated = await this.notifyAfterAction(id, dto.decision, actorName);
+
+    // Optionally auto-generate the role profile the moment it's fully approved.
+    if (updated.status === 'APPROVED' && this.ai.isConfigured()) {
+      const cfg = await this.settings.getAiConfig();
+      if (cfg.autoRoleProfile) {
+        try {
+          const profile = await this.buildRoleProfile(updated);
+          const regenerated = await this.prisma.requisition.update({
+            where: { id },
+            data: {
+              roleProfile: profile as unknown as Prisma.InputJsonValue,
+              status: 'PROFILE_GENERATED',
+            },
+            include: reqWithRelations,
+          });
+          this.notifications.broadcastChange('requisition', id, {
+            action: 'role_profile_generated',
+            record: serialize(regenerated),
+          });
+          return serialize(regenerated);
+        } catch (err) {
+          this.logger.warn(
+            `Auto role-profile failed: ${(err as Error).message}`,
+          );
+        }
+      }
+    }
     return serialize(updated);
   }
 
@@ -811,6 +840,21 @@ function low(value: string): string {
 }
 
 /** Per-stage candidate counts for a requisition (Phase 2 pipeline). */
+/**
+ * Furthest pipeline progress across all candidates — drives the lifecycle
+ * stepper beyond "Posted" (Candidates → Assessment → Onboarding → Done).
+ */
+function pipelineProgress(
+  rows: { stage: string; onboarding: { status: string } | null }[],
+) {
+  const stages = rows.map((r) => r.stage.toLowerCase());
+  const hasCandidates = rows.length > 0;
+  const inAssessment = stages.some((s) => s === 'interview' || s === 'final');
+  const inOnboarding = stages.some((s) => s === 'selected');
+  const onboarded = rows.some((r) => r.onboarding?.status === 'onboarded');
+  return { hasCandidates, inAssessment, inOnboarding, onboarded };
+}
+
 function candidateStats(rows: { stage: string }[]) {
   const s = {
     applied: 0,
@@ -876,6 +920,7 @@ function serialize(req: RequisitionFull) {
     drive: req.drive ?? null,
     attachments: Array.isArray(req.attachments) ? req.attachments : [],
     candidateStats: candidateStats(req.candidates),
+    pipeline: pipelineProgress(req.candidates),
     raisedBy: req.raisedBy ?? '',
     createdAt: req.createdAt.toISOString(),
     updatedAt: req.updatedAt.toISOString(),
