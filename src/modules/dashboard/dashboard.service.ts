@@ -166,7 +166,7 @@ export class DashboardService {
         const right = b.joiningDate ?? b.createdAt;
         return +new Date(right) - +new Date(left);
       })
-      .slice(0, 5)
+      .slice(0, 7)
       .map((employee) => ({
         id: employee.id,
         name: employee.user.name,

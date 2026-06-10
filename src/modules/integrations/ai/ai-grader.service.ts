@@ -107,6 +107,37 @@ export class AiGraderService {
       : Boolean(this.config.get<string>('ai.gemini.apiKey'));
   }
 
+  /**
+   * Free-text completion for analytics/chat (HR insights). Returns plain text,
+   * not JSON. Used by the "Ask your HR data", weekly digest and bottleneck
+   * features.
+   */
+  async complete(prompt: string, maxTokens = 900): Promise<string> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    return this.provider === 'claude'
+      ? this.callClaude(prompt, maxTokens)
+      : this.callGeminiText(prompt);
+  }
+
+  private async callGeminiText(text: string): Promise<string> {
+    const model = this.config.get<string>('ai.gemini.model');
+    const key = this.config.get<string>('ai.gemini.apiKey') ?? '';
+    const res = await this.fetchJson<GeminiResp>(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: 'POST',
+        headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text }] }],
+          generationConfig: { temperature: 0.3 },
+        }),
+      },
+    );
+    return res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  }
+
   async grade(input: GradeInput): Promise<GradeResult> {
     if (!this.isConfigured()) {
       throw new ServiceUnavailableException('AI grading is not configured');
@@ -470,7 +501,7 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
     return res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   }
 
-  private async callClaude(text: string): Promise<string> {
+  private async callClaude(text: string, maxTokens = 400): Promise<string> {
     const model = this.config.get<string>('ai.anthropic.model');
     const key = this.config.get<string>('ai.anthropic.apiKey') ?? '';
     const res = await this.fetchJson<ClaudeResp>(
@@ -484,7 +515,7 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
         },
         body: JSON.stringify({
           model,
-          max_tokens: 400,
+          max_tokens: maxTokens,
           messages: [{ role: 'user', content: text }],
         }),
       },
