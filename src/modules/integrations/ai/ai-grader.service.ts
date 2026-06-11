@@ -138,6 +138,27 @@ export interface CompareFinalistsResult {
   ranking: FinalistRanking[];
 }
 
+export interface RouteCvInput {
+  subject: string;
+  bodyText: string;
+  cvMimeType: string;
+  cvBase64: string;
+  /** The open (posted) requisitions the CV could belong to. */
+  openings: {
+    code: string;
+    designation: string;
+    department: string;
+    unit: string;
+  }[];
+}
+
+export interface RouteCvResult {
+  /** Matched requisition code, or null when nothing fits. */
+  code: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+}
+
 interface GeminiResp {
   candidates?: { content?: { parts?: { text?: string }[] } }[];
 }
@@ -443,6 +464,75 @@ Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experien
         `Could not parse AI screening output: ${raw.slice(0, 120)}`,
       );
       return { score: 0, summary: '', email: null, phone: null };
+    }
+  }
+
+  /**
+   * Route an emailed CV to one of the open requisitions by reading the email
+   * subject/body and the CV itself. Used when the subject carries no code.
+   */
+  async routeCv(input: RouteCvInput): Promise<RouteCvResult> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const supported =
+      input.cvMimeType.startsWith('image/') ||
+      input.cvMimeType === 'application/pdf';
+    const openings = input.openings
+      .map((o) => `- ${o.code}: ${o.designation} · ${o.department} · ${o.unit}`)
+      .join('\n');
+    const prompt = `You are a recruitment mail-room assistant. A candidate emailed a CV. Decide which ONE of the open vacancies below it is applying for, based on the email subject/body${supported ? ' and the attached CV' : ''}.
+
+OPEN VACANCIES
+${openings}
+
+EMAIL
+Subject: ${input.subject || '(none)'}
+Body: ${input.bodyText || '(empty)'}
+
+Pick a vacancy ONLY when the evidence genuinely points to it (role named in the email, or the CV's profession clearly fits exactly one opening). If several fit equally or none fit, return null.
+
+Respond with ONLY a compact JSON object and nothing else:
+{"code":"<vacancy code or null>","confidence":"high|medium|low","reason":"<one short sentence>"}`;
+    const raw = supported
+      ? this.provider === 'claude'
+        ? await this.callClaudeVision(prompt, input.cvMimeType, input.cvBase64)
+        : await this.callGeminiVision(prompt, input.cvMimeType, input.cvBase64)
+      : this.provider === 'claude'
+        ? await this.callClaude(prompt)
+        : await this.callGemini(prompt);
+    return this.parseRoute(
+      raw,
+      input.openings.map((o) => o.code),
+    );
+  }
+
+  private parseRoute(raw: string, validCodes: string[]): RouteCvResult {
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      const obj = JSON.parse(match ? match[0] : raw) as {
+        code?: unknown;
+        confidence?: unknown;
+        reason?: unknown;
+      };
+      const codeRaw = String(obj.code ?? '').trim();
+      const code =
+        validCodes.find((c) => c.toLowerCase() === codeRaw.toLowerCase()) ??
+        null;
+      const confidences = ['high', 'medium', 'low'] as const;
+      const confidence = confidences.includes(
+        obj.confidence as (typeof confidences)[number],
+      )
+        ? (obj.confidence as RouteCvResult['confidence'])
+        : 'low';
+      return {
+        code,
+        confidence,
+        reason: String(obj.reason ?? '').slice(0, 300),
+      };
+    } catch {
+      this.logger.warn(`Could not parse AI routing: ${raw.slice(0, 120)}`);
+      return { code: null, confidence: 'low', reason: '' };
     }
   }
 

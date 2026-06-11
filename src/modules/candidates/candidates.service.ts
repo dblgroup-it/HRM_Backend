@@ -216,6 +216,54 @@ export class CandidatesService {
     return serializeCandidate(created);
   }
 
+  /**
+   * Internal (Gmail ingestion): create a candidate from an emailed CV with no
+   * acting user — the cron already validated the requisition. Returns null
+   * when the sender already applied to this requisition (dedup by email).
+   */
+  async importEmailedCv(
+    reqId: string,
+    sender: { name: string; email: string },
+    file: UploadedCv,
+  ) {
+    const existing = await this.prisma.candidate.findFirst({
+      where: {
+        requisitionId: reqId,
+        email: { equals: sender.email, mode: 'insensitive' },
+      },
+      select: { id: true },
+    });
+    if (existing) return null;
+
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+    });
+    if (!req) return null;
+    const ws = await this.recruitment.ensureWorkspace(req);
+    if (!ws) return null;
+
+    const uploaded = await this.drive.uploadFile(ws.allCvFolderId, {
+      name: cvFileName(sender.name, file.originalname),
+      mimeType: file.mimetype,
+      buffer: file.buffer,
+    });
+    const created = await this.prisma.candidate.create({
+      data: {
+        requisitionId: reqId,
+        name: sender.name,
+        email: sender.email,
+        source: 'email',
+        cvFileId: uploaded.id,
+        cvUrl: uploaded.url,
+      },
+    });
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'created',
+    });
+    this.autoScreen(created.id);
+    return created;
+  }
+
   async update(id: string, dto: UpdateCandidateDto, userId: string) {
     const cand = await this.prisma.candidate.findUnique({
       where: { id },

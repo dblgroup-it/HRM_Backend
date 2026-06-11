@@ -8,6 +8,9 @@ const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 /** Calendar events scope — interview invites + Google Meet links. */
 const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 
+/** Gmail read + mark-as-read — emailed-CV ingestion from the inbox. */
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.modify';
+
 /** Subset of Google's OAuth token response we care about. */
 export interface OAuthTokens {
   refresh_token?: string | null;
@@ -58,7 +61,7 @@ export class GoogleAuthService {
     return this.oauthClient().generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
-      scope: [DRIVE_SCOPE, CALENDAR_SCOPE],
+      scope: [DRIVE_SCOPE, CALENDAR_SCOPE, GMAIL_SCOPE],
     });
   }
 

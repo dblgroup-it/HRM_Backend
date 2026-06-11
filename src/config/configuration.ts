@@ -36,6 +36,10 @@ export interface AppConfig {
   it: {
     webhookUrl: string;
   };
+  nudge: {
+    /** Days a requisition may sit with an approver before a daily reminder. */
+    approvalDays: number;
+  };
 }
 
 export default (): AppConfig => ({
@@ -85,5 +89,8 @@ export default (): AppConfig => ({
   it: {
     // Optional: IT provisioning webhook. When unset, HR enters email/asset id manually.
     webhookUrl: process.env.IT_WEBHOOK_URL ?? '',
+  },
+  nudge: {
+    approvalDays: parseInt(process.env.NUDGE_APPROVAL_DAYS ?? '3', 10),
   },
 });

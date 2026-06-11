@@ -28,6 +28,7 @@ import { AiModule } from './modules/integrations/ai/ai.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { AutomationModule } from './modules/automation/automation.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     SettingsModule,
     RbacModule,
     RealtimeModule,
+    AutomationModule,
   ],
   controllers: [HealthController],
   providers: [
