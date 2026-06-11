@@ -11,7 +11,12 @@ const FOLDER_MIME = 'application/vnd.google-apps.folder';
 
 /** Drive folder names allow most characters; just keep them tidy and safe. */
 function clean(name: string): string {
-  return name.replace(/[\\/]+/g, '-').replace(/\s+/g, ' ').trim() || 'Untitled';
+  return (
+    name
+      .replace(/[\\/]+/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim() || 'Untitled'
+  );
 }
 
 /**
@@ -32,7 +37,10 @@ export class DriveService {
   }
 
   private api(): drive_v3.Drive {
-    return google.drive({ version: 'v3', auth: this.auth.getAuthorizedClient() });
+    return google.drive({
+      version: 'v3',
+      auth: this.auth.getAuthorizedClient(),
+    });
   }
 
   folderUrl(id: string): string {
@@ -75,11 +83,15 @@ export class DriveService {
   async ensureRootFolder(): Promise<string> {
     const fixedId = this.config.get<string>('google.rootFolderId');
     if (fixedId) return fixedId;
-    const name = this.config.get<string>('google.rootFolderName') ?? 'DBL HRM Recruitment';
+    const name =
+      this.config.get<string>('google.rootFolderName') ?? 'DBL HRM Recruitment';
     return this.ensureFolder(name);
   }
 
-  async shareAnyoneWithLink(fileId: string, role: 'reader' | 'writer' = 'writer') {
+  async shareAnyoneWithLink(
+    fileId: string,
+    role: 'reader' | 'writer' = 'writer',
+  ) {
     await this.api().permissions.create({
       fileId,
       requestBody: { type: 'anyone', role },
@@ -104,9 +116,14 @@ export class DriveService {
   }
 
   /** Build (idempotently) the full folder tree for a requisition. */
-  async createRequisitionTree(input: DriveTreeInput): Promise<RequisitionDriveMap> {
+  async createRequisitionTree(
+    input: DriveTreeInput,
+  ): Promise<RequisitionDriveMap> {
     const root = await this.ensureRootFolder();
-    const unitFolder = await this.ensureFolder(input.unit || 'Unassigned Unit', root);
+    const unitFolder = await this.ensureFolder(
+      input.unit || 'Unassigned Unit',
+      root,
+    );
     const deptFolder = await this.ensureFolder(
       `${input.department || 'General'} — ${input.designation}`,
       unitFolder,
@@ -118,11 +135,26 @@ export class DriveService {
 
     // Subfolders are created sequentially to avoid duplicate-name races.
     const allCvFolderId = await this.ensureFolder('01 All CVs', reqFolder);
-    const aiShortlistedFolderId = await this.ensureFolder('02 AI Shortlisted', reqFolder);
-    const shortlistedFolderId = await this.ensureFolder('03 Shortlisted', reqFolder);
-    const interviewFolderId = await this.ensureFolder('04 Interview Docs', reqFolder);
-    const finalFolderId = await this.ensureFolder('05 Final Candidate', reqFolder);
-    const joiningFolderId = await this.ensureFolder('06 Selected — Joining Docs', reqFolder);
+    const aiShortlistedFolderId = await this.ensureFolder(
+      '02 AI Shortlisted',
+      reqFolder,
+    );
+    const shortlistedFolderId = await this.ensureFolder(
+      '03 Shortlisted',
+      reqFolder,
+    );
+    const interviewFolderId = await this.ensureFolder(
+      '04 Interview Docs',
+      reqFolder,
+    );
+    const finalFolderId = await this.ensureFolder(
+      '05 Final Candidate',
+      reqFolder,
+    );
+    const joiningFolderId = await this.ensureFolder(
+      '06 Selected — Joining Docs',
+      reqFolder,
+    );
 
     // The folders stay PRIVATE to the recruitment account — never shared
     // "anyone with the link". External candidates submit through the secure
@@ -188,7 +220,8 @@ export class DriveService {
   async listFiles(
     parentId: string,
   ): Promise<{ id: string; name: string; mimeType: string; url: string }[]> {
-    const out: { id: string; name: string; mimeType: string; url: string }[] = [];
+    const out: { id: string; name: string; mimeType: string; url: string }[] =
+      [];
     let pageToken: string | undefined;
     do {
       const res = await this.api().files.list({

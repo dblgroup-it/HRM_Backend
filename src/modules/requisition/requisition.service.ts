@@ -36,7 +36,9 @@ import { buildChainSteps, synthesizeRoleProfile } from './requisition.workflow';
 const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
   activities: { orderBy: { at: 'asc' } },
-  candidates: { select: { stage: true, onboarding: { select: { status: true } } } },
+  candidates: {
+    select: { stage: true, onboarding: { select: { status: true } } },
+  },
 } satisfies Prisma.RequisitionInclude;
 
 type RequisitionFull = Prisma.RequisitionGetPayload<{
@@ -801,9 +803,7 @@ export class RequisitionService {
       const allowed = unitNames.some(
         (name) => name.toLowerCase() === unitFactory.toLowerCase(),
       );
-      return allowed
-        ? { equals: unitFactory, mode: 'insensitive' }
-        : null;
+      return allowed ? { equals: unitFactory, mode: 'insensitive' } : null;
     }
 
     if (unitNames.length === 0) return null;

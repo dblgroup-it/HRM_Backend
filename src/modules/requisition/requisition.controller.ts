@@ -11,11 +11,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 
 import {
   CurrentUser,
   AuthUser,
 } from '../../common/decorators/current-user.decorator';
+import { ATTACHMENT_UPLOAD } from '../../common/upload/file-upload';
 import { RequisitionService } from './requisition.service';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
@@ -66,10 +68,14 @@ export class RequisitionController {
     @Body() dto: ApprovalActionDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.requisitionService.act(id, dto, { id: user.id, name: user.name });
+    return this.requisitionService.act(id, dto, {
+      id: user.id,
+      name: user.name,
+    });
   }
 
   // Corporate HR (or a super user) continues from here — enforced in the service.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post(':id/role-profile')
   generateRoleProfile(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.requisitionService.generateRoleProfile(id, {
@@ -97,17 +103,25 @@ export class RequisitionController {
     @Body() dto: PostRequisitionDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.requisitionService.post(id, dto, { id: user.id, name: user.name });
+    return this.requisitionService.post(id, dto, {
+      id: user.id,
+      name: user.name,
+    });
   }
 
   /** Attach a supporting file (optional). 15 MB cap; stored on Drive. */
   @Post(':id/attachments')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor('file', ATTACHMENT_UPLOAD))
   addAttachment(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
     @UploadedFile()
-    file?: { originalname: string; mimetype: string; buffer: Buffer; size: number },
+    file?: {
+      originalname: string;
+      mimetype: string;
+      buffer: Buffer;
+      size: number;
+    },
   ) {
     return this.requisitionService.addAttachment(id, file, {
       id: user.id,

@@ -14,9 +14,7 @@ interface JwtPayload {
 }
 
 @WebSocketGateway({ cors: { origin: '*' } })
-export class EventsGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
-{
+export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server!: Server;
   private readonly logger = new Logger(EventsGateway.name);
 

@@ -10,20 +10,19 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 
 import {
   AuthUser,
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
+import { DOC_UPLOAD as CV_UPLOAD } from '../../common/upload/file-upload';
 import { CandidatesService, type UploadedCv } from './candidates.service';
 import {
   CreateCandidateDto,
   EmailCandidateDto,
   UpdateCandidateDto,
 } from './dto/candidate.dto';
-
-/** 10 MB cap per CV upload. */
-const CV_UPLOAD = { limits: { fileSize: 10 * 1024 * 1024 } };
 
 @Controller()
 export class CandidatesController {
@@ -55,12 +54,21 @@ export class CandidatesController {
   }
 
   /** AI-screen all un-screened applied CVs in this requisition. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('requisitions/:reqId/candidates/screen')
   screenAll(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
     return this.candidates.screenRequisition(reqId, user.id);
   }
 
+  /** AI side-by-side comparison of interview/final-stage candidates. */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('requisitions/:reqId/candidates/compare')
+  compare(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.compareFinalists(reqId, user.id);
+  }
+
   /** AI-screen (or re-screen) a single candidate's CV. */
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('candidates/:id/screen')
   screen(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.candidates.screenCandidate(id, user.id);

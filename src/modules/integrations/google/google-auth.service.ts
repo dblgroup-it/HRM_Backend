@@ -5,6 +5,9 @@ import { google } from 'googleapis';
 /** Full Drive scope — needed to create folders, upload, move and share files. */
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 
+/** Calendar events scope — interview invites + Google Meet links. */
+const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+
 /** Subset of Google's OAuth token response we care about. */
 export interface OAuthTokens {
   refresh_token?: string | null;
@@ -55,7 +58,7 @@ export class GoogleAuthService {
     return this.oauthClient().generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
-      scope: [DRIVE_SCOPE],
+      scope: [DRIVE_SCOPE, CALENDAR_SCOPE],
     });
   }
 

@@ -39,6 +39,7 @@ export class RbacController {
 
   // --- roles (admin) ------------------------------------------------------
 
+  @Roles(UserRole.ADMIN)
   @Get('roles')
   listRoles() {
     return this.rbac.listRoles();
@@ -64,6 +65,7 @@ export class RbacController {
 
   // --- assignments (admin) ------------------------------------------------
 
+  @Roles(UserRole.ADMIN)
   @Get('role-assignments')
   listAssignments(
     @Query('roleId') roleId?: string,

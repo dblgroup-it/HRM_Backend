@@ -80,7 +80,11 @@ export class AuthService {
         otpExpiresAt: null,
       },
     });
-    return { ok: true, name: target.name, defaultPassword: target.employeeCode };
+    return {
+      ok: true,
+      name: target.name,
+      defaultPassword: target.employeeCode,
+    };
   }
 
   async login(dto: LoginDto): Promise<LoginResult> {
@@ -282,7 +286,8 @@ export class AuthService {
       throw new BadRequestException('Code expired — request a new one.');
     }
     const ok = await bcrypt.compare(code.trim(), user.otpHash);
-    if (!ok) throw new BadRequestException('That code is incorrect — try again.');
+    if (!ok)
+      throw new BadRequestException('That code is incorrect — try again.');
     await this.prisma.user.update({
       where: { id: user.id },
       data: { otpHash: null, otpExpiresAt: null },
@@ -292,7 +297,10 @@ export class AuthService {
   private verifyTotp(user: User, code: string): void {
     if (
       !user.twoFactorSecret ||
-      !authenticator.verify({ token: code.trim(), secret: user.twoFactorSecret })
+      !authenticator.verify({
+        token: code.trim(),
+        secret: user.twoFactorSecret,
+      })
     ) {
       throw new BadRequestException('That code is incorrect — try again.');
     }
@@ -319,7 +327,8 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash },
+      // Bump token version so other sessions are signed out after a change.
+      data: { passwordHash, tokenVersion: { increment: 1 } },
     });
     return { ok: true };
   }
@@ -335,8 +344,18 @@ export class AuthService {
       sub: user.id,
       employeeCode: user.employeeCode,
       role: user.role,
+      tv: user.tokenVersion,
     };
     return this.jwt.sign(payload);
+  }
+
+  /** Invalidate all of a user's existing tokens (logout / forced sign-out). */
+  async logout(userId: string): Promise<{ ok: true }> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { tokenVersion: { increment: 1 } },
+    });
+    return { ok: true };
   }
 
   async buildUser(user: User): Promise<UserResponse> {

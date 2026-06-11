@@ -41,10 +41,7 @@ export class UnitsService {
     try {
       return await this.prisma.unit.create({ data: dto });
     } catch (e) {
-      throw this.handleUnique(
-        e,
-        'A unit with that name already exists',
-      );
+      throw this.handleUnique(e, 'A unit with that name already exists');
     }
   }
 
@@ -53,10 +50,7 @@ export class UnitsService {
     try {
       return await this.prisma.unit.update({ where: { id }, data: dto });
     } catch (e) {
-      throw this.handleUnique(
-        e,
-        'A unit with that name already exists',
-      );
+      throw this.handleUnique(e, 'A unit with that name already exists');
     }
   }
 

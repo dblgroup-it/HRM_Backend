@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { MemoryCacheService } from '../../common/cache/memory-cache.service';
+import { normalizeUnitName } from '../../common/util/normalize-unit';
 
 export interface EffectiveRole {
   key: string;
@@ -24,13 +25,24 @@ export interface UnitAccessScope {
 }
 
 const ALL_UNIT_ACCESS_ROLE_KEYS = new Set(['corporate_hr', 'chro']);
+const PERMS_PREFIX = 'perms:';
+const PERMS_TTL = 60_000; // 60s — invalidated immediately on any role change.
 
 @Injectable()
 export class PermissionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: MemoryCacheService,
+  ) {}
 
-  /** Resolve a user's effective roles + accessible units. */
-  async getUserPermissions(userId: string): Promise<UserPermissions> {
+  /** Resolve a user's effective roles + accessible units (cached). */
+  getUserPermissions(userId: string): Promise<UserPermissions> {
+    return this.cache.wrap(`${PERMS_PREFIX}${userId}`, PERMS_TTL, () =>
+      this.loadUserPermissions(userId),
+    );
+  }
+
+  private async loadUserPermissions(userId: string): Promise<UserPermissions> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { roleAssignments: { include: { role: true, unit: true } } },
@@ -60,6 +72,12 @@ export class PermissionsService {
     return { isSuperUser, roles, unitIds };
   }
 
+  /** Drop cached permissions (call on any role / assignment change). */
+  invalidate(userId?: string): void {
+    if (userId) this.cache.delete(`${PERMS_PREFIX}${userId}`);
+    else this.cache.deleteByPrefix(PERMS_PREFIX);
+  }
+
   /** Resolve whether a user can see every unit or only their assigned units. */
   async getUnitAccessScope(userId: string): Promise<UnitAccessScope> {
     const permissions = await this.getUserPermissions(userId);
@@ -74,53 +92,44 @@ export class PermissionsService {
     return {
       all:
         permissions.isSuperUser ||
-        permissions.roles.some((role) => ALL_UNIT_ACCESS_ROLE_KEYS.has(role.key)),
+        permissions.roles.some((role) =>
+          ALL_UNIT_ACCESS_ROLE_KEYS.has(role.key),
+        ),
       unitNames,
     };
   }
 
   async canAccessUnitName(userId: string, unitName: string): Promise<boolean> {
     const scope = await this.getUnitAccessScope(userId);
+    const target = normalizeUnitName(unitName);
     return (
       scope.all ||
-      scope.unitNames.some(
-        (name) => name.toLowerCase() === unitName.toLowerCase(),
-      )
+      scope.unitNames.some((name) => normalizeUnitName(name) === target)
     );
   }
 
   async isSuperUser(userId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { roleAssignments: { include: { role: true } } },
-    });
-    return (
-      !!user &&
-      (user.role === 'ADMIN' ||
-        user.roleAssignments.some((a) => a.role.key === 'super_user'))
-    );
+    const perms = await this.getUserPermissions(userId);
+    return perms.isSuperUser;
   }
 
-  /** Does the user hold `roleKey` for the given unit (by name)? Super users always do. */
+  /**
+   * Does the user hold `roleKey` for the given unit (by name)? Super users
+   * always do. Answered from the cached permission set — no extra queries.
+   */
   async hasRoleForUnitName(
     userId: string,
     roleKey: string,
     unitName: string,
   ): Promise<boolean> {
-    if (await this.isSuperUser(userId)) return true;
-
-    const unit = await this.prisma.unit.findFirst({
-      where: { name: { equals: unitName, mode: 'insensitive' } },
-      select: { id: true },
-    });
-
-    const where: Prisma.RoleAssignmentWhereInput = {
-      userId,
-      role: { key: roleKey },
-      OR: [{ unitId: null }, ...(unit ? [{ unitId: unit.id }] : [])],
-    };
-    const found = await this.prisma.roleAssignment.findFirst({ where });
-    return !!found;
+    const perms = await this.getUserPermissions(userId);
+    if (perms.isSuperUser) return true;
+    const target = normalizeUnitName(unitName);
+    return perms.roles.some(
+      (r) =>
+        r.key === roleKey &&
+        (r.unitId === null || normalizeUnitName(r.unitName) === target),
+    );
   }
 
   /** Names of users holding `roleKey` for a unit (global holders included). */
@@ -139,14 +148,21 @@ export class PermissionsService {
   }
 
   private async holderAssignments(roleKey: string, unitName: string) {
-    const unit = await this.prisma.unit.findFirst({
-      where: { name: { equals: unitName, mode: 'insensitive' } },
-      select: { id: true },
+    // Match every unit that resolves to the same name (handles "Ltd" vs "Ltd.").
+    const target = normalizeUnitName(unitName);
+    const units = await this.prisma.unit.findMany({
+      select: { id: true, name: true },
     });
+    const unitIds = units
+      .filter((u) => normalizeUnitName(u.name) === target)
+      .map((u) => u.id);
     return this.prisma.roleAssignment.findMany({
       where: {
         role: { key: roleKey },
-        OR: [{ unitId: null }, ...(unit ? [{ unitId: unit.id }] : [])],
+        OR: [
+          { unitId: null },
+          ...(unitIds.length ? [{ unitId: { in: unitIds } }] : []),
+        ],
       },
       include: { user: { select: { name: true } } },
     });

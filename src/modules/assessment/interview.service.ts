@@ -17,6 +17,10 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
 import {
+  CalendarService,
+  type CalendarEventInput,
+} from '../integrations/google/calendar.service';
+import {
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
@@ -28,7 +32,9 @@ const roundInclude = {
   candidate: { select: { id: true, name: true, email: true } },
 } satisfies Prisma.InterviewRoundInclude;
 
-type RoundFull = Prisma.InterviewRoundGetPayload<{ include: typeof roundInclude }>;
+type RoundFull = Prisma.InterviewRoundGetPayload<{
+  include: typeof roundInclude;
+}>;
 
 @Injectable()
 export class InterviewService {
@@ -39,6 +45,7 @@ export class InterviewService {
     private readonly permissions: PermissionsService,
     private readonly notifications: NotificationsService,
     private readonly mail: MailService,
+    private readonly calendar: CalendarService,
   ) {}
 
   async listForRequisition(reqId: string, userId: string) {
@@ -68,7 +75,7 @@ export class InterviewService {
   ) {
     const cand = await this.loadCandidate(candidateId, actor.id);
 
-    const round = await this.prisma.interviewRound.create({
+    let round = await this.prisma.interviewRound.create({
       data: {
         candidateId: cand.id,
         requisitionId: cand.requisitionId,
@@ -85,6 +92,15 @@ export class InterviewService {
       include: roundInclude,
     });
 
+    // Best-effort Google Calendar event (+ Meet link for online interviews):
+    // invites land in panelists' and the candidate's own calendars.
+    const synced = await this.syncCalendarCreate(
+      round,
+      cand.requisition.designation,
+      dto.notifyCandidate === true,
+    );
+    if (synced) round = synced;
+
     await this.notifyScheduled(round, cand.requisition.designation, dto);
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'interview_scheduled',
@@ -95,7 +111,9 @@ export class InterviewService {
   async update(roundId: string, userId: string, dto: UpdateInterviewDto) {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
-      include: { requisition: { select: { unitFactory: true } } },
+      include: {
+        requisition: { select: { unitFactory: true, designation: true } },
+      },
     });
     if (!round) throw new NotFoundException('Interview not found');
     await this.requireRecruitmentAccess(round.requisition.unitFactory, userId);
@@ -129,10 +147,17 @@ export class InterviewService {
     this.notifications.broadcastChange('candidate', round.requisitionId, {
       action: 'interview_updated',
     });
-    const fresh = await this.prisma.interviewRound.findUnique({
+    let fresh = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
       include: roundInclude,
     });
+    if (fresh) {
+      const synced = await this.syncCalendarUpdate(
+        fresh,
+        round.requisition.designation,
+      );
+      if (synced) fresh = synced;
+    }
     return fresh ? serializeRound(fresh) : { id: roundId };
   }
 
@@ -143,6 +168,9 @@ export class InterviewService {
     });
     if (!round) throw new NotFoundException('Interview not found');
     await this.requireRecruitmentAccess(round.requisition.unitFactory, userId);
+    if (round.calendarEventId) {
+      await this.calendar.cancelEvent(round.calendarEventId);
+    }
     await this.prisma.interviewRound.delete({ where: { id: roundId } });
     this.notifications.broadcastChange('candidate', round.requisitionId, {
       action: 'interview_removed',
@@ -157,7 +185,9 @@ export class InterviewService {
     const rounds = await this.prisma.interviewRound.findMany({
       where: { panelists: { some: { userId } } },
       include: {
-        candidate: { select: { id: true, name: true, email: true, phone: true } },
+        candidate: {
+          select: { id: true, name: true, email: true, phone: true },
+        },
         requisition: {
           select: {
             id: true,
@@ -181,6 +211,7 @@ export class InterviewService {
         mode: r.mode.toLowerCase(),
         scheduledAt: r.scheduledAt?.toISOString() ?? null,
         location: r.location ?? '',
+        meetLink: r.meetLink ?? null,
         status: r.status.toLowerCase(),
         candidate: {
           id: r.candidate.id,
@@ -271,6 +302,74 @@ export class InterviewService {
 
   // --- helpers -------------------------------------------------------------
 
+  /** Create the Calendar event for a new round; returns the updated round. */
+  private async syncCalendarCreate(
+    round: RoundFull,
+    designation: string,
+    inviteCandidate: boolean,
+  ): Promise<RoundFull | null> {
+    const input = this.eventInput(round, designation, inviteCandidate);
+    if (!input || !this.calendar.isConfigured()) return null;
+    const ev = await this.calendar.createEvent(input);
+    if (!ev?.eventId) return null;
+    return this.prisma.interviewRound.update({
+      where: { id: round.id },
+      data: {
+        calendarEventId: ev.eventId,
+        meetLink: ev.meetLink,
+        // Online rounds with no venue get the Meet link as their location.
+        ...(ev.meetLink && !round.location ? { location: ev.meetLink } : {}),
+      },
+      include: roundInclude,
+    });
+  }
+
+  /** Patch / cancel / late-create the Calendar event after a round changes. */
+  private async syncCalendarUpdate(
+    round: RoundFull,
+    designation: string,
+  ): Promise<RoundFull | null> {
+    if (!this.calendar.isConfigured()) return null;
+    if (round.calendarEventId) {
+      if (round.status === 'CANCELLED') {
+        await this.calendar.cancelEvent(round.calendarEventId);
+        return this.prisma.interviewRound.update({
+          where: { id: round.id },
+          data: { calendarEventId: null, meetLink: null },
+          include: roundInclude,
+        });
+      }
+      const input = this.eventInput(round, designation, true);
+      if (input) await this.calendar.updateEvent(round.calendarEventId, input);
+      return null;
+    }
+    // No event yet (e.g. a time was added later) — create one now.
+    if (round.status !== 'SCHEDULED') return null;
+    return this.syncCalendarCreate(round, designation, true);
+  }
+
+  private eventInput(
+    round: RoundFull,
+    designation: string,
+    inviteCandidate: boolean,
+  ): CalendarEventInput | null {
+    if (!round.scheduledAt) return null;
+    const attendees = round.panelists
+      .map((p) => p.user.email ?? '')
+      .filter(Boolean);
+    if (inviteCandidate && round.candidate.email) {
+      attendees.push(round.candidate.email);
+    }
+    return {
+      summary: `Interview — ${round.candidate.name} · ${designation}`,
+      description: `${cap(round.kind.toLowerCase())} interview for the ${designation} position (DBL HRM).`,
+      start: round.scheduledAt,
+      attendees,
+      location: round.location,
+      withMeet: round.mode === 'ONLINE',
+    };
+  }
+
   private async notifyScheduled(
     round: RoundFull,
     designation: string,
@@ -299,12 +398,16 @@ export class InterviewService {
     }
 
     // Email the candidate (if requested and an address is on file).
-    if (dto.notifyCandidate && round.candidate.email && this.mail.isConfigured()) {
+    if (
+      dto.notifyCandidate &&
+      round.candidate.email &&
+      this.mail.isConfigured()
+    ) {
       try {
         await this.mail.send({
           to: round.candidate.email,
           subject: `Interview Invitation — ${designation} | DBL Group`,
-          text: `Dear ${round.candidate.name},\n\nYou are invited to a ${kindLabel} interview for the ${designation} position.\n\nWhen: ${when}\nMode: ${modeLabel}${round.location ? `\nWhere: ${round.location}` : ''}\n\nBest regards,\nDBL Group Recruitment`,
+          text: `Dear ${round.candidate.name},\n\nYou are invited to a ${kindLabel} interview for the ${designation} position.\n\nWhen: ${when}\nMode: ${modeLabel}${round.meetLink ? `\nGoogle Meet: ${round.meetLink}` : round.location ? `\nWhere: ${round.location}` : ''}\n\nA calendar invitation has also been sent to this address if scheduling is connected.\n\nBest regards,\nDBL Group Recruitment`,
         });
       } catch (err) {
         this.logger.warn(`Interview email failed: ${(err as Error).message}`);
@@ -315,7 +418,9 @@ export class InterviewService {
   private async loadCandidate(candidateId: string, userId: string) {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
-      include: { requisition: { select: { unitFactory: true, designation: true } } },
+      include: {
+        requisition: { select: { unitFactory: true, designation: true } },
+      },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
     await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
@@ -333,8 +438,11 @@ export class InterviewService {
 
   private async requireRecruitmentAccess(unit: string, userId: string) {
     const ok =
-      (await this.permissions.hasRoleForUnitName(userId, 'corporate_hr', unit)) ||
-      (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
+      (await this.permissions.hasRoleForUnitName(
+        userId,
+        'corporate_hr',
+        unit,
+      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
     if (!ok) {
       throw new ForbiddenException(
         'Only Corporate HR, CHRO or a super user can manage interviews',
@@ -354,6 +462,8 @@ function serializeRound(r: RoundFull) {
     scheduledAt: r.scheduledAt?.toISOString() ?? null,
     location: r.location ?? '',
     status: r.status.toLowerCase(),
+    meetLink: r.meetLink ?? null,
+    calendarSynced: Boolean(r.calendarEventId),
     panelists: r.panelists.map((p) => ({
       id: p.id,
       userId: p.userId,
@@ -370,6 +480,10 @@ function serializeRound(r: RoundFull) {
     })),
     evaluationCount: r.evaluations.length,
   };
+}
+
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function toDate(value?: string): Date | null {

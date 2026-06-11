@@ -79,6 +79,65 @@ export interface ScreenResult {
   phone: string | null;
 }
 
+export interface CrossCheckInput {
+  candidate: { name: string; email?: string | null; phone?: string | null };
+  role: { designation: string; education: string; experience: string };
+  docs: {
+    label: string;
+    summary: string;
+    fields: Record<string, string>;
+  }[];
+}
+
+export interface CrossCheckFinding {
+  /** Which document(s) the issue concerns, by label. */
+  doc: string;
+  severity: 'info' | 'warning' | 'critical';
+  detail: string;
+}
+
+export interface CrossCheckResult {
+  verdict: 'consistent' | 'minor_issues' | 'discrepancies';
+  overview: string;
+  findings: CrossCheckFinding[];
+}
+
+export interface CompareFinalistInput {
+  role: {
+    designation: string;
+    department: string;
+    jobDescription: string;
+    requirements: string[];
+  };
+  finalists: {
+    id: string;
+    name: string;
+    stage: string;
+    matchScore: number | null;
+    matchSummary: string | null;
+    exams: { type: string; score: number; maxScore: number }[];
+    interviews: {
+      kind: string;
+      avgTotal: number;
+      evaluations: number;
+      comments: string[];
+    }[];
+  }[];
+}
+
+export interface FinalistRanking {
+  id: string;
+  rank: number;
+  strengths: string[];
+  risks: string[];
+  verdict: string;
+}
+
+export interface CompareFinalistsResult {
+  recommendation: string;
+  ranking: FinalistRanking[];
+}
+
 interface GeminiResp {
   candidates?: { content?: { parts?: { text?: string }[] } }[];
 }
@@ -159,7 +218,8 @@ export class AiGraderService {
       throw new ServiceUnavailableException('AI extraction is not configured');
     }
     const supported =
-      input.mimeType.startsWith('image/') || input.mimeType === 'application/pdf';
+      input.mimeType.startsWith('image/') ||
+      input.mimeType === 'application/pdf';
     if (!supported) {
       return {
         summary: `Automatic extraction isn't available for ${input.mimeType} files — please review this document manually.`,
@@ -225,7 +285,11 @@ Use clear field names that match the document, for example: Full Name, Document 
       mimeType === 'application/pdf'
         ? {
             type: 'document',
-            source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: base64,
+            },
           }
         : {
             type: 'image',
@@ -261,8 +325,11 @@ Use clear field names that match the document, for example: Full Name, Document 
       };
       const fields: Record<string, string> = {};
       if (obj.fields && typeof obj.fields === 'object') {
-        for (const [k, v] of Object.entries(obj.fields as Record<string, unknown>)) {
-          if (v != null && String(v).trim()) fields[k] = String(v).slice(0, 300);
+        for (const [k, v] of Object.entries(
+          obj.fields as Record<string, unknown>,
+        )) {
+          if (v != null && String(v).trim())
+            fields[k] = String(v).slice(0, 300);
         }
       }
       return {
@@ -270,7 +337,9 @@ Use clear field names that match the document, for example: Full Name, Document 
         fields,
       };
     } catch {
-      this.logger.warn(`Could not parse AI extraction output: ${raw.slice(0, 120)}`);
+      this.logger.warn(
+        `Could not parse AI extraction output: ${raw.slice(0, 120)}`,
+      );
       return { summary: '', fields: {} };
     }
   }
@@ -322,7 +391,9 @@ Use clear field names that match the document, for example: Full Name, Document 
 
   private buildScreenPrompt(i: ScreenInput): string {
     const list = (arr?: string[]) =>
-      arr && arr.length ? arr.map((x) => `- ${x}`).join('\n') : '(none specified)';
+      arr && arr.length
+        ? arr.map((x) => `- ${x}`).join('\n')
+        : '(none specified)';
     return `You are a recruitment screening assistant. Read the attached candidate CV and judge how well it fits the role below. Be objective and evidence-based.
 
 ROLE: ${i.designation}
@@ -368,8 +439,213 @@ Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experien
         phone,
       };
     } catch {
-      this.logger.warn(`Could not parse AI screening output: ${raw.slice(0, 120)}`);
+      this.logger.warn(
+        `Could not parse AI screening output: ${raw.slice(0, 120)}`,
+      );
       return { score: 0, summary: '', email: null, phone: null };
+    }
+  }
+
+  /**
+   * Cross-check a candidate's submitted onboarding documents against their
+   * profile and against each other — flags name/date/credential mismatches.
+   */
+  async crossCheckDocuments(input: CrossCheckInput): Promise<CrossCheckResult> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const prompt = this.buildCrossCheckPrompt(input);
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, 900)
+        : await this.callGemini(prompt);
+    return this.parseCrossCheck(raw);
+  }
+
+  private buildCrossCheckPrompt(i: CrossCheckInput): string {
+    const docBlocks = i.docs
+      .map((d) => {
+        const fields = Object.entries(d.fields)
+          .map(([k, v]) => `  ${k}: ${v}`)
+          .join('\n');
+        return `DOCUMENT "${d.label}"\nSummary: ${d.summary || '(none)'}\nExtracted fields:\n${fields || '  (none)'}`;
+      })
+      .join('\n\n');
+    return `You are an HR document-verification auditor. A selected candidate submitted joining documents; each was already OCR-extracted. Cross-check the documents against the candidate's profile AND against each other.
+
+CANDIDATE PROFILE (from the application)
+Name: ${i.candidate.name}
+Email: ${i.candidate.email || '(not on file)'}
+Phone: ${i.candidate.phone || '(not on file)'}
+Position: ${i.role.designation}
+Required education: ${i.role.education || '(unspecified)'}
+Required experience: ${i.role.experience || '(unspecified)'}
+
+${docBlocks}
+
+Check for: (1) name mismatches between documents and the application (allow obvious spelling/transliteration variants — flag those as "info", real differences as "critical"); (2) date inconsistencies (birth date differing across documents, certificates dated before birth, expired IDs); (3) education that does not satisfy the requirement; (4) anything internally contradictory or suspicious. Do NOT flag a document merely for missing optional fields.
+
+Respond with ONLY a compact JSON object and nothing else:
+{"verdict":"consistent|minor_issues|discrepancies","overview":"<1-2 sentence overall conclusion>","findings":[{"doc":"<document label or 'Profile'>","severity":"info|warning|critical","detail":"<specific, factual issue>"}]}
+Use "consistent" with an empty findings array when everything lines up.`;
+  }
+
+  private parseCrossCheck(raw: string): CrossCheckResult {
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      const obj = JSON.parse(match ? match[0] : raw) as {
+        verdict?: unknown;
+        overview?: unknown;
+        findings?: unknown;
+      };
+      const verdicts = ['consistent', 'minor_issues', 'discrepancies'] as const;
+      const verdict = verdicts.includes(
+        obj.verdict as (typeof verdicts)[number],
+      )
+        ? (obj.verdict as CrossCheckResult['verdict'])
+        : 'minor_issues';
+      const severities = ['info', 'warning', 'critical'] as const;
+      const findings: CrossCheckFinding[] = Array.isArray(obj.findings)
+        ? (obj.findings as unknown[])
+            .map((f) => {
+              const o = f as {
+                doc?: unknown;
+                severity?: unknown;
+                detail?: unknown;
+              };
+              return {
+                doc: String(o.doc ?? 'General').slice(0, 80),
+                severity: severities.includes(
+                  o.severity as (typeof severities)[number],
+                )
+                  ? (o.severity as CrossCheckFinding['severity'])
+                  : 'warning',
+                detail: String(o.detail ?? '').slice(0, 400),
+              };
+            })
+            .filter((f) => f.detail)
+            .slice(0, 12)
+        : [];
+      return {
+        verdict,
+        overview: String(obj.overview ?? '').slice(0, 500),
+        findings,
+      };
+    } catch {
+      this.logger.warn(`Could not parse AI cross-check: ${raw.slice(0, 120)}`);
+      return { verdict: 'minor_issues', overview: '', findings: [] };
+    }
+  }
+
+  /**
+   * Compare interviewed finalists side-by-side and rank them for the final
+   * selection decision. Purely advisory — the human decides.
+   */
+  async compareFinalists(
+    input: CompareFinalistInput,
+  ): Promise<CompareFinalistsResult> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const prompt = this.buildComparePrompt(input);
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, 1400)
+        : await this.callGemini(prompt);
+    return this.parseCompare(
+      raw,
+      input.finalists.map((f) => f.id),
+    );
+  }
+
+  private buildComparePrompt(i: CompareFinalistInput): string {
+    const blocks = i.finalists
+      .map((f) => {
+        const exams = f.exams.length
+          ? f.exams
+              .map((e) => `  ${e.type}: ${e.score}/${e.maxScore}`)
+              .join('\n')
+          : '  (no exams)';
+        const interviews = f.interviews.length
+          ? f.interviews
+              .map(
+                (r) =>
+                  `  ${r.kind} interview — avg panel score ${r.avgTotal} (${r.evaluations} evaluator${r.evaluations === 1 ? '' : 's'})${
+                    r.comments.length
+                      ? `; comments: ${r.comments.join(' | ')}`
+                      : ''
+                  }`,
+              )
+              .join('\n')
+          : '  (no interview marks yet)';
+        return `CANDIDATE id=${f.id}
+Name: ${f.name} (stage: ${f.stage})
+CV match score: ${f.matchScore ?? 'n/a'}/100${f.matchSummary ? ` — ${f.matchSummary}` : ''}
+Exam results:
+${exams}
+Interviews:
+${interviews}`;
+      })
+      .join('\n\n');
+    return `You are advising DBL Group's Corporate HR on a final hiring decision. Compare the finalists below for the role, strictly on the evidence given (CV screening, exam scores, interview panel marks and comments). Be balanced — name genuine risks, not filler.
+
+ROLE: ${i.role.designation} — ${i.role.department}
+Job description: ${i.role.jobDescription || '(none)'}
+Key requirements:
+${i.role.requirements.map((r) => `- ${r}`).join('\n') || '(none)'}
+
+${blocks}
+
+Respond with ONLY a compact JSON object and nothing else:
+{"recommendation":"<3-5 sentences: who you would hire and why, referencing the evidence>","ranking":[{"id":"<candidate id>","rank":<1=best>,"strengths":["<2-4 short items>"],"risks":["<1-3 short items>"],"verdict":"<one sentence on this candidate>"}]}
+Include EVERY candidate exactly once, using the exact id values given.`;
+  }
+
+  private parseCompare(
+    raw: string,
+    validIds: string[],
+  ): CompareFinalistsResult {
+    const toItems = (v: unknown): string[] =>
+      Array.isArray(v)
+        ? v
+            .map((x) => String(x).trim())
+            .filter(Boolean)
+            .slice(0, 5)
+        : [];
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      const obj = JSON.parse(match ? match[0] : raw) as {
+        recommendation?: unknown;
+        ranking?: unknown;
+      };
+      const ranking: FinalistRanking[] = Array.isArray(obj.ranking)
+        ? (obj.ranking as unknown[])
+            .map((r) => {
+              const o = r as {
+                id?: unknown;
+                rank?: unknown;
+                strengths?: unknown;
+                risks?: unknown;
+                verdict?: unknown;
+              };
+              return {
+                id: String(o.id ?? ''),
+                rank: Math.max(1, Math.round(Number(o.rank) || 99)),
+                strengths: toItems(o.strengths),
+                risks: toItems(o.risks),
+                verdict: String(o.verdict ?? '').slice(0, 300),
+              };
+            })
+            .filter((r) => validIds.includes(r.id))
+            .sort((a, b) => a.rank - b.rank)
+        : [];
+      return {
+        recommendation: String(obj.recommendation ?? '').slice(0, 1200),
+        ranking,
+      };
+    } catch {
+      this.logger.warn(`Could not parse AI comparison: ${raw.slice(0, 120)}`);
+      return { recommendation: '', ranking: [] };
     }
   }
 
@@ -443,7 +719,10 @@ Write specifically for THIS role and unit — do not be generic. Respond with ON
   private parseRoleProfile(raw: string): RoleProfileResult {
     const toLines = (v: unknown): string[] =>
       Array.isArray(v)
-        ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, 10)
+        ? v
+            .map((x) => String(x).trim())
+            .filter(Boolean)
+            .slice(0, 10)
         : [];
     try {
       const match = raw.match(/\{[\s\S]*\}/);
@@ -463,7 +742,12 @@ Write specifically for THIS role and unit — do not be generic. Respond with ON
       this.logger.warn(
         `Could not parse AI role profile output: ${raw.slice(0, 120)}`,
       );
-      return { summary: '', jobDescription: '', responsibilities: [], requirements: [] };
+      return {
+        summary: '',
+        jobDescription: '',
+        responsibilities: [],
+        requirements: [],
+      };
     }
   }
 
@@ -494,7 +778,10 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
         headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0,
+          },
         }),
       },
     );
@@ -555,7 +842,9 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
       const feedback = String(obj.feedback ?? '').slice(0, 500);
       return { score, feedback };
     } catch {
-      this.logger.warn(`Could not parse AI grading output: ${raw.slice(0, 120)}`);
+      this.logger.warn(
+        `Could not parse AI grading output: ${raw.slice(0, 120)}`,
+      );
       return { score: 0, feedback: '' };
     }
   }

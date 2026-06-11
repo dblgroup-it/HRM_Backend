@@ -5,13 +5,7 @@ import {
   Get,
   Patch,
 } from '@nestjs/common';
-import {
-  IsBoolean,
-  IsInt,
-  IsOptional,
-  Max,
-  Min,
-} from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 import {
   AuthUser,

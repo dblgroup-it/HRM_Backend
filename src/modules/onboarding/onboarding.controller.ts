@@ -1,11 +1,5 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Patch,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 
 import {
   AuthUser,
@@ -68,6 +62,13 @@ export class OnboardingController {
   @Post('candidates/:id/onboarding/offer')
   sendOffer(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.onboarding.sendOffer(id, user.id);
+  }
+
+  /** AI cross-verification of all extracted docs vs the candidate's profile. */
+  @Throttle({ default: { limit: 15, ttl: 60_000 } })
+  @Post('candidates/:id/onboarding/cross-check')
+  crossCheck(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.crossVerify(id, user.id);
   }
 
   @Post('candidates/:id/onboarding/hr-verify')

@@ -1,10 +1,4 @@
-import {
-  Controller,
-  Get,
-  Logger,
-  Query,
-  Res,
-} from '@nestjs/common';
+import { Controller, Get, Logger, Query, Res } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import type { Response } from 'express';
 
@@ -39,6 +33,9 @@ export class GoogleController {
     return {
       hasClient: this.auth.hasClient(),
       connected: this.auth.isConfigured(),
+      // Calendar rides on the same OAuth token. A pre-calendar consent keeps
+      // working for Drive and simply skips invites until consent is redone.
+      calendar: this.auth.isConfigured(),
     };
   }
 
@@ -50,15 +47,13 @@ export class GoogleController {
   @Get('oauth/start')
   start(@Res() res: Response) {
     if (!this.auth.hasClient()) {
-      res
-        .type('html')
-        .send(
-          page(
-            'Google Drive — not configured',
-            `<p>Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> in
+      res.type('html').send(
+        page(
+          'Google Drive — not configured',
+          `<p>Set <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> in
              <code>HRM_Backend/.env</code> first, then restart the backend and reopen this page.</p>`,
-          ),
-        );
+        ),
+      );
       return;
     }
     res.redirect(this.auth.getConsentUrl());
@@ -72,15 +67,13 @@ export class GoogleController {
     @Res() res: Response,
   ) {
     if (error || !code) {
-      res
-        .type('html')
-        .send(
-          page(
-            'Authorization failed',
-            `<p>${error ?? 'No authorization code was returned.'} Please
+      res.type('html').send(
+        page(
+          'Authorization failed',
+          `<p>${error ?? 'No authorization code was returned.'} Please
              <a href="/api/integrations/google/oauth/start">try again</a>.</p>`,
-          ),
-        );
+        ),
+      );
       return;
     }
 
@@ -110,15 +103,13 @@ export class GoogleController {
       );
     } catch (err) {
       this.logger.error('Token exchange failed', err as Error);
-      res
-        .type('html')
-        .send(
-          page(
-            'Token exchange failed',
-            `<p>${(err as Error).message}. Please
+      res.type('html').send(
+        page(
+          'Token exchange failed',
+          `<p>${(err as Error).message}. Please
              <a href="/api/integrations/google/oauth/start">try again</a>.</p>`,
-          ),
-        );
+        ),
+      );
     }
   }
 }

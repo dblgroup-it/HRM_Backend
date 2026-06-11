@@ -80,7 +80,9 @@ export class UsersService {
       try {
         await this.drive.discardFile(user.avatarFileId);
       } catch (err) {
-        this.logger.warn(`Old avatar cleanup failed: ${(err as Error).message}`);
+        this.logger.warn(
+          `Old avatar cleanup failed: ${(err as Error).message}`,
+        );
       }
     }
 

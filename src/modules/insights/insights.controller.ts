@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 
 import {
   AuthUser,
@@ -8,6 +9,8 @@ import { InsightsService } from './insights.service';
 import { AskDto } from './dto/insights.dto';
 
 /** AI HR Insights — ask-your-data chat, weekly digest, bottleneck analysis. */
+// AI calls cost money + take seconds — cap them per IP.
+@Throttle({ default: { limit: 20, ttl: 60_000 } })
 @Controller('insights')
 export class InsightsController {
   constructor(private readonly insights: InsightsService) {}

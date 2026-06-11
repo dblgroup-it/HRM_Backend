@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
+import { MemoryCacheService } from '../../common/cache/memory-cache.service';
 
 const DAY = 86_400_000;
 const STUCK_DAYS = 3;
@@ -35,7 +36,15 @@ interface HrContext {
     byDepartment: { department: string; count: number }[];
     byUnit: { unit: string; count: number }[];
   };
-  organogram: { unitCount: number; topVacancies: { unit: string; vacant: number; sanctioned: number; filled: number }[] };
+  organogram: {
+    unitCount: number;
+    topVacancies: {
+      unit: string;
+      vacant: number;
+      sanctioned: number;
+      filled: number;
+    }[];
+  };
   pipeline: Record<string, number>;
   activity7d: {
     newRequisitions: number;
@@ -50,6 +59,7 @@ export class InsightsService {
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
     private readonly ai: AiGraderService,
+    private readonly cache: MemoryCacheService,
   ) {}
 
   aiConfigured(): boolean {
@@ -116,7 +126,15 @@ ${JSON.stringify(ctx.requisitions)}`;
 
   // --- data gathering ------------------------------------------------------
 
-  private async gather(): Promise<HrContext> {
+  private gather(): Promise<HrContext> {
+    // Shared by ask/digest/bottlenecks — cache 60s so a burst of questions
+    // doesn't re-aggregate every time.
+    return this.cache.wrap('insights:context', 60_000, () =>
+      this.buildContext(),
+    );
+  }
+
+  private async buildContext(): Promise<HrContext> {
     const now = Date.now();
     const since = new Date(now - 7 * DAY);
 
@@ -168,11 +186,20 @@ ${JSON.stringify(ctx.requisitions)}`;
     const [total, active, byDeptRaw, byUnitRaw] = await Promise.all([
       this.prisma.employee.count(),
       this.prisma.employee.count({ where: { exitDate: null } }),
-      this.prisma.employee.groupBy({ by: ['department'], _count: { _all: true } }),
-      this.prisma.employee.groupBy({ by: ['unitName'], _count: { _all: true } }),
+      this.prisma.employee.groupBy({
+        by: ['department'],
+        _count: { _all: true },
+      }),
+      this.prisma.employee.groupBy({
+        by: ['unitName'],
+        _count: { _all: true },
+      }),
     ]);
     const byDepartment = byDeptRaw
-      .map((d) => ({ department: d.department ?? 'Unassigned', count: d._count._all }))
+      .map((d) => ({
+        department: d.department ?? 'Unassigned',
+        count: d._count._all,
+      }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 15);
     const byUnit = byUnitRaw
@@ -209,7 +236,8 @@ ${JSON.stringify(ctx.requisitions)}`;
       _count: { _all: true },
     });
     const pipeline: Record<string, number> = {};
-    for (const c of candByStage) pipeline[c.stage.toLowerCase()] = c._count._all;
+    for (const c of candByStage)
+      pipeline[c.stage.toLowerCase()] = c._count._all;
 
     const [newReqs7d, newCands7d, acts7d] = await Promise.all([
       this.prisma.requisition.count({ where: { createdAt: { gte: since } } }),
@@ -233,9 +261,12 @@ ${JSON.stringify(ctx.requisitions)}`;
       totals: {
         requisitions: reqs.length,
         openRequisitions: requisitions.filter((r) =>
-          ['pending_approval', 'approved', 'profile_generated'].includes(r.status),
+          ['pending_approval', 'approved', 'profile_generated'].includes(
+            r.status,
+          ),
         ).length,
-        postedRequisitions: requisitions.filter((r) => r.status === 'posted').length,
+        postedRequisitions: requisitions.filter((r) => r.status === 'posted')
+          .length,
         employees: total,
         activeEmployees: active,
         sanctionedSeats: sanctioned,
@@ -276,12 +307,28 @@ ${JSON.stringify(ctx.requisitions)}`;
       .sort((a, b) => b.daysWaiting - a.daysWaiting);
 
     // Funnel + conversion
-    const order = ['applied', 'ai_shortlisted', 'shortlisted', 'interview', 'final', 'selected'];
-    const funnel = order.map((stage) => ({ stage, count: ctx.pipeline[stage] ?? 0 }));
+    const order = [
+      'applied',
+      'ai_shortlisted',
+      'shortlisted',
+      'interview',
+      'final',
+      'selected',
+    ];
+    const funnel = order.map((stage) => ({
+      stage,
+      count: ctx.pipeline[stage] ?? 0,
+    }));
     const applied = ctx.pipeline['applied'] ?? 0;
-    const reachedInterview = (ctx.pipeline['interview'] ?? 0) + (ctx.pipeline['final'] ?? 0) + (ctx.pipeline['selected'] ?? 0);
+    const reachedInterview =
+      (ctx.pipeline['interview'] ?? 0) +
+      (ctx.pipeline['final'] ?? 0) +
+      (ctx.pipeline['selected'] ?? 0);
     const selected = ctx.pipeline['selected'] ?? 0;
-    const totalCandidates = Object.values(ctx.pipeline).reduce((s, n) => s + n, 0);
+    const totalCandidates = Object.values(ctx.pipeline).reduce(
+      (s, n) => s + n,
+      0,
+    );
 
     // Time-to-fill: requisition.createdAt → its selected candidate (updatedAt)
     const selectedCands = await this.prisma.candidate.findMany({
@@ -301,8 +348,12 @@ ${JSON.stringify(ctx.requisitions)}`;
       stuckRequisitions: stuck,
       funnel,
       conversion: {
-        appliedToInterviewPct: applied ? Math.round((reachedInterview / applied) * 100) : 0,
-        appliedToSelectedPct: applied ? Math.round((selected / applied) * 100) : 0,
+        appliedToInterviewPct: applied
+          ? Math.round((reachedInterview / applied) * 100)
+          : 0,
+        appliedToSelectedPct: applied
+          ? Math.round((selected / applied) * 100)
+          : 0,
         totalCandidates,
       },
       avgTimeToFillDays,
@@ -315,13 +366,18 @@ ${JSON.stringify(ctx.requisitions)}`;
   private async requireAccess(userId: string) {
     if (await this.permissions.isSuperUser(userId)) return;
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (user && ['ADMIN', 'HR_MANAGER', 'MANAGEMENT'].includes(user.role)) return;
+    // NOTE: do NOT allow User.role === 'MANAGEMENT' — the ZingHR sync stamps
+    // every synced employee as MANAGEMENT, so it's not an elevated role here.
+    if (user && ['ADMIN', 'HR_MANAGER'].includes(user.role)) return;
     const assignment = await this.prisma.roleAssignment.findFirst({
-      where: { userId, role: { key: { in: ['corporate_hr', 'chro', 'super_user'] } } },
+      where: {
+        userId,
+        role: { key: { in: ['corporate_hr', 'chro', 'super_user'] } },
+      },
     });
     if (assignment) return;
     throw new ForbiddenException(
-      'HR insights are available to management, Corporate HR/CHRO and super users.',
+      'HR insights are available to Corporate HR/CHRO, HR managers and super users.',
     );
   }
 }

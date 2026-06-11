@@ -15,13 +15,12 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 
 import { Public } from '../../common/decorators/public.decorator';
+import { IMAGE_UPLOAD as AVATAR_UPLOAD } from '../../common/upload/file-upload';
 import {
   AuthUser,
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
 import { UsersService, type UploadedImage } from './users.service';
-
-const AVATAR_UPLOAD = { limits: { fileSize: 2 * 1024 * 1024 } };
 
 class UpdatePreferencesDto {
   @IsBoolean()

@@ -11,6 +11,8 @@ export interface JwtPayload {
   sub: string;
   employeeCode: string;
   role: UserRole;
+  /** Token version at issue time — must match the user's current value. */
+  tv?: number;
   /** Set on the short-lived token issued between password + 2FA steps. */
   pending2fa?: boolean;
 }
@@ -38,6 +40,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
     if (!user || user.status !== 'ACTIVE') {
       throw new UnauthorizedException('Account is inactive or not found');
+    }
+    // Reject tokens issued before a logout / password change (revocation).
+    if ((payload.tv ?? 0) !== user.tokenVersion) {
+      throw new UnauthorizedException('Session expired — please sign in again');
     }
     return {
       id: user.id,

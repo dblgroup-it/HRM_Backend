@@ -170,6 +170,8 @@ model User {
   passwordHash    String           @map("password_hash")
   role            UserRole         @default(EMPLOYEE)
   status          UserStatus       @default(ACTIVE)
+  /// Bumped on logout / password change to invalidate previously-issued JWTs.
+  tokenVersion    Int              @default(0) @map("token_version")
   /// Google Drive file id of the user's profile picture (served via the avatar proxy).
   avatarFileId    String?          @map("avatar_file_id")
   /// Per-user toggle: also send notifications to this user's email.
@@ -207,6 +209,7 @@ model Notification {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId, read])
+  @@index([userId, createdAt])
   @@map("notifications")
 }
 
@@ -269,6 +272,7 @@ model Employee {
 
   @@index([unitId])
   @@index([department])
+  @@index([unitName])
   @@map("employees")
 }
 
@@ -378,6 +382,7 @@ model Requisition {
 
   @@index([status])
   @@index([unitFactory])
+  @@index([createdAt])
   @@map("requisitions")
 }
 
@@ -409,6 +414,8 @@ model Candidate {
   updatedAt     DateTime       @updatedAt @map("updated_at")
 
   @@index([requisitionId, stage])
+  @@index([stage])
+  @@index([createdAt])
   @@map("candidates")
 }
 
@@ -425,6 +432,9 @@ model InterviewRound {
   /// Venue (physical) or meeting link (online).
   location      String?
   status        InterviewStatus     @default(SCHEDULED)
+  /// Google Calendar sync: event id + the auto-generated Meet link (online).
+  calendarEventId String?           @map("calendar_event_id")
+  meetLink        String?           @map("meet_link")
   panelists     InterviewPanelist[]
   evaluations   Evaluation[]
   createdAt     DateTime            @default(now()) @map("created_at")
@@ -512,7 +522,13 @@ model Onboarding {
   medicalNote     String?         @map("medical_note")
   medicalClearedAt DateTime?      @map("medical_cleared_at")
   hrVerifiedAt    DateTime?       @map("hr_verified_at")
+  /// AI cross-verification of submitted docs vs the candidate's profile:
+  /// { verdict, overview, findings: [{doc, severity, detail}] }
+  crossCheck      Json?           @map("cross_check")
+  crossCheckedAt  DateTime?       @map("cross_checked_at")
   archivedAt      DateTime?       @map("archived_at")
+  /// Drive folder the joining docs were moved into on archive.
+  archiveFolderUrl String?        @map("archive_folder_url")
   itEmail         String?         @map("it_email")
   itAssetId       String?         @map("it_asset_id")
   itNotifiedAt    DateTime?       @map("it_notified_at")
@@ -628,6 +644,7 @@ model RequisitionActivity {
   at            DateTime         @default(now())
 
   @@index([requisitionId])
+  @@index([at])
   @@map("requisition_activities")
 }
 

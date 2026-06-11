@@ -34,7 +34,8 @@ export class RecruitmentService {
   async ensureWorkspace(
     req: RequisitionWorkspaceInput,
   ): Promise<RequisitionDriveMap | null> {
-    const existing = (req.drive as unknown as RequisitionDriveMap | null) ?? null;
+    const existing =
+      (req.drive as unknown as RequisitionDriveMap | null) ?? null;
     if (existing?.allCvFolderId) return existing;
     if (!this.drive.isConfigured()) return null;
 

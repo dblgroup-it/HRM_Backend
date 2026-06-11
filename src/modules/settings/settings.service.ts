@@ -32,7 +32,9 @@ export class SettingsService {
 
   /** Effective AI config (defaults merged with stored overrides). */
   async getAiConfig(): Promise<AiConfig> {
-    const row = await this.prisma.setting.findUnique({ where: { key: AI_KEY } });
+    const row = await this.prisma.setting.findUnique({
+      where: { key: AI_KEY },
+    });
     const v = (row?.value as Partial<AiConfig> | null) ?? {};
     return {
       shortlistThreshold: clamp(
@@ -67,7 +69,10 @@ export class SettingsService {
     };
     await this.prisma.setting.upsert({
       where: { key: AI_KEY },
-      create: { key: AI_KEY, value: merged as unknown as Prisma.InputJsonValue },
+      create: {
+        key: AI_KEY,
+        value: merged as unknown as Prisma.InputJsonValue,
+      },
       update: { value: merged as unknown as Prisma.InputJsonValue },
     });
     return merged;

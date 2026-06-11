@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 
 import { Public } from '../../common/decorators/public.decorator';
 import {
@@ -19,6 +20,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @HttpCode(200)
   login(@Body() dto: LoginDto) {
@@ -30,6 +32,14 @@ export class AuthController {
     return this.authService.me(user.id);
   }
 
+  /** Invalidate the current session's tokens server-side. */
+  @Post('logout')
+  @HttpCode(200)
+  logout(@CurrentUser() user: AuthUser) {
+    return this.authService.logout(user.id);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('change-password')
   @HttpCode(200)
   changePassword(
@@ -57,6 +67,7 @@ export class AuthController {
 
   /** Second step of login: verify the 2FA code with the challenge token. */
   @Public()
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   @Post('login/2fa')
   @HttpCode(200)
   loginTwoFactor(@Body() dto: TwoFactorLoginDto) {
@@ -74,18 +85,21 @@ export class AuthController {
     return this.authService.setupTotp(user.id);
   }
 
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   @Post('2fa/totp/enable')
   @HttpCode(200)
   totpEnable(@CurrentUser() user: AuthUser, @Body() dto: TwoFactorCodeDto) {
     return this.authService.enableTotp(user.id, dto.code);
   }
 
+  @Throttle({ default: { limit: 4, ttl: 60_000 } })
   @Post('2fa/email/start')
   @HttpCode(200)
   emailStart(@CurrentUser() user: AuthUser) {
     return this.authService.startEmailSetup(user.id);
   }
 
+  @Throttle({ default: { limit: 8, ttl: 60_000 } })
   @Post('2fa/email/enable')
   @HttpCode(200)
   emailEnable(@CurrentUser() user: AuthUser, @Body() dto: TwoFactorCodeDto) {

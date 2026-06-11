@@ -64,7 +64,9 @@ export class NotificationsService {
           </div>`,
         });
       } catch (err) {
-        this.logger.warn(`Notification email failed: ${(err as Error).message}`);
+        this.logger.warn(
+          `Notification email failed: ${(err as Error).message}`,
+        );
       }
     })();
   }

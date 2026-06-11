@@ -7,6 +7,7 @@ import * as bcrypt from 'bcryptjs';
 import { Prisma, SyncLog } from '@prisma/client';
 
 import { PrismaService } from '../../../prisma/prisma.service';
+import { normalizeUnitName } from '../../../common/util/normalize-unit';
 import { ZING_ATTR, ZingHrEmployee, ZingHrResponse } from './zinghr.types';
 
 const SYNC_PATH = '/2015/route/EmployeeDetails/GetEmployeeMasterDetails';
@@ -158,8 +159,13 @@ export class ZingHrService implements OnModuleInit {
         this.prisma.unit.findMany({ select: { id: true, name: true } }),
       ]);
       const userMap = new Map(users.map((u) => [u.employeeCode, u.id]));
+      // Keyed by the normalized name so "X Ltd." reuses an existing "X Ltd"
+      // unit instead of creating a duplicate.
       const unitMap = new Map(
-        units.map((u) => [u.name.toLowerCase(), u.id] as const),
+        units.map(
+          (u) =>
+            [normalizeUnitName(u.name), { id: u.id, name: u.name }] as const,
+        ),
       );
 
       for (const raw of employees) {
@@ -245,7 +251,7 @@ export class ZingHrService implements OnModuleInit {
   private async upsertEmployee(
     raw: ZingHrEmployee,
     userMap: Map<string, string>,
-    unitMap: Map<string, string>,
+    unitMap: Map<string, { id: string; name: string }>,
   ): Promise<{
     isNew: boolean;
     designation: string | null;
@@ -288,15 +294,24 @@ export class ZingHrService implements OnModuleInit {
       isNew = true;
     }
 
-    // Resolve (and cache) the unit by name.
+    // Resolve the unit by NORMALIZED name — reuse a configured unit if one
+    // matches (so "X Ltd." aligns to "X Ltd"), and store its canonical name
+    // so employees and role-assignment units share the same representation.
     let unitId: string | null = null;
-    if (unitName) {
-      const key = unitName.toLowerCase();
-      unitId = unitMap.get(key) ?? null;
-      if (!unitId) {
-        const unit = await this.prisma.unit.create({ data: { name: unitName } });
+    let canonicalUnitName: string | null = unitName?.trim() || null;
+    if (canonicalUnitName) {
+      const key = normalizeUnitName(canonicalUnitName);
+      const existing = unitMap.get(key);
+      if (existing) {
+        unitId = existing.id;
+        canonicalUnitName = existing.name;
+      } else {
+        const unit = await this.prisma.unit.create({
+          data: { name: canonicalUnitName },
+        });
         unitId = unit.id;
-        unitMap.set(key, unitId);
+        canonicalUnitName = unit.name;
+        unitMap.set(key, { id: unit.id, name: unit.name });
       }
     }
 
@@ -307,7 +322,7 @@ export class ZingHrService implements OnModuleInit {
       section: attr(ZING_ATTR.SECTION),
       grade: attr(ZING_ATTR.GRADE),
       category: attr(ZING_ATTR.CATEGORY),
-      unitName,
+      unitName: canonicalUnitName,
       unitId,
       location: attr(ZING_ATTR.LOCATION),
       gender: raw.Gender,
@@ -325,7 +340,7 @@ export class ZingHrService implements OnModuleInit {
       create: { userId, ...profile },
     });
 
-    return { isNew, designation, department, unitName };
+    return { isNew, designation, department, unitName: canonicalUnitName };
   }
 }
 

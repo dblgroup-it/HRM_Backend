@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 
 import configuration from './config/configuration';
 import { PrismaModule } from './prisma/prisma.module';
+import { MemoryCacheModule } from './common/cache/memory-cache.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { HealthController } from './health/health.controller';
@@ -31,7 +33,10 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     ScheduleModule.forRoot(),
+    // Global rate limit: 120 requests/min per IP (tighter on sensitive routes).
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     PrismaModule,
+    MemoryCacheModule,
     AuthModule,
     EmployeesModule,
     DashboardModule,
@@ -53,6 +58,8 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
   ],
   controllers: [HealthController],
   providers: [
+    // Rate limiting runs first — throttles abuse before auth even resolves.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     // JWT auth applies globally; opt out per-route with @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     // Role checks apply where @Roles() is present.

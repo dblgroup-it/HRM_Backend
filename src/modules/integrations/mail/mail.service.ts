@@ -26,7 +26,7 @@ export class MailService {
   isConfigured(): boolean {
     return Boolean(
       this.config.get<string>('mail.user') &&
-        this.config.get<string>('mail.appPassword'),
+      this.config.get<string>('mail.appPassword'),
     );
   }
 

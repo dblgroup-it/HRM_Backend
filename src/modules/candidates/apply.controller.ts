@@ -8,12 +8,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 
 import { Public } from '../../common/decorators/public.decorator';
+import { DOC_UPLOAD as CV_UPLOAD } from '../../common/upload/file-upload';
 import { CandidatesService, type UploadedCv } from './candidates.service';
 import { PublicApplyDto } from './dto/candidate.dto';
-
-const CV_UPLOAD = { limits: { fileSize: 10 * 1024 * 1024 } };
 
 /**
  * Public, unauthenticated job-application endpoints. The apply page (frontend
@@ -30,6 +30,7 @@ export class ApplyController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 12, ttl: 60_000 } })
   @Post(':reqId')
   @UseInterceptors(FileInterceptor('cv', CV_UPLOAD))
   apply(

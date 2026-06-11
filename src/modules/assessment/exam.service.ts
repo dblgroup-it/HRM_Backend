@@ -71,7 +71,9 @@ export class ExamService {
         examType: examTypeOf(dto.examType),
         kind: dto.kind.toUpperCase() as ExamQuestionKind,
         prompt: dto.prompt.trim(),
-        options: dto.options ? (dto.options as Prisma.InputJsonValue) : Prisma.DbNull,
+        options: dto.options
+          ? (dto.options as Prisma.InputJsonValue)
+          : Prisma.DbNull,
         answer: dto.answer?.trim() || null,
         marks: dto.marks,
         orderIndex: count,
@@ -80,7 +82,11 @@ export class ExamService {
     return this.getBank(reqId, userId);
   }
 
-  async updateQuestion(qid: string, userId: string, dto: UpdateExamQuestionDto) {
+  async updateQuestion(
+    qid: string,
+    userId: string,
+    dto: UpdateExamQuestionDto,
+  ) {
     const q = await this.prisma.examQuestion.findUnique({
       where: { id: qid },
       include: { requisition: { select: { unitFactory: true } } },
@@ -90,12 +96,16 @@ export class ExamService {
     await this.prisma.examQuestion.update({
       where: { id: qid },
       data: {
-        ...(dto.kind ? { kind: dto.kind.toUpperCase() as ExamQuestionKind } : {}),
+        ...(dto.kind
+          ? { kind: dto.kind.toUpperCase() as ExamQuestionKind }
+          : {}),
         ...(dto.prompt !== undefined ? { prompt: dto.prompt.trim() } : {}),
         ...(dto.options !== undefined
           ? { options: dto.options as Prisma.InputJsonValue }
           : {}),
-        ...(dto.answer !== undefined ? { answer: dto.answer.trim() || null } : {}),
+        ...(dto.answer !== undefined
+          ? { answer: dto.answer.trim() || null }
+          : {}),
         ...(dto.marks !== undefined ? { marks: dto.marks } : {}),
       },
     });
@@ -123,7 +133,9 @@ export class ExamService {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
       include: {
-        requisition: { select: { id: true, unitFactory: true, designation: true } },
+        requisition: {
+          select: { id: true, unitFactory: true, designation: true },
+        },
       },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
@@ -141,7 +153,13 @@ export class ExamService {
     const maxScore = questions.reduce((s, q) => s + q.marks, 0);
     const token = randomBytes(16).toString('hex');
     const attempt = await this.prisma.examAttempt.create({
-      data: { candidateId, requisitionId: cand.requisitionId, examType, token, maxScore },
+      data: {
+        candidateId,
+        requisitionId: cand.requisitionId,
+        examType,
+        token,
+        maxScore,
+      },
     });
 
     const link = this.examLink(token);
@@ -190,7 +208,10 @@ export class ExamService {
       include: { requisition: { select: { unitFactory: true } } },
     });
     if (!attempt) throw new NotFoundException('Attempt not found');
-    await this.requireRecruitmentAccess(attempt.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(
+      attempt.requisition.unitFactory,
+      userId,
+    );
     if (!attempt.answers) throw new BadRequestException('Not submitted yet');
     if (!this.ai.isConfigured()) {
       throw new ServiceUnavailableException('AI grading is not configured');
@@ -219,11 +240,16 @@ export class ExamService {
   // --- candidate (public, token) ------------------------------------------
 
   async getByToken(token: string) {
-    const attempt = await this.prisma.examAttempt.findUnique({ where: { token } });
+    const attempt = await this.prisma.examAttempt.findUnique({
+      where: { token },
+    });
     if (!attempt) throw new NotFoundException('Exam not found');
     const [questions, cand, req] = await Promise.all([
       this.prisma.examQuestion.findMany({
-        where: { requisitionId: attempt.requisitionId, examType: attempt.examType },
+        where: {
+          requisitionId: attempt.requisitionId,
+          examType: attempt.examType,
+        },
         orderBy: { orderIndex: 'asc' },
       }),
       this.prisma.candidate.findUnique({
@@ -253,7 +279,9 @@ export class ExamService {
   }
 
   async submitByToken(token: string, dto: SubmitExamDto) {
-    const attempt = await this.prisma.examAttempt.findUnique({ where: { token } });
+    const attempt = await this.prisma.examAttempt.findUnique({
+      where: { token },
+    });
     if (!attempt) throw new NotFoundException('Exam not found');
     if (attempt.status !== 'pending') {
       throw new BadRequestException('This exam has already been submitted');
@@ -338,7 +366,10 @@ export class ExamService {
   // --- helpers -------------------------------------------------------------
 
   private examLink(token: string): string {
-    const base = (this.config.get<string>('corsOrigin') ?? '').replace(/\/$/, '');
+    const base = (this.config.get<string>('corsOrigin') ?? '').replace(
+      /\/$/,
+      '',
+    );
     return `${base}/exam/${token}`;
   }
 
@@ -353,8 +384,11 @@ export class ExamService {
 
   private async requireRecruitmentAccess(unit: string, userId: string) {
     const ok =
-      (await this.permissions.hasRoleForUnitName(userId, 'corporate_hr', unit)) ||
-      (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
+      (await this.permissions.hasRoleForUnitName(
+        userId,
+        'corporate_hr',
+        unit,
+      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
     if (!ok) {
       throw new ForbiddenException(
         'Only Corporate HR, CHRO or a super user can manage exams',

@@ -118,7 +118,10 @@ export class AssessmentService {
 
     await this.prisma.committeeMember.upsert({
       where: {
-        requisitionId_userId: { requisitionId: reqId, userId: dto.memberUserId },
+        requisitionId_userId: {
+          requisitionId: reqId,
+          userId: dto.memberUserId,
+        },
       },
       create: {
         requisitionId: reqId,
@@ -144,7 +147,9 @@ export class AssessmentService {
   async setRubric(reqId: string, userId: string, dto: SetRubricDto) {
     await this.loadReq(reqId, userId);
     await this.prisma.$transaction([
-      this.prisma.rubricCriterion.deleteMany({ where: { requisitionId: reqId } }),
+      this.prisma.rubricCriterion.deleteMany({
+        where: { requisitionId: reqId },
+      }),
       ...dto.criteria.map((c, i) =>
         this.prisma.rubricCriterion.create({
           data: {
@@ -192,8 +197,11 @@ export class AssessmentService {
 
   private async requireRecruitmentAccess(unit: string, userId: string) {
     const ok =
-      (await this.permissions.hasRoleForUnitName(userId, 'corporate_hr', unit)) ||
-      (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
+      (await this.permissions.hasRoleForUnitName(
+        userId,
+        'corporate_hr',
+        unit,
+      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
     if (!ok) {
       throw new ForbiddenException(
         'Only Corporate HR, CHRO or a super user can manage assessments',

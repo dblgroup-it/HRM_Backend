@@ -17,7 +17,6 @@ import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
-import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { MedicalDto, NotifyItDto } from './dto/onboarding.dto';
 
 /** Role keys allowed to record medical clearance (configurable / either name). */
@@ -40,7 +39,9 @@ export interface UploadedDoc {
   size: number;
 }
 
-type OnboardingWithDocs = Prisma.OnboardingGetPayload<{ include: { docs: true } }>;
+type OnboardingWithDocs = Prisma.OnboardingGetPayload<{
+  include: { docs: true };
+}>;
 
 @Injectable()
 export class OnboardingService {
@@ -94,6 +95,9 @@ export class OnboardingService {
         email: cand.email ?? '',
         phone: cand.phone ?? '',
         stage: cand.stage.toLowerCase(),
+        source: cand.source,
+        matchScore: cand.matchScore,
+        matchSummary: cand.matchSummary ?? '',
         requisitionId: cand.requisitionId,
         designation: cand.requisition.designation,
         code: cand.requisition.code,
@@ -109,7 +113,9 @@ export class OnboardingService {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
     if (!cand.email) {
-      throw new BadRequestException('This candidate has no email address on file');
+      throw new BadRequestException(
+        'This candidate has no email address on file',
+      );
     }
     const link = this.publicLink(ob.token);
     await this.mail.send({
@@ -157,7 +163,10 @@ export class OnboardingService {
   async verifyDoc(docId: string, status: string, userId: string) {
     const doc = await this.loadDoc(docId);
     await this.requireCandidate(doc.onboarding.candidateId, userId);
-    await this.prisma.onboardingDoc.update({ where: { id: docId }, data: { status } });
+    await this.prisma.onboardingDoc.update({
+      where: { id: docId },
+      data: { status },
+    });
     this.notifications.broadcastChange(
       'candidate',
       doc.onboarding.candidate.requisitionId,
@@ -166,13 +175,72 @@ export class OnboardingService {
     return this.getByCandidate(doc.onboarding.candidateId, userId);
   }
 
+  /**
+   * AI cross-verification: check every extracted document against the
+   * candidate's profile and against each other; store the findings.
+   */
+  async crossVerify(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { candidateId },
+      include: { docs: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (!ob)
+      throw new BadRequestException(
+        'Start onboarding for this candidate first',
+      );
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'AI cross-verification is not configured',
+      );
+    }
+    const extracted = ob.docs.filter((d) => d.aiExtract);
+    if (!extracted.length) {
+      throw new BadRequestException(
+        'Run AI extraction on at least one document first',
+      );
+    }
+    const result = await this.ai.crossCheckDocuments({
+      candidate: { name: cand.name, email: cand.email, phone: cand.phone },
+      role: {
+        designation: cand.requisition.designation,
+        education: cand.requisition.education,
+        experience: cand.requisition.experience,
+      },
+      docs: extracted.map((d) => {
+        const ex = d.aiExtract as {
+          summary?: string;
+          fields?: Record<string, string>;
+        };
+        return {
+          label: d.label,
+          summary: ex.summary ?? '',
+          fields: ex.fields ?? {},
+        };
+      }),
+    });
+    await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: {
+        crossCheck: result as unknown as Prisma.InputJsonValue,
+        crossCheckedAt: new Date(),
+      },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'cross_checked',
+    });
+    return this.getByCandidate(candidateId, userId);
+  }
+
   // --- HR: offer (Stage C) -------------------------------------------------
 
   async sendOffer(candidateId: string, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
     if (!cand.email) {
-      throw new BadRequestException('This candidate has no email address on file');
+      throw new BadRequestException(
+        'This candidate has no email address on file',
+      );
     }
     const link = this.publicLink(ob.token);
     await this.mail.send({
@@ -216,12 +284,46 @@ export class OnboardingService {
     return { onboarding: this.serialize(updated, cand.name, cand.email) };
   }
 
+  /**
+   * Archive the joining documents: physically move the candidate's Drive
+   * folder to "DBL HRM Recruitment / 00 Archive / {REQ} — {designation}" and
+   * stamp the onboarding. Drive trouble degrades to a flag-only archive.
+   */
   async archive(candidateId: string, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
+
+    let archiveFolderUrl: string | null = ob.archiveFolderUrl;
+    if (!archiveFolderUrl) {
+      try {
+        const ws = await this.recruitment.ensureWorkspace(cand.requisition);
+        if (ws) {
+          const rootId = await this.drive.ensureRootFolder();
+          const archiveRoot = await this.drive.ensureFolder(
+            '00 Archive',
+            rootId,
+          );
+          const reqArchive = await this.drive.ensureFolder(
+            `${cand.requisition.code} — ${cand.requisition.designation}`,
+            archiveRoot,
+          );
+          const candFolder = await this.drive.ensureFolder(
+            `${cand.name} — Joining Docs`,
+            ws.joiningFolderId,
+          );
+          await this.drive.moveFile(candFolder, reqArchive);
+          archiveFolderUrl = `https://drive.google.com/drive/folders/${candFolder}`;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Drive archive failed (flag-only archive): ${(err as Error).message}`,
+        );
+      }
+    }
+
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
-      data: { archivedAt: new Date() },
+      data: { archivedAt: new Date(), archiveFolderUrl },
       include: { docs: { orderBy: { createdAt: 'asc' } } },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -234,6 +336,13 @@ export class OnboardingService {
   async notifyIt(candidateId: string, dto: NotifyItDto, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
+    // Guard the state machine: IT hand-off is the final step — HR final
+    // verification (which itself requires medical clearance) must be done first.
+    if (!ob.hrVerifiedAt) {
+      throw new BadRequestException(
+        'Complete HR final verification before notifying IT',
+      );
+    }
 
     let email = dto.email?.trim() || null;
     let assetId = dto.assetId?.trim() || null;
@@ -364,9 +473,13 @@ export class OnboardingService {
       message: `${ob.candidate.name} (${ob.candidate.requisition.designation}) medical is ${dto.status}.`,
       link: `/requisitions/${ob.candidate.requisitionId}`,
     });
-    this.notifications.broadcastChange('candidate', ob.candidate.requisitionId, {
-      action: 'medical_updated',
-    });
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      {
+        action: 'medical_updated',
+      },
+    );
     return { ok: true };
   }
 
@@ -462,9 +575,13 @@ export class OnboardingService {
       message: `${ob.candidate.name} uploaded "${label}".`,
       link: `/requisitions/${ob.candidate.requisitionId}`,
     });
-    this.notifications.broadcastChange('candidate', ob.candidate.requisitionId, {
-      action: 'doc_submitted',
-    });
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      {
+        action: 'doc_submitted',
+      },
+    );
     return { ok: true };
   }
 
@@ -474,7 +591,8 @@ export class OnboardingService {
       include: { candidate: { include: { requisition: true } } },
     });
     if (!ob) throw new NotFoundException('This link is not valid');
-    if (!ob.offerSentAt) throw new BadRequestException('No offer has been sent yet');
+    if (!ob.offerSentAt)
+      throw new BadRequestException('No offer has been sent yet');
     if (!ob.offerAcceptedAt) {
       await this.prisma.onboarding.update({
         where: { id: ob.id },
@@ -482,7 +600,10 @@ export class OnboardingService {
       });
       // Offer accepted → notify Corporate HR + medical officers (triggers medical).
       const unit = ob.candidate.requisition.unitFactory;
-      const hrIds = await this.permissions.roleHolderUserIds('corporate_hr', unit);
+      const hrIds = await this.permissions.roleHolderUserIds(
+        'corporate_hr',
+        unit,
+      );
       const medIds = (
         await Promise.all(
           MEDICAL_ROLE_KEYS.map((k) =>
@@ -502,9 +623,13 @@ export class OnboardingService {
         message: `${ob.candidate.name} accepted their offer — please schedule medical clearance.`,
         link: `/medical`,
       });
-      this.notifications.broadcastChange('candidate', ob.candidate.requisitionId, {
-        action: 'offer_accepted',
-      });
+      this.notifications.broadcastChange(
+        'candidate',
+        ob.candidate.requisitionId,
+        {
+          action: 'offer_accepted',
+        },
+      );
     }
     return { ok: true };
   }
@@ -512,7 +637,8 @@ export class OnboardingService {
   // --- helpers -------------------------------------------------------------
 
   private publicLink(token: string): string {
-    const origin = this.config.get<string>('corsOrigin') ?? 'http://localhost:3000';
+    const origin =
+      this.config.get<string>('corsOrigin') ?? 'http://localhost:3000';
     return `${origin.replace(/\/$/, '')}/onboarding/${token}`;
   }
 
@@ -527,8 +653,13 @@ export class OnboardingService {
   }
 
   private async requireOnboarding(candidateId: string) {
-    const ob = await this.prisma.onboarding.findUnique({ where: { candidateId } });
-    if (!ob) throw new BadRequestException('Start onboarding for this candidate first');
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { candidateId },
+    });
+    if (!ob)
+      throw new BadRequestException(
+        'Start onboarding for this candidate first',
+      );
     return ob;
   }
 
@@ -558,10 +689,77 @@ export class OnboardingService {
         this.notifications.broadcastChange('candidate', reqId, {
           action: 'doc_summarized',
         });
+        // Once every submitted doc is extracted, cross-check them automatically.
+        await this.autoCrossCheck(doc.onboardingId, reqId);
       } catch (err) {
         this.logger.warn(`Auto doc-summary failed: ${(err as Error).message}`);
       }
     })();
+  }
+
+  /**
+   * Fire the AI cross-verification when all of an onboarding's documents have
+   * been extracted; alerts Corporate HR if real discrepancies are found.
+   */
+  private async autoCrossCheck(onboardingId: string, reqId: string) {
+    try {
+      const ob = await this.prisma.onboarding.findUnique({
+        where: { id: onboardingId },
+        include: {
+          docs: true,
+          candidate: { include: { requisition: true } },
+        },
+      });
+      if (!ob || !ob.docs.length) return;
+      if (ob.docs.some((d) => !d.aiExtract)) return; // still extracting others
+      const result = await this.ai.crossCheckDocuments({
+        candidate: {
+          name: ob.candidate.name,
+          email: ob.candidate.email,
+          phone: ob.candidate.phone,
+        },
+        role: {
+          designation: ob.candidate.requisition.designation,
+          education: ob.candidate.requisition.education,
+          experience: ob.candidate.requisition.experience,
+        },
+        docs: ob.docs.map((d) => {
+          const ex = d.aiExtract as {
+            summary?: string;
+            fields?: Record<string, string>;
+          };
+          return {
+            label: d.label,
+            summary: ex?.summary ?? '',
+            fields: ex?.fields ?? {},
+          };
+        }),
+      });
+      await this.prisma.onboarding.update({
+        where: { id: onboardingId },
+        data: {
+          crossCheck: result as unknown as Prisma.InputJsonValue,
+          crossCheckedAt: new Date(),
+        },
+      });
+      if (result.verdict === 'discrepancies') {
+        const hrIds = await this.permissions.roleHolderUserIds(
+          'corporate_hr',
+          ob.candidate.requisition.unitFactory,
+        );
+        await this.notifications.notifyMany(hrIds, {
+          type: 'onboarding',
+          title: 'Document discrepancies flagged',
+          message: `AI cross-check found discrepancies in ${ob.candidate.name}'s joining documents — please review.`,
+          link: `/requisitions/${ob.candidate.requisitionId}`,
+        });
+      }
+      this.notifications.broadcastChange('candidate', reqId, {
+        action: 'cross_checked',
+      });
+    } catch (err) {
+      this.logger.warn(`Auto cross-check failed: ${(err as Error).message}`);
+    }
   }
 
   private async loadDoc(docId: string) {
@@ -575,8 +773,11 @@ export class OnboardingService {
 
   private async requireRecruitmentAccess(unit: string, userId: string) {
     const allowed =
-      (await this.permissions.hasRoleForUnitName(userId, 'corporate_hr', unit)) ||
-      (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
+      (await this.permissions.hasRoleForUnitName(
+        userId,
+        'corporate_hr',
+        unit,
+      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
     if (!allowed) {
       throw new ForbiddenException(
         'Only Corporate HR, CHRO or a super user can manage onboarding',
@@ -619,7 +820,14 @@ export class OnboardingService {
       medicalNote: ob.medicalNote ?? '',
       medicalClearedAt: ob.medicalClearedAt?.toISOString() ?? null,
       hrVerifiedAt: ob.hrVerifiedAt?.toISOString() ?? null,
+      crossCheck: ob.crossCheck as {
+        verdict?: string;
+        overview?: string;
+        findings?: { doc: string; severity: string; detail: string }[];
+      } | null,
+      crossCheckedAt: ob.crossCheckedAt?.toISOString() ?? null,
       archivedAt: ob.archivedAt?.toISOString() ?? null,
+      archiveFolderUrl: ob.archiveFolderUrl ?? null,
       itEmail: ob.itEmail ?? '',
       itAssetId: ob.itAssetId ?? '',
       itNotifiedAt: ob.itNotifiedAt?.toISOString() ?? null,
@@ -629,7 +837,10 @@ export class OnboardingService {
         url: d.url,
         mimeType: d.mimeType,
         status: d.status,
-        aiExtract: d.aiExtract as { summary?: string; fields?: Record<string, string> } | null,
+        aiExtract: d.aiExtract as {
+          summary?: string;
+          fields?: Record<string, string>;
+        } | null,
         createdAt: d.createdAt.toISOString(),
       })),
       createdAt: ob.createdAt.toISOString(),

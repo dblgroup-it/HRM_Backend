@@ -127,7 +127,8 @@ export class CandidatesService {
   async syncFromDrive(reqId: string, userId: string) {
     const req = await this.requireReq(reqId, userId);
     const ws = await this.recruitment.ensureWorkspace(req);
-    if (!ws) throw new ServiceUnavailableException('Google Drive is not connected.');
+    if (!ws)
+      throw new ServiceUnavailableException('Google Drive is not connected.');
 
     const files = await this.drive.listFiles(ws.allCvFolderId);
     const tracked = await this.prisma.candidate.findMany({
@@ -147,14 +148,22 @@ export class CandidatesService {
           cvUrl: f.url,
         })),
       });
-      this.notifications.broadcastChange('candidate', reqId, { action: 'synced' });
+      this.notifications.broadcastChange('candidate', reqId, {
+        action: 'synced',
+      });
 
       // Auto-screen the newly imported CVs in the background.
       const created = await this.prisma.candidate.findMany({
-        where: { requisitionId: reqId, cvFileId: { in: fresh.map((f) => f.id) } },
+        where: {
+          requisitionId: reqId,
+          cvFileId: { in: fresh.map((f) => f.id) },
+        },
         select: { id: true },
       });
-      this.autoScreenMany(created.map((c) => c.id), reqId);
+      this.autoScreenMany(
+        created.map((c) => c.id),
+        reqId,
+      );
     }
 
     const rows = await this.prisma.candidate.findMany({
@@ -176,7 +185,8 @@ export class CandidatesService {
     let cvUrl: string | null = null;
     if (file) {
       const ws = await this.recruitment.ensureWorkspace(req);
-      if (!ws) throw new ServiceUnavailableException('Google Drive is not connected.');
+      if (!ws)
+        throw new ServiceUnavailableException('Google Drive is not connected.');
       const uploaded = await this.drive.uploadFile(ws.allCvFolderId, {
         name: cvFileName(dto.name, file.originalname),
         mimeType: file.mimetype,
@@ -199,7 +209,9 @@ export class CandidatesService {
       },
     });
 
-    this.notifications.broadcastChange('candidate', reqId, { action: 'created' });
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'created',
+    });
     if (cvFileId) this.autoScreen(created.id);
     return serializeCandidate(created);
   }
@@ -229,9 +241,13 @@ export class CandidatesService {
       data.stage = stage;
       // Mirror the move in Drive: shift the CV into the stage's folder.
       const ws =
-        (cand.requisition.drive as unknown as RequisitionDriveMap | null) ?? null;
+        (cand.requisition.drive as unknown as RequisitionDriveMap | null) ??
+        null;
       if (ws?.allCvFolderId && cand.cvFileId) {
-        await this.drive.moveFile(cand.cvFileId, this.drive.stageFolderId(ws, stage));
+        await this.drive.moveFile(
+          cand.cvFileId,
+          this.drive.stageFolderId(ws, stage),
+        );
       }
     }
 
@@ -251,7 +267,8 @@ export class CandidatesService {
     await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
 
     const ws = await this.recruitment.ensureWorkspace(cand.requisition);
-    if (!ws) throw new ServiceUnavailableException('Google Drive is not connected.');
+    if (!ws)
+      throw new ServiceUnavailableException('Google Drive is not connected.');
     const target = this.drive.stageFolderId(ws, cand.stage);
     const uploaded = await this.drive.uploadFile(target, {
       name: cvFileName(cand.name, file.originalname),
@@ -317,7 +334,9 @@ export class CandidatesService {
     if (!cand) throw new NotFoundException('Candidate not found');
     await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
     if (!cand.email) {
-      throw new BadRequestException('This candidate has no email address on file');
+      throw new BadRequestException(
+        'This candidate has no email address on file',
+      );
     }
 
     await this.mail.send({
@@ -409,16 +428,98 @@ export class CandidatesService {
     return { screened, shortlisted, candidates: rows.map(serializeCandidate) };
   }
 
+  /**
+   * AI side-by-side comparison of a requisition's finalists (interview/final
+   * stage candidates) using CV screening, exam scores and panel marks. Purely
+   * advisory output for Corporate HR's final decision — nothing is persisted.
+   */
+  async compareFinalists(reqId: string, userId: string) {
+    const req = await this.requireReq(reqId, userId);
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException('AI comparison is not configured');
+    }
+    const finalists = await this.prisma.candidate.findMany({
+      where: {
+        requisitionId: reqId,
+        stage: { in: ['INTERVIEW', 'FINAL'] },
+      },
+      include: {
+        examAttempts: { where: { totalScore: { not: null } } },
+        interviews: { include: { evaluations: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (finalists.length < 2) {
+      throw new BadRequestException(
+        'Need at least two candidates in the interview or final stage to compare',
+      );
+    }
+    const profile = req.roleProfile as {
+      requirements?: string[];
+    } | null;
+    const result = await this.ai.compareFinalists({
+      role: {
+        designation: req.designation,
+        department: req.department,
+        jobDescription: req.jobDescription ?? '',
+        requirements: profile?.requirements ?? [],
+      },
+      finalists: finalists.map((c) => ({
+        id: c.id,
+        name: c.name,
+        stage: c.stage.toLowerCase(),
+        matchScore: c.matchScore,
+        matchSummary: c.matchSummary,
+        exams: c.examAttempts.map((a) => ({
+          type: a.examType.toLowerCase(),
+          score: a.totalScore ?? 0,
+          maxScore: a.maxScore,
+        })),
+        interviews: c.interviews
+          .filter((r) => r.evaluations.length)
+          .map((r) => ({
+            kind: r.kind.toLowerCase(),
+            avgTotal:
+              Math.round(
+                (r.evaluations.reduce((s, e) => s + e.total, 0) /
+                  r.evaluations.length) *
+                  10,
+              ) / 10,
+            evaluations: r.evaluations.length,
+            comments: r.evaluations
+              .map((e) => e.comments?.trim() ?? '')
+              .filter(Boolean)
+              .slice(0, 4),
+          })),
+      })),
+    });
+    // Resolve ids back to names so the UI never has to cross-reference.
+    const byId = new Map(finalists.map((c) => [c.id, c]));
+    return {
+      recommendation: result.recommendation,
+      ranking: result.ranking.map((r) => {
+        const c = byId.get(r.id);
+        return {
+          ...r,
+          name: c?.name ?? 'Unknown',
+          stage: c?.stage.toLowerCase() ?? '',
+          matchScore: c?.matchScore ?? null,
+        };
+      }),
+    };
+  }
+
   /** Run the AI screen + persist the score; auto-advance APPLIED → AI_SHORTLISTED. */
   private async runScreen(
     cand: Prisma.CandidateGetPayload<{ include: { requisition: true } }>,
   ): Promise<CandidateRow | null> {
     if (!cand.cvFileId || !this.ai.isConfigured()) return null;
     const { buffer, mimeType } = await this.drive.getFileBuffer(cand.cvFileId);
-    const rp = (cand.requisition.roleProfile as {
-      responsibilities?: string[];
-      requirements?: string[];
-    } | null) ?? null;
+    const rp =
+      (cand.requisition.roleProfile as {
+        responsibilities?: string[];
+        requirements?: string[];
+      } | null) ?? null;
 
     const result = await this.ai.screenCv({
       cvMimeType: mimeType,
@@ -450,7 +551,8 @@ export class CandidatesService {
       data.stage = 'AI_SHORTLISTED';
       // Move the CV into the "02 AI Shortlisted" Drive folder.
       const ws =
-        (cand.requisition.drive as unknown as RequisitionDriveMap | null) ?? null;
+        (cand.requisition.drive as unknown as RequisitionDriveMap | null) ??
+        null;
       if (ws?.allCvFolderId && cand.cvFileId) {
         try {
           await this.drive.moveFile(
@@ -522,7 +624,9 @@ export class CandidatesService {
   // --- public job application (no auth) ------------------------------------
 
   async publicJobInfo(reqId: string) {
-    const req = await this.prisma.requisition.findUnique({ where: { id: reqId } });
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+    });
     if (!req || req.status !== 'POSTED') {
       throw new NotFoundException('This position is not open for applications');
     }
@@ -539,7 +643,9 @@ export class CandidatesService {
 
   async publicApply(reqId: string, dto: PublicApplyDto, file?: UploadedCv) {
     if (!file) throw new BadRequestException('Please attach your CV');
-    const req = await this.prisma.requisition.findUnique({ where: { id: reqId } });
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+    });
     if (!req || req.status !== 'POSTED') {
       throw new NotFoundException('This position is not open for applications');
     }
@@ -565,7 +671,9 @@ export class CandidatesService {
         cvUrl: uploaded.url,
       },
     });
-    this.notifications.broadcastChange('candidate', reqId, { action: 'application' });
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'application',
+    });
     // Auto-screen the fresh CV against the role in the background.
     this.autoScreen(created.id);
     return { ok: true };
@@ -574,7 +682,9 @@ export class CandidatesService {
   // --- access control ------------------------------------------------------
 
   private async requireReq(reqId: string, userId: string) {
-    const req = await this.prisma.requisition.findUnique({ where: { id: reqId } });
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+    });
     if (!req) throw new NotFoundException('Requisition not found');
     await this.requireRecruitmentAccess(req.unitFactory, userId);
     return req;
@@ -587,8 +697,11 @@ export class CandidatesService {
    */
   private async requireRecruitmentAccess(unit: string, userId: string) {
     const allowed =
-      (await this.permissions.hasRoleForUnitName(userId, 'corporate_hr', unit)) ||
-      (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
+      (await this.permissions.hasRoleForUnitName(
+        userId,
+        'corporate_hr',
+        unit,
+      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
     if (!allowed) {
       throw new ForbiddenException(
         'Only Corporate HR, CHRO or a super user can access recruitment for this requisition',
@@ -620,10 +733,7 @@ function cvFileName(candidate: string, original: string): string {
 }
 
 function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** Wrap a plain-text message in a simple branded HTML email. */

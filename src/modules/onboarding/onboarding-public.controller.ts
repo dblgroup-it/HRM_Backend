@@ -8,13 +8,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 
 import { Public } from '../../common/decorators/public.decorator';
+import { DOC_UPLOAD } from '../../common/upload/file-upload';
 import { OnboardingService, type UploadedDoc } from './onboarding.service';
 import { UploadDocDto } from './dto/onboarding.dto';
-
-/** 10 MB cap per joining document. */
-const DOC_UPLOAD = { limits: { fileSize: 10 * 1024 * 1024 } };
 
 /**
  * Public, unauthenticated onboarding endpoints used by the selected candidate's
@@ -31,6 +30,7 @@ export class OnboardingPublicController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post(':token/docs')
   @UseInterceptors(FileInterceptor('file', DOC_UPLOAD))
   upload(

@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionsService } from './permissions.service';
 import {
   CreateAssignmentDto,
   CreateRoleDto,
@@ -24,7 +25,10 @@ function slugify(value: string): string {
 
 @Injectable()
 export class RbacService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionsService,
+  ) {}
 
   // --- Roles --------------------------------------------------------------
 
@@ -56,7 +60,7 @@ export class RbacService {
     const role = await this.prisma.role.findUnique({ where: { id } });
     if (!role) throw new NotFoundException('Role not found');
     try {
-      return await this.prisma.role.update({
+      const updated = await this.prisma.role.update({
         where: { id },
         data: {
           ...(dto.name ? { name: dto.name } : {}),
@@ -66,6 +70,8 @@ export class RbacService {
           ...(dto.scope ? { scope: dto.scope } : {}),
         },
       });
+      this.permissions.invalidate();
+      return updated;
     } catch (e) {
       throw this.handleUnique(e, 'A role with that name already exists');
     }
@@ -78,6 +84,7 @@ export class RbacService {
       throw new ForbiddenException('System roles cannot be deleted');
     }
     await this.prisma.role.delete({ where: { id } });
+    this.permissions.invalidate();
     return { id };
   }
 
@@ -129,17 +136,22 @@ export class RbacService {
     }
 
     try {
-      return await this.prisma.roleAssignment.create({
+      const created = await this.prisma.roleAssignment.create({
         data: { roleId: dto.roleId, userId: dto.userId, unitId },
         include: { role: true, unit: true, user: { select: { name: true } } },
       });
+      this.permissions.invalidate(dto.userId);
+      return created;
     } catch (e) {
       throw this.handleUnique(e, 'This person already holds that role here');
     }
   }
 
   async deleteAssignment(id: string) {
-    await this.prisma.roleAssignment.delete({ where: { id } });
+    const assignment = await this.prisma.roleAssignment.delete({
+      where: { id },
+    });
+    this.permissions.invalidate(assignment.userId);
     return { id };
   }
 
