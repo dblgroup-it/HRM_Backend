@@ -58,3 +58,8 @@ export class SetPlanDto {
   @Type(() => AssessmentComponentInput)
   components!: AssessmentComponentInput[];
 }
+
+export class SaveNotesDto {
+  @IsString()
+  notes!: string;
+}

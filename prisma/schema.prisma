@@ -362,6 +362,8 @@ model Requisition {
   posting            Json?
   /// AI-generated interview questions — array of { category, question }.
   interviewQuestions Json?                 @map("interview_questions")
+  /// Corporate HR committee deliberation / final recommendation notes.
+  deliberationNotes  String?               @map("deliberation_notes")
   raisedBy           String?               @map("raised_by")
   raisedById         String?               @map("raised_by_id")
   /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.
@@ -433,8 +435,9 @@ model InterviewRound {
   location      String?
   status        InterviewStatus     @default(SCHEDULED)
   /// Google Calendar sync: event id + the auto-generated Meet link (online).
-  calendarEventId String?           @map("calendar_event_id")
-  meetLink        String?           @map("meet_link")
+  calendarEventId  String?           @map("calendar_event_id")
+  meetLink         String?           @map("meet_link")
+  questionsSentAt  DateTime?         @map("questions_sent_at")
   panelists     InterviewPanelist[]
   evaluations   Evaluation[]
   createdAt     DateTime            @default(now()) @map("created_at")

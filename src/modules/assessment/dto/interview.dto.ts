@@ -1,4 +1,5 @@
 import {
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -61,6 +62,42 @@ export class UpdateInterviewDto {
   @IsArray()
   @IsString({ each: true })
   panelistUserIds?: string[];
+}
+
+export class BulkScheduleInterviewDto {
+  /** IDs of candidates to schedule for (order matters for sequential slots). */
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  candidateIds!: string[];
+
+  @IsIn(['first', 'second', 'final'])
+  kind!: string;
+
+  @IsIn(['online', 'offline', 'physical'])
+  mode!: string;
+
+  /** One ISO datetime per candidate (same order as candidateIds). Omit for no time. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  scheduledAts?: string[];
+
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  panelistUserIds!: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  notifyCandidate?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  notifyPanel?: boolean;
 }
 
 export class SubmitEvaluationDto {

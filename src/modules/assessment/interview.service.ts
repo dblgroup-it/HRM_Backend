@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -21,6 +22,7 @@ import {
   type CalendarEventInput,
 } from '../integrations/google/calendar.service';
 import {
+  BulkScheduleInterviewDto,
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
@@ -92,6 +94,15 @@ export class InterviewService {
       include: roundInclude,
     });
 
+    // Advance the candidate to the Interview stage if they haven't passed it yet.
+    const PRE_INTERVIEW: string[] = ['APPLIED', 'AI_SHORTLISTED', 'SHORTLISTED'];
+    if (PRE_INTERVIEW.includes(cand.stage)) {
+      await this.prisma.candidate.update({
+        where: { id: cand.id },
+        data: { stage: 'INTERVIEW' },
+      });
+    }
+
     // Best-effort Google Calendar event (+ Meet link for online interviews):
     // invites land in panelists' and the candidate's own calendars.
     const synced = await this.syncCalendarCreate(
@@ -106,6 +117,26 @@ export class InterviewService {
       action: 'interview_scheduled',
     });
     return serializeRound(round);
+  }
+
+  async bulkSchedule(
+    actor: { id: string; name: string },
+    dto: BulkScheduleInterviewDto,
+  ) {
+    const results = await Promise.all(
+      dto.candidateIds.map((candidateId, i) =>
+        this.schedule(candidateId, actor, {
+          kind: dto.kind,
+          mode: dto.mode,
+          scheduledAt: dto.scheduledAts?.[i],
+          location: dto.location,
+          panelistUserIds: dto.panelistUserIds,
+          notifyCandidate: dto.notifyCandidate,
+          notifyPanel: dto.notifyPanel,
+        }),
+      ),
+    );
+    return results;
   }
 
   async update(roundId: string, userId: string, dto: UpdateInterviewDto) {
@@ -300,6 +331,95 @@ export class InterviewService {
     return this.myInterviews(userId);
   }
 
+  // --- send interview questions to panelists --------------------------------
+
+  async sendQuestions(roundId: string, userId: string) {
+    const round = await this.prisma.interviewRound.findUnique({
+      where: { id: roundId },
+      include: {
+        panelists: { include: { user: true } },
+        requisition: {
+          select: {
+            interviewQuestions: true,
+            designation: true,
+            unitFactory: true,
+          },
+        },
+      },
+    });
+    if (!round) throw new NotFoundException('Interview not found');
+    await this.requireRecruitmentAccess(round.requisition.unitFactory, userId);
+
+    const questions = Array.isArray(round.requisition.interviewQuestions)
+      ? (round.requisition.interviewQuestions as {
+          category: string;
+          question: string;
+        }[])
+      : [];
+
+    if (questions.length === 0) {
+      throw new BadRequestException(
+        'No interview questions have been generated for this requisition yet',
+      );
+    }
+
+    if (!this.mail.isConfigured()) {
+      return { sent: 0, total: round.panelists.length, note: 'Mail not configured' };
+    }
+
+    // Format questions grouped by category
+    const grouped = new Map<string, string[]>();
+    for (const q of questions) {
+      const arr = grouped.get(q.category) ?? [];
+      arr.push(q.question);
+      grouped.set(q.category, arr);
+    }
+    const body = [...grouped.entries()]
+      .map(
+        ([cat, qs]) =>
+          `${cat}\n${qs.map((q, i) => `  ${i + 1}. ${q}`).join('\n')}`,
+      )
+      .join('\n\n');
+
+    let sent = 0;
+    for (const p of round.panelists) {
+      if (!p.user.email) continue;
+      try {
+        await this.mail.send({
+          to: p.user.email,
+          subject: `Interview Questions — ${round.requisition.designation} | DBL Group`,
+          text: [
+            `Dear ${p.user.name},`,
+            '',
+            `Here are the ${cap(round.kind.toLowerCase())} interview questions for the ${round.requisition.designation} position:`,
+            '',
+            body,
+            '',
+            'Please review these before the interview.',
+            '',
+            'Best regards,',
+            'DBL Group Recruitment',
+          ].join('\n'),
+        });
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Failed to send questions to ${p.user.email}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Stamp the round so the UI can show "Questions sent" instead of the button.
+    if (sent > 0) {
+      await this.prisma.interviewRound.update({
+        where: { id: roundId },
+        data: { questionsSentAt: new Date() },
+      });
+    }
+
+    return { sent, total: round.panelists.length };
+  }
+
   // --- helpers -------------------------------------------------------------
 
   /** Create the Calendar event for a new round; returns the updated round. */
@@ -464,6 +584,7 @@ function serializeRound(r: RoundFull) {
     status: r.status.toLowerCase(),
     meetLink: r.meetLink ?? null,
     calendarSynced: Boolean(r.calendarEventId),
+    questionsSentAt: r.questionsSentAt?.toISOString() ?? null,
     panelists: r.panelists.map((p) => ({
       id: p.id,
       userId: p.userId,

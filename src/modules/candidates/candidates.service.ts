@@ -287,6 +287,13 @@ export class CandidatesService {
         );
       }
       data.stage = stage;
+      // When a candidate is selected, auto-reject all remaining applied candidates.
+      if (stage === 'SELECTED') {
+        await this.prisma.candidate.updateMany({
+          where: { requisitionId: cand.requisitionId, stage: 'APPLIED', id: { not: id } },
+          data: { stage: 'REJECTED' },
+        });
+      }
       // Mirror the move in Drive: shift the CV into the stage's folder.
       const ws =
         (cand.requisition.drive as unknown as RequisitionDriveMap | null) ??

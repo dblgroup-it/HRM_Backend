@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import {
 import { AssessmentService } from './assessment.service';
 import {
   AddCommitteeMemberDto,
+  SaveNotesDto,
   SetPlanDto,
   SetRubricDto,
 } from './dto/assessment.dto';
@@ -67,5 +69,27 @@ export class AssessmentController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.assessment.generateInterviewQuestions(reqId, user.id);
+  }
+
+  @Get('requisitions/:reqId/assessment/scorecard')
+  getScorecard(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+    return this.assessment.getScorecard(reqId, user.id);
+  }
+
+  @Patch('requisitions/:reqId/assessment/notes')
+  saveNotes(
+    @Param('reqId') reqId: string,
+    @Body() dto: SaveNotesDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.assessment.saveNotes(reqId, dto.notes, user.id);
+  }
+
+  @Post('candidates/:candidateId/evaluation-summary')
+  generateEvaluationSummary(
+    @Param('candidateId') candidateId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.assessment.generateEvaluationSummary(candidateId, user.id);
   }
 }

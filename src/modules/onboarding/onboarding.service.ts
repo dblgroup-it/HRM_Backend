@@ -278,6 +278,11 @@ export class OnboardingService {
       data: { hrVerifiedAt: new Date(), status: 'hr_final' },
       include: { docs: { orderBy: { createdAt: 'asc' } } },
     });
+    // Auto-reject all remaining applied candidates for this requisition.
+    await this.prisma.candidate.updateMany({
+      where: { requisitionId: cand.requisitionId, stage: 'APPLIED' },
+      data: { stage: 'REJECTED' },
+    });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'hr_verified',
     });

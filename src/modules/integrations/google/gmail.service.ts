@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { google, gmail_v1 } from 'googleapis';
 
+import { PrismaService } from '../../../prisma/prisma.service';
 import { GoogleAuthService } from './google-auth.service';
 
 /** Attachment types we accept as CVs (mirrors the upload allowlist). */
@@ -13,6 +14,9 @@ const CV_MIME_TYPES = new Set([
   'image/webp',
 ]);
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // same 10MB cap as uploads
+const PROCESSED_KEY = 'gmail_processed_ids';
+/** Prune processed-ID records older than this so the Setting doesn't grow forever. */
+const PRUNE_AFTER_DAYS = 32;
 
 export interface InboxCv {
   messageId: string;
@@ -27,14 +31,18 @@ export interface InboxCv {
 
 /**
  * Reads the recruitment mailbox (the OAuth account's own inbox) for emailed
- * CVs. Read-only + mark-as-read — needs the gmail.modify scope, so a consent
- * done before this feature simply yields zero messages until it's redone.
+ * CVs. Processed message IDs are tracked in the Setting table rather than
+ * relying on Gmail's unread flag — so opening an email in Gmail doesn't cause
+ * it to be missed on the next scan.
  */
 @Injectable()
 export class GmailService {
   private readonly logger = new Logger(GmailService.name);
 
-  constructor(private readonly auth: GoogleAuthService) {}
+  constructor(
+    private readonly auth: GoogleAuthService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   isConfigured(): boolean {
     return this.auth.isConfigured();
@@ -47,18 +55,21 @@ export class GmailService {
     });
   }
 
-  /** Unread inbox messages (recent) carrying at least one CV-type attachment. */
+  /** Recent inbox messages (read OR unread) carrying at least one CV-type attachment, skipping already-processed ones. */
   async listUnreadCvs(max = 15): Promise<InboxCv[]> {
     if (!this.isConfigured()) return [];
     const gmail = this.api();
+    // No is:unread — we track processed IDs ourselves so opening an email
+    // in Gmail won't cause it to be skipped on the next scan.
     const list = await gmail.users.messages.list({
       userId: 'me',
-      q: 'in:inbox is:unread has:attachment newer_than:30d',
+      q: 'in:inbox has:attachment newer_than:30d',
       maxResults: max,
     });
+    const processed = await this.loadProcessedIds();
     const out: InboxCv[] = [];
     for (const m of list.data.messages ?? []) {
-      if (!m.id) continue;
+      if (!m.id || processed.has(m.id)) continue;
       try {
         const cv = await this.readMessage(gmail, m.id);
         if (cv) out.push(cv);
@@ -71,8 +82,12 @@ export class GmailService {
     return out;
   }
 
-  /** Mark a message read so the next poll skips it (matched or not). */
+  /**
+   * Record a message as processed so subsequent scans skip it.
+   * Also marks read in Gmail so the inbox looks clean.
+   */
   async markProcessed(messageId: string): Promise<void> {
+    await this.saveProcessedId(messageId);
     try {
       await this.api().users.messages.modify({
         userId: 'me',
@@ -81,9 +96,40 @@ export class GmailService {
       });
     } catch (err) {
       this.logger.warn(
-        `Could not mark message ${messageId} read: ${(err as Error).message}`,
+        `Could not mark message ${messageId} read in Gmail: ${(err as Error).message}`,
       );
     }
+  }
+
+  private async loadProcessedIds(): Promise<Set<string>> {
+    const row = await this.prisma.setting.findUnique({
+      where: { key: PROCESSED_KEY },
+    });
+    const stored = (row?.value as Record<string, string> | null) ?? {};
+    const cutoff = Date.now() - PRUNE_AFTER_DAYS * 24 * 60 * 60 * 1000;
+    const ids = new Set<string>();
+    for (const [id, ts] of Object.entries(stored)) {
+      if (new Date(ts).getTime() > cutoff) ids.add(id);
+    }
+    return ids;
+  }
+
+  private async saveProcessedId(messageId: string): Promise<void> {
+    const row = await this.prisma.setting.findUnique({
+      where: { key: PROCESSED_KEY },
+    });
+    const stored = (row?.value as Record<string, string> | null) ?? {};
+    const cutoff = Date.now() - PRUNE_AFTER_DAYS * 24 * 60 * 60 * 1000;
+    const pruned: Record<string, string> = {};
+    for (const [id, ts] of Object.entries(stored)) {
+      if (new Date(ts).getTime() > cutoff) pruned[id] = ts;
+    }
+    pruned[messageId] = new Date().toISOString();
+    await this.prisma.setting.upsert({
+      where: { key: PROCESSED_KEY },
+      create: { key: PROCESSED_KEY, value: pruned },
+      update: { value: pruned },
+    });
   }
 
   private async readMessage(

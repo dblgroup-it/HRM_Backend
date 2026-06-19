@@ -7,6 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
+import { SettingsService } from '../../settings/settings.service';
+
 export interface SendMailInput {
   to: string;
   subject: string;
@@ -21,7 +23,10 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly appSettings: SettingsService,
+  ) {}
 
   isConfigured(): boolean {
     return Boolean(
@@ -51,6 +56,13 @@ export class MailService {
   }
 
   async send(input: SendMailInput): Promise<{ messageId: string }> {
+    const { emailEnabled } = await this.appSettings.getNotificationConfig();
+    if (!emailEnabled) {
+      this.logger.debug(
+        `Email suppressed (master switch off) — would have sent to ${input.to}: "${input.subject}"`,
+      );
+      return { messageId: 'suppressed' };
+    }
     const from =
       this.config.get<string>('mail.from') ||
       this.config.get<string>('mail.user') ||

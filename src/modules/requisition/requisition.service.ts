@@ -673,24 +673,49 @@ export class RequisitionService {
       },
       include: reqWithRelations,
     });
-    // Spin up the Google Drive recruitment workspace (folders + CV link) so the
-    // requisition is ready to collect CVs the moment it's published.
+
+    // Return immediately so the HTTP response isn't blocked by Drive API calls.
+    // Drive workspace creation runs in the background; when it finishes we push
+    // a requisition:changed broadcast so the frontend refreshes automatically.
+    this.setupDriveWorkspace(updated, req.raisedById ?? null).catch((err) =>
+      this.logger.warn(
+        `Drive workspace setup failed for ${updated.code}: ${(err as Error).message}`,
+      ),
+    );
+
+    return serialize(updated);
+  }
+
+  private async setupDriveWorkspace(
+    updated: Awaited<ReturnType<typeof this.load>>,
+    raisedById: string | null,
+  ): Promise<void> {
     const drive = await this.recruitment.ensureWorkspace(updated);
-    if (drive) updated.drive = drive as unknown as Prisma.JsonValue;
-    const serialized = serialize(updated);
-    this.notifications.broadcastChange('requisition', id, {
+    if (drive) {
+      await this.prisma.requisition.update({
+        where: { id: updated.id },
+        data: { drive: drive as unknown as Prisma.InputJsonValue },
+      });
+    }
+    // Re-fetch with the latest drive info and broadcast to all connected clients.
+    const fresh = await this.prisma.requisition.findUnique({
+      where: { id: updated.id },
+      include: reqWithRelations,
+    });
+    if (!fresh) return;
+    const serialized = serialize(fresh);
+    this.notifications.broadcastChange('requisition', updated.id, {
       action: 'posted',
       record: serialized,
     });
-    if (req.raisedById) {
-      await this.notifications.notify(req.raisedById, {
+    if (raisedById) {
+      await this.notifications.notify(raisedById, {
         type: 'requisition_posted',
         title: 'Requisition posted',
-        message: `${req.code} · ${req.designation} is now published to candidate sources.`,
-        link: `/requisitions/${id}`,
+        message: `${updated.code} · ${updated.designation} is now published to candidate sources.`,
+        link: `/requisitions/${updated.id}`,
       });
     }
-    return serialized;
   }
 
   // --- attachments ---------------------------------------------------------

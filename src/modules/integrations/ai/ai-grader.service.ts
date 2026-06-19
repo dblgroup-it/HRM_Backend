@@ -642,15 +642,19 @@ Use "consistent" with an empty findings array when everything lines up.`;
       this.provider === 'claude'
         ? await this.callClaude(prompt, 1400)
         : await this.callGemini(prompt);
-    return this.parseCompare(
-      raw,
-      input.finalists.map((f) => f.id),
+    // Build label→id map: { C1: "db-id-1", C2: "db-id-2", … }
+    const labelToId = Object.fromEntries(
+      input.finalists.map((f, idx) => [`C${idx + 1}`, f.id]),
     );
+    return this.parseCompare(raw, labelToId);
   }
 
   private buildComparePrompt(i: CompareFinalistInput): string {
+    // Use sequential labels (C1, C2…) instead of raw DB ids so the AI never
+    // echoes an internal id into the recommendation text.
+    const labels = i.finalists.map((_, idx) => `C${idx + 1}`);
     const blocks = i.finalists
-      .map((f) => {
+      .map((f, idx) => {
         const exams = f.exams.length
           ? f.exams
               .map((e) => `  ${e.type}: ${e.score}/${e.maxScore}`)
@@ -668,7 +672,7 @@ Use "consistent" with an empty findings array when everything lines up.`;
               )
               .join('\n')
           : '  (no interview marks yet)';
-        return `CANDIDATE id=${f.id}
+        return `CANDIDATE ${labels[idx]}
 Name: ${f.name} (stage: ${f.stage})
 CV match score: ${f.matchScore ?? 'n/a'}/100${f.matchSummary ? ` — ${f.matchSummary}` : ''}
 Exam results:
@@ -677,7 +681,7 @@ Interviews:
 ${interviews}`;
       })
       .join('\n\n');
-    return `You are advising DBL Group's Corporate HR on a final hiring decision. Compare the finalists below for the role, strictly on the evidence given (CV screening, exam scores, interview panel marks and comments). Be balanced — name genuine risks, not filler.
+    return `You are advising DBL Group's Corporate HR on a final hiring decision. Compare the finalists below for the role, strictly on the evidence given (CV screening, exam scores, interview panel marks and comments). Be balanced — name genuine risks, not filler. Use candidate names (not labels like C1) in the recommendation text.
 
 ROLE: ${i.role.designation} — ${i.role.department}
 Job description: ${i.role.jobDescription || '(none)'}
@@ -687,14 +691,15 @@ ${i.role.requirements.map((r) => `- ${r}`).join('\n') || '(none)'}
 ${blocks}
 
 Respond with ONLY a compact JSON object and nothing else:
-{"recommendation":"<3-5 sentences: who you would hire and why, referencing the evidence>","ranking":[{"id":"<candidate id>","rank":<1=best>,"strengths":["<2-4 short items>"],"risks":["<1-3 short items>"],"verdict":"<one sentence on this candidate>"}]}
-Include EVERY candidate exactly once, using the exact id values given.`;
+{"recommendation":"<3-5 sentences using candidate names, who you would hire and why>","ranking":[{"id":"<label e.g. C1>","rank":<1=best>,"strengths":["<2-4 short items>"],"risks":["<1-3 short items>"],"verdict":"<one sentence on this candidate>"}]}
+Include EVERY candidate exactly once using the exact label values (${labels.join(', ')}).`;
   }
 
   private parseCompare(
     raw: string,
-    validIds: string[],
+    labelToId: Record<string, string>,
   ): CompareFinalistsResult {
+    const validIds = Object.values(labelToId);
     const toItems = (v: unknown): string[] =>
       Array.isArray(v)
         ? v
@@ -718,8 +723,11 @@ Include EVERY candidate exactly once, using the exact id values given.`;
                 risks?: unknown;
                 verdict?: unknown;
               };
+              const label = String(o.id ?? '');
+              // Resolve label (C1, C2…) back to the real DB id.
+              const realId = labelToId[label] ?? label;
               return {
-                id: String(o.id ?? ''),
+                id: realId,
                 rank: Math.max(1, Math.round(Number(o.rank) || 99)),
                 strengths: toItems(o.strengths),
                 risks: toItems(o.risks),

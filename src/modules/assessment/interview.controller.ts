@@ -14,6 +14,7 @@ import {
 } from '../../common/decorators/current-user.decorator';
 import { InterviewService } from './interview.service';
 import {
+  BulkScheduleInterviewDto,
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
@@ -51,6 +52,15 @@ export class InterviewController {
     return this.interviews.listForCandidate(candidateId, user.id);
   }
 
+  /** Schedule the same interview config for multiple candidates at once. */
+  @Post('interviews/bulk')
+  bulkSchedule(
+    @Body() dto: BulkScheduleInterviewDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.bulkSchedule({ id: user.id, name: user.name }, dto);
+  }
+
   @Post('candidates/:candidateId/interviews')
   schedule(
     @Param('candidateId') candidateId: string,
@@ -76,5 +86,14 @@ export class InterviewController {
   @Delete('interviews/:roundId')
   remove(@Param('roundId') roundId: string, @CurrentUser() user: AuthUser) {
     return this.interviews.remove(roundId, user.id);
+  }
+
+  /** Email the AI-generated interview questions to every panelist on this round. */
+  @Post('interviews/:roundId/send-questions')
+  sendQuestions(
+    @Param('roundId') roundId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.sendQuestions(roundId, user.id);
   }
 }

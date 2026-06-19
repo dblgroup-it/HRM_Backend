@@ -6,6 +6,7 @@ import {
   Patch,
 } from '@nestjs/common';
 import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { ConfigService } from '@nestjs/config';
 
 import {
   AuthUser,
@@ -30,11 +31,18 @@ class UpdateAiSettingsDto {
   autoRoleProfile?: boolean;
 }
 
+class UpdateNotificationSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  emailEnabled?: boolean;
+}
+
 @Controller('settings')
 export class SettingsController {
   constructor(
     private readonly settings: SettingsService,
     private readonly permissions: PermissionsService,
+    private readonly config: ConfigService,
   ) {}
 
   /** Anyone authenticated can read AI config (used to label the UI). */
@@ -53,5 +61,36 @@ export class SettingsController {
       throw new ForbiddenException('Only a super user can change AI settings');
     }
     return this.settings.setAiConfig(dto);
+  }
+
+  /** Read notification config + mail SMTP status (super user only). */
+  @Get('notifications')
+  async getNotifications(@CurrentUser() user: AuthUser) {
+    if (!(await this.permissions.isSuperUser(user.id))) {
+      throw new ForbiddenException(
+        'Only a super user can view notification settings',
+      );
+    }
+    const config = await this.settings.getNotificationConfig();
+    return {
+      ...config,
+      mailConfigured: Boolean(
+        this.config.get('mail.user') && this.config.get('mail.appPassword'),
+      ),
+    };
+  }
+
+  /** Toggle the system-wide email master switch (super user only). */
+  @Patch('notifications')
+  async updateNotifications(
+    @Body() dto: UpdateNotificationSettingsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (!(await this.permissions.isSuperUser(user.id))) {
+      throw new ForbiddenException(
+        'Only a super user can change notification settings',
+      );
+    }
+    return this.settings.setNotificationConfig(dto);
   }
 }
