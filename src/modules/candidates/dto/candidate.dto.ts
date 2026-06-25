@@ -103,4 +103,9 @@ export class PublicApplyDto {
   @IsString()
   @MaxLength(40)
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  salaryExpectation?: string;
 }

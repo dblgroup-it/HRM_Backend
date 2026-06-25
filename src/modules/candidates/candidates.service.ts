@@ -192,6 +192,7 @@ export class CandidatesService {
         mimeType: file.mimetype,
         buffer: file.buffer,
       });
+      this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
       cvFileId = uploaded.id;
       cvUrl = uploaded.url;
     }
@@ -247,6 +248,7 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
+    this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
@@ -330,6 +332,7 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
+    this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
 
     const updated = await this.prisma.candidate.update({
       where: { id },
@@ -715,12 +718,14 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
+    this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
         name: dto.name,
         email: dto.email,
         phone: dto.phone ?? null,
+        salaryExpectation: dto.salaryExpectation ?? null,
         source: 'application',
         cvFileId: uploaded.id,
         cvUrl: uploaded.url,
@@ -779,6 +784,28 @@ export class CandidatesService {
       );
     }
   }
+
+  /** Retroactively share every existing CV file as "anyone with link → reader". */
+  async backfillCvSharing(userId: string) {
+    await this.requireRecruitmentRole(userId);
+    const candidates = await this.prisma.candidate.findMany({
+      where: { cvFileId: { not: null } },
+      select: { id: true, cvFileId: true },
+    });
+    let fixed = 0;
+    let failed = 0;
+    for (const c of candidates) {
+      try {
+        await this.drive.shareAnyoneWithLink(c.cvFileId!, 'reader');
+        fixed++;
+      } catch (e) {
+        this.logger.warn(`Backfill share failed for candidate ${c.id} file ${c.cvFileId}: ${(e as Error)?.message}`);
+        failed++;
+      }
+    }
+    return { total: candidates.length, fixed, failed };
+  }
+
 }
 
 function cvFileName(candidate: string, original: string): string {
@@ -828,6 +855,7 @@ function serializeCandidate(c: CandidateRow) {
     cvFileId: c.cvFileId,
     cvUrl: c.cvUrl,
     notes: c.notes ?? '',
+    salaryExpectation: c.salaryExpectation ?? '',
     matchScore: c.matchScore,
     matchSummary: c.matchSummary ?? '',
     screenedAt: c.screenedAt ? c.screenedAt.toISOString() : null,

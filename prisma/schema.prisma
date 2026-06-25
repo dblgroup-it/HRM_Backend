@@ -379,6 +379,7 @@ model Requisition {
   interviewRounds    InterviewRound[]
   examQuestions      ExamQuestion[]
   examAttempts       ExamAttempt[]
+  bdJobsPost         BdJobsPost?
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
 
@@ -386,6 +387,25 @@ model Requisition {
   @@index([unitFactory])
   @@index([createdAt])
   @@map("requisitions")
+}
+
+/// BDJobs job posting record — one per requisition.
+model BdJobsPost {
+  id            String      @id @default(cuid())
+  requisitionId String      @unique @map("requisition_id")
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  /// BDJobs assigned job ID (null until successfully posted)
+  bdJobsJobId   String?     @map("bdjobs_job_id")
+  /// draft | posted | failed
+  status        String      @default("draft")
+  /// All form fields submitted by Corporate HR
+  formData      Json        @map("form_data")
+  errorMessage  String?     @map("error_message")
+  postedAt      DateTime?   @map("posted_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@map("bdjobs_posts")
 }
 
 /// A CV / applicant against a requisition (Phase 2 — CV collection).
@@ -403,6 +423,7 @@ model Candidate {
   cvFileId      String?        @map("cv_file_id")
   cvUrl         String?        @map("cv_url")
   notes         String?
+  salaryExpectation String? @map("salary_expectation")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
   matchScore    Int?           @map("match_score")
   matchSummary  String?        @map("match_summary")

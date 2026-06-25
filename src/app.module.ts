@@ -22,6 +22,7 @@ import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { InsightsModule } from './modules/insights/insights.module';
 import { UsersModule } from './modules/users/users.module';
 import { ZingHrModule } from './modules/integrations/zinghr/zinghr.module';
+import { BdJobsModule } from './modules/integrations/bdjobs/bdjobs.module';
 import { GoogleModule } from './modules/integrations/google/google.module';
 import { MailModule } from './modules/integrations/mail/mail.module';
 import { AiModule } from './modules/integrations/ai/ai.module';
@@ -50,6 +51,7 @@ import { AutomationModule } from './modules/automation/automation.module';
     InsightsModule,
     UsersModule,
     ZingHrModule,
+    BdJobsModule,
     GoogleModule,
     MailModule,
     AiModule,

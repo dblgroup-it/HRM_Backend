@@ -117,4 +117,10 @@ export class CandidatesController {
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.candidates.remove(id, user.id);
   }
+
+  /** One-time admin fix: share all existing private CV files as "anyone with link". */
+  @Post('admin/candidates/fix-cv-sharing')
+  fixCvSharing(@CurrentUser() user: AuthUser) {
+    return this.candidates.backfillCvSharing(user.id);
+  }
 }
