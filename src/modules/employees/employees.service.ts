@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import { QueryEmployeesDto } from './dto/query-employees.dto';
+import { buildAvatarUrl } from '../../common/avatar.util';
 
 export interface EmployeeView {
   id: string;
@@ -11,6 +12,7 @@ export interface EmployeeView {
   userId: string;
   employeeCode: string;
   name: string;
+  avatarUrl: string | null;
   email: string | null;
   phone: string | null;
   designation: string | null;
@@ -174,6 +176,7 @@ export class EmployeesService {
       userId: row.userId,
       employeeCode: row.employeeCode,
       name: row.user.name,
+      avatarUrl: buildAvatarUrl(row.user.id, row.user.avatarFileId),
       email: row.user.email,
       phone: row.user.phone,
       designation: row.designation,

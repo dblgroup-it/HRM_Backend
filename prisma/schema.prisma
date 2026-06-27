@@ -428,6 +428,7 @@ model Candidate {
   matchScore    Int?           @map("match_score")
   matchSummary  String?        @map("match_summary")
   screenedAt    DateTime?      @map("screened_at")
+  viewedAt      DateTime?      @map("viewed_at")
   /// Phase 3: suitable-but-not-selected candidates kept for future recall.
   talentPool    Boolean        @default(false) @map("talent_pool")
   interviews    InterviewRound[]

@@ -75,6 +75,11 @@ export class NotificationsService {
     for (const id of new Set(userIds)) await this.notify(id, input);
   }
 
+  /** Broadcast any arbitrary event to all connected clients. */
+  broadcastRaw(event: string, data: unknown): void {
+    this.gateway.broadcast(event, data);
+  }
+
   /** Broadcast a live data-changed signal so open clients update/refetch. */
   broadcastChange<T = unknown>(
     resource: string,

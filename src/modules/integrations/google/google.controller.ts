@@ -33,15 +33,13 @@ export class GoogleController {
     return {
       hasClient: this.auth.hasClient(),
       connected: this.auth.isConfigured(),
-      // Calendar rides on the same OAuth token. A pre-calendar consent keeps
-      // working for Drive and simply skips invites until consent is redone.
       calendar: this.auth.isConfigured(),
     };
   }
 
   /**
-   * One-time setup: open this in a browser (signed in as itassets@dbl-group.com)
-   * to grant Drive access. Public because Google redirects back without our JWT.
+   * One-time admin setup: open this in a browser to grant Drive access.
+   * Generates a time-limited HMAC state token to prevent CSRF on the callback.
    */
   @Public()
   @Get('oauth/start')
@@ -56,7 +54,8 @@ export class GoogleController {
       );
       return;
     }
-    res.redirect(this.auth.getConsentUrl());
+    const state = this.auth.generateOAuthState();
+    res.redirect(this.auth.getConsentUrl(state));
   }
 
   @Public()
@@ -64,6 +63,7 @@ export class GoogleController {
   async callback(
     @Query('code') code: string | undefined,
     @Query('error') error: string | undefined,
+    @Query('state') state: string | undefined,
     @Res() res: Response,
   ) {
     if (error || !code) {
@@ -72,6 +72,18 @@ export class GoogleController {
           'Authorization failed',
           `<p>${error ?? 'No authorization code was returned.'} Please
              <a href="/api/integrations/google/oauth/start">try again</a>.</p>`,
+        ),
+      );
+      return;
+    }
+
+    // CSRF protection: verify the HMAC state is valid and < 10 minutes old.
+    if (!state || !this.auth.verifyOAuthState(state)) {
+      res.status(403).type('html').send(
+        page(
+          'Invalid request',
+          `<p>OAuth state verification failed — the link may have expired or be a CSRF attempt.
+             Please <a href="/api/integrations/google/oauth/start">start again</a>.</p>`,
         ),
       );
       return;
@@ -92,12 +104,19 @@ export class GoogleController {
         );
         return;
       }
-      this.logger.log('Google Drive consent complete — refresh token issued.');
+
+      // Token is logged server-side only — never rendered in the browser.
+      this.logger.log(
+        'Google Drive consent complete. Add the following line to HRM_Backend/.env then restart:',
+      );
+      this.logger.log(`GOOGLE_REFRESH_TOKEN=${refresh}`);
+
       res.type('html').send(
         page(
           'Google Drive connected ✓',
-          `<p>Copy this into <code>HRM_Backend/.env</code>, then restart the backend:</p>
-           <pre>GOOGLE_REFRESH_TOKEN=${refresh}</pre>
+          `<p>The refresh token has been printed to the <strong>backend server console / terminal</strong>.</p>
+           <p>Copy the <code>GOOGLE_REFRESH_TOKEN=…</code> line from the terminal into
+           <code>HRM_Backend/.env</code>, then restart the backend.</p>
            <p>After restarting, recruitment folders will be created automatically when a requisition is posted.</p>`,
         ),
       );
@@ -106,7 +125,7 @@ export class GoogleController {
       res.type('html').send(
         page(
           'Token exchange failed',
-          `<p>${(err as Error).message}. Please
+          `<p>An error occurred during token exchange. Check the server logs and
              <a href="/api/integrations/google/oauth/start">try again</a>.</p>`,
         ),
       );

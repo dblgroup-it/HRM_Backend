@@ -7,6 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { CandidateStage, Prisma } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
@@ -18,6 +19,8 @@ import { SettingsService } from '../settings/settings.service';
 import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { RecruitmentService } from './recruitment.service';
 import {
+  BulkRejectDto,
+  CandidateQueryDto,
   CreateCandidateDto,
   EmailCandidateDto,
   PublicApplyDto,
@@ -34,8 +37,16 @@ export interface UploadedCv {
 
 type CandidateRow = Prisma.CandidateGetPayload<object>;
 
+interface ScreeningJob {
+  done: number;
+  total: number;
+  shortlisted: number;
+  active: boolean;
+}
+
 @Injectable()
 export class CandidatesService {
+  private readonly screeningJobs = new Map<string, ScreeningJob>();
   private readonly logger = new Logger(CandidatesService.name);
 
   constructor(
@@ -80,13 +91,292 @@ export class CandidatesService {
 
   // --- candidates ----------------------------------------------------------
 
-  async list(reqId: string, userId: string) {
+  async list(reqId: string, userId: string, query: CandidateQueryDto = {}) {
     await this.requireReq(reqId, userId);
-    const rows = await this.prisma.candidate.findMany({
-      where: { requisitionId: reqId },
+
+    const page = Math.max(1, query.page ?? 1);
+    const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 50));
+
+    const where: Prisma.CandidateWhereInput = { requisitionId: reqId };
+    if (query.stage) where.stage = query.stage.toUpperCase() as CandidateStage;
+    if (query.minScore != null) where.matchScore = { gte: query.minScore };
+    if (query.search?.trim()) {
+      const term = query.search.trim();
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { email: { contains: term, mode: 'insensitive' } },
+        { phone: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    const orderBy: Prisma.CandidateOrderByWithRelationInput =
+      query.sortBy === 'name'
+        ? { name: 'asc' }
+        : query.sortBy === 'recent'
+        ? { createdAt: 'desc' }
+        : { matchScore: { sort: 'desc', nulls: 'last' } }; // default: match
+
+    const [rows, total] = await Promise.all([
+      this.prisma.candidate.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.candidate.count({ where }),
+    ]);
+
+    // Stats across ALL candidates for this requisition (ignores current filter).
+    const baseWhere = { requisitionId: reqId };
+    const [s90, s75, s50, s25, unscreened, notViewed, finalists, stageCounts] =
+      await Promise.all([
+        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 90 } } }),
+        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 75, lt: 90 } } }),
+        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 50, lt: 75 } } }),
+        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 25, lt: 50 } } }),
+        this.prisma.candidate.count({ where: { ...baseWhere, screenedAt: null } }),
+        this.prisma.candidate.count({ where: { ...baseWhere, viewedAt: null } }),
+        this.prisma.candidate.count({ where: { ...baseWhere, stage: { in: ['INTERVIEW', 'FINAL', 'SELECTED'] } } }),
+        this.prisma.candidate.groupBy({
+          by: ['stage'],
+          where: baseWhere,
+          _count: { id: true },
+        }),
+      ]);
+
+    const totalAll = stageCounts.reduce((s, r) => s + r._count.id, 0);
+    const stageCountMap: Record<string, number> = { all: totalAll };
+    for (const r of stageCounts) {
+      stageCountMap[r.stage.toLowerCase()] = r._count.id;
+    }
+
+    // applyCount: how many times each email has applied across ALL requisitions.
+    const emails = [...new Set(rows.map((r) => r.email).filter(Boolean))] as string[];
+    const emailCounts =
+      emails.length > 0
+        ? await this.prisma.candidate.groupBy({
+            by: ['email'],
+            where: { email: { in: emails } },
+            _count: { id: true },
+          })
+        : [];
+    const countMap = new Map(emailCounts.map((e) => [e.email, e._count.id]));
+
+    return {
+      items: rows.map((r) => ({
+        ...serializeCandidate(r),
+        applyCount: r.email ? (countMap.get(r.email) ?? 1) : 1,
+      })),
+      meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) || 1 },
+      stats: {
+        total: totalAll,
+        notViewed,
+        finalists,
+        stageCounts: stageCountMap,
+        band90: s90,
+        band75: s75,
+        band50: s50,
+        band25: s25,
+        unscreened,
+      },
+    };
+  }
+
+  getScreeningStatus(reqId: string): { done: number; total: number; shortlisted: number; active: boolean } {
+    return this.screeningJobs.get(reqId) ?? { done: 0, total: 0, shortlisted: 0, active: false };
+  }
+
+  async exportCandidates(reqId: string, userId: string, query: CandidateQueryDto = {}) {
+    const req = await this.requireReq(reqId, userId);
+
+    const where: Prisma.CandidateWhereInput = { requisitionId: reqId };
+    if (query.stage) where.stage = query.stage.toUpperCase() as CandidateStage;
+    if (query.minScore != null) where.matchScore = { gte: query.minScore };
+    if (query.search?.trim()) {
+      const term = query.search.trim();
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { email: { contains: term, mode: 'insensitive' } },
+        { phone: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    const orderBy: Prisma.CandidateOrderByWithRelationInput =
+      query.sortBy === 'name'
+        ? { name: 'asc' }
+        : query.sortBy === 'recent'
+        ? { createdAt: 'desc' }
+        : { matchScore: { sort: 'desc', nulls: 'last' } };
+
+    const rows = await this.prisma.candidate.findMany({ where, orderBy });
+
+    const STAGE_LABEL: Record<string, string> = {
+      APPLIED: 'Applied',
+      AI_SHORTLISTED: 'AI Shortlisted',
+      SHORTLISTED: 'Shortlisted',
+      INTERVIEW: 'Interview',
+      FINAL: 'Final',
+      SELECTED: 'Selected',
+      REJECTED: 'Rejected',
+    };
+
+    // Stage fill colors for Excel cells
+    const STAGE_COLOR: Record<string, string> = {
+      APPLIED: 'FFE2E8F0',
+      AI_SHORTLISTED: 'FFEDE9FE',
+      SHORTLISTED: 'FFE0F2FE',
+      INTERVIEW: 'FFFEF3C7',
+      FINAL: 'FFE0E7FF',
+      SELECTED: 'FFD1FAE5',
+      REJECTED: 'FFFEE2E2',
+    };
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'DBL HRM';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('Candidates', { views: [{ state: 'frozen', ySplit: 1 }] });
+
+    // Column definitions
+    ws.columns = [
+      { header: '#',              key: 'no',       width: 5  },
+      { header: 'Name',           key: 'name',     width: 28 },
+      { header: 'Email',          key: 'email',    width: 30 },
+      { header: 'Phone',          key: 'phone',    width: 16 },
+      { header: 'AI Match Score', key: 'score',    width: 16 },
+      { header: 'Stage',          key: 'stage',    width: 16 },
+      { header: 'Applied Date',   key: 'applied',  width: 14 },
+      { header: 'Source',         key: 'source',   width: 12 },
+      { header: 'Notes',          key: 'notes',    width: 40 },
+    ];
+
+    // Style header row
+    const headerRow = ws.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1877C0' } };
+      cell.font   = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FF0F5999' } } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    headerRow.height = 22;
+
+    // Data rows
+    rows.forEach((r, idx) => {
+      const score = r.matchScore != null ? r.matchScore : null;
+      const stageFill = STAGE_COLOR[r.stage] ?? 'FFFFFFFF';
+
+      const row = ws.addRow({
+        no:      idx + 1,
+        name:    r.name ?? '',
+        email:   r.email ?? '',
+        phone:   r.phone ?? '',
+        score:   score,
+        stage:   STAGE_LABEL[r.stage] ?? r.stage,
+        applied: r.createdAt.toISOString().slice(0, 10),
+        source:  r.source ?? '',
+        notes:   r.notes ?? '',
+      });
+
+      row.height = 18;
+
+      // Alternate row background
+      const rowBg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+
+      row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+        cell.alignment = { vertical: 'middle', wrapText: false };
+        cell.font      = { size: 10 };
+
+        if (colNum === 6) {
+          // Stage column — colored fill
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: stageFill } };
+          cell.font = { size: 10, bold: true };
+        } else if (colNum === 5 && score != null) {
+          // Score column — green if ≥75, amber if ≥50, red otherwise
+          const scoreBg =
+            score >= 75 ? 'FFD1FAE5' :
+            score >= 50 ? 'FFFEF3C7' :
+            'FFFEE2E2';
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: scoreBg } };
+          cell.font = { size: 10, bold: true };
+          cell.numFmt = '0"%"'; // show as number (score is 0-100)
+        } else {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+        }
+      });
+    });
+
+    // Auto-filter on header row
+    ws.autoFilter = { from: 'A1', to: `I1` };
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const date = new Date().toISOString().slice(0, 10);
+    const filename = `candidates-${req.code ?? reqId}-${date}.xlsx`;
+
+    return { buffer: Buffer.from(buffer), filename };
+  }
+
+  async bulkReject(reqId: string, userId: string, dto: BulkRejectDto) {
+    await this.requireReq(reqId, userId);
+    const result = await this.prisma.candidate.updateMany({
+      where: {
+        requisitionId: reqId,
+        stage: { in: ['APPLIED', 'AI_SHORTLISTED'] },
+        matchScore: { lte: dto.maxScore },
+      },
+      data: { stage: 'REJECTED' },
+    });
+    this.notifications.broadcastChange('candidate', reqId, { action: 'bulk_rejected' });
+    return { rejected: result.count };
+  }
+
+  async applyHistory(id: string, userId: string) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: { requisition: true },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+
+    if (!cand.email) return { name: cand.name, email: null, total: 1, applications: [] };
+
+    const all = await this.prisma.candidate.findMany({
+      where: { email: cand.email },
+      include: { requisition: true },
       orderBy: { createdAt: 'desc' },
     });
-    return rows.map(serializeCandidate);
+
+    return {
+      name: cand.name,
+      email: cand.email,
+      total: all.length,
+      applications: all.map((a) => ({
+        candidateId: a.id,
+        requisitionId: a.requisition.id,
+        code: a.requisition.code,
+        designation: a.requisition.designation,
+        department: a.requisition.department,
+        unitFactory: a.requisition.unitFactory,
+        postedAt: a.requisition.createdAt.toISOString(),
+        appliedAt: a.createdAt.toISOString(),
+        viewed: Boolean(a.viewedAt),
+        stage: a.stage.toLowerCase(),
+      })),
+    };
+  }
+
+  async markViewed(id: string, userId: string) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: { requisition: true },
+    });
+    if (!cand) return { ok: true };
+    if (cand.viewedAt) return { ok: true }; // already viewed, skip write
+    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.prisma.candidate.update({
+      where: { id },
+      data: { viewedAt: new Date() },
+    });
+    return { ok: true };
   }
 
   /** Suitable-but-not-selected candidates kept for future recall (talent pool). */
@@ -444,12 +734,19 @@ export class CandidatesService {
     return serializeCandidate(updated ?? cand);
   }
 
-  /** Screen every un-screened applied candidate in a requisition. */
+  /** Screen every un-screened applied candidate in a requisition (runs in background). */
   async screenRequisition(reqId: string, userId: string) {
     await this.requireReq(reqId, userId);
     if (!this.ai.isConfigured()) {
       throw new ServiceUnavailableException('AI screening is not configured');
     }
+
+    // If a job is already active for this requisition, return its current status.
+    const existing = this.screeningJobs.get(reqId);
+    if (existing?.active) {
+      return { started: false, alreadyRunning: true, ...existing };
+    }
+
     const pending = await this.prisma.candidate.findMany({
       where: {
         requisitionId: reqId,
@@ -460,35 +757,45 @@ export class CandidatesService {
       include: { requisition: true },
     });
 
-    let screened = 0;
+    if (pending.length === 0) {
+      return { started: false, alreadyRunning: false, total: 0, done: 0, shortlisted: 0, active: false };
+    }
+
+    const job: ScreeningJob = { done: 0, total: pending.length, shortlisted: 0, active: true };
+    this.screeningJobs.set(reqId, job);
+    this.notifications.broadcastRaw('screening:progress', { reqId, ...job });
+
+    // Fire and forget — returns immediately so the HTTP response is not held open.
+    void this.runScreeningJob(reqId, pending);
+
+    return { started: true, alreadyRunning: false, total: pending.length, done: 0, shortlisted: 0, active: true };
+  }
+
+  private async runScreeningJob(
+    reqId: string,
+    pending: Prisma.CandidateGetPayload<{ include: { requisition: true } }>[],
+  ) {
+    let done = 0;
     let shortlisted = 0;
     // Sequential to stay within provider rate limits.
     for (const c of pending) {
       try {
         const u = await this.runScreen(c);
-        if (u) {
-          screened++;
-          if (u.stage === 'AI_SHORTLISTED') shortlisted++;
-        }
+        if (u?.stage === 'AI_SHORTLISTED') shortlisted++;
       } catch (err) {
-        this.logger.warn(
-          `Screening candidate ${c.id} failed: ${(err as Error).message}`,
-        );
+        this.logger.warn(`Screening candidate ${c.id} failed: ${(err as Error).message}`);
       }
+      done++;
+      const job: ScreeningJob = { done, total: pending.length, shortlisted, active: done < pending.length };
+      this.screeningJobs.set(reqId, job);
+      this.notifications.broadcastRaw('screening:progress', { reqId, ...job });
     }
-    this.notifications.broadcastChange('candidate', reqId, {
-      action: 'screened_bulk',
-    });
-    const rows = await this.prisma.candidate.findMany({
-      where: { requisitionId: reqId },
-      orderBy: { createdAt: 'desc' },
-    });
-    return { screened, shortlisted, candidates: rows.map(serializeCandidate) };
+    this.notifications.broadcastChange('candidate', reqId, { action: 'screened_bulk' });
   }
 
   /**
-   * AI side-by-side comparison of a requisition's finalists (interview/final
-   * stage candidates) using CV screening, exam scores and panel marks. Purely
+   * AI side-by-side comparison of a requisition's finalists (interview / final /
+   * selected candidates) using CV screening, exam scores and panel marks. Purely
    * advisory output for Corporate HR's final decision — nothing is persisted.
    */
   async compareFinalists(reqId: string, userId: string) {
@@ -499,7 +806,7 @@ export class CandidatesService {
     const finalists = await this.prisma.candidate.findMany({
       where: {
         requisitionId: reqId,
-        stage: { in: ['INTERVIEW', 'FINAL'] },
+        stage: { in: ['INTERVIEW', 'FINAL', 'SELECTED'] },
       },
       include: {
         examAttempts: { where: { totalScore: { not: null } } },
@@ -509,7 +816,7 @@ export class CandidatesService {
     });
     if (finalists.length < 2) {
       throw new BadRequestException(
-        'Need at least two candidates in the interview or final stage to compare',
+        'Need at least two candidates in the interview, final or selected stage to compare',
       );
     }
     const profile = req.roleProfile as {
@@ -677,6 +984,64 @@ export class CandidatesService {
         }
       }
     })();
+  }
+
+  // --- public careers & status (no auth) -----------------------------------
+
+  async listOpenJobs() {
+    const reqs = await this.prisma.requisition.findMany({
+      where: { status: 'POSTED' },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        code: true,
+        designation: true,
+        department: true,
+        unitFactory: true,
+        placeOfPosting: true,
+        employmentNature: true,
+        requiredPosts: true,
+        jobDescription: true,
+        createdAt: true,
+      },
+    });
+    return reqs.map((r) => ({
+      id: r.id,
+      code: r.code,
+      designation: r.designation,
+      department: r.department,
+      unitFactory: r.unitFactory,
+      placeOfPosting: r.placeOfPosting,
+      employmentNature: r.employmentNature.toLowerCase(),
+      requiredPosts: r.requiredPosts,
+      summary: r.jobDescription
+        ? r.jobDescription.replace(/<[^>]+>/g, '').slice(0, 200).trim()
+        : null,
+      postedAt: r.createdAt.toISOString(),
+    }));
+  }
+
+  async applicationStatus(email: string) {
+    if (!email || email.trim().length < 5) {
+      throw new BadRequestException('Please provide a valid email address');
+    }
+    const candidates = await this.prisma.candidate.findMany({
+      where: { email: { equals: email.trim(), mode: 'insensitive' } },
+      include: {
+        requisition: {
+          select: { code: true, designation: true, unitFactory: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return candidates.map((c) => ({
+      requisitionId: c.requisitionId,
+      code: c.requisition.code,
+      designation: c.requisition.designation,
+      unitFactory: c.requisition.unitFactory,
+      stage: c.stage.toLowerCase(),
+      appliedAt: c.createdAt.toISOString(),
+    }));
   }
 
   // --- public job application (no auth) ------------------------------------
@@ -859,6 +1224,7 @@ function serializeCandidate(c: CandidateRow) {
     matchScore: c.matchScore,
     matchSummary: c.matchSummary ?? '',
     screenedAt: c.screenedAt ? c.screenedAt.toISOString() : null,
+    viewedAt: c.viewedAt ? c.viewedAt.toISOString() : null,
     talentPool: c.talentPool,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),

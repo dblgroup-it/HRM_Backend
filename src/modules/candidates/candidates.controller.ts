@@ -6,9 +6,12 @@ import {
   Param,
   Patch,
   Post,
+  Query,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 
@@ -16,9 +19,11 @@ import {
   AuthUser,
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
-import { DOC_UPLOAD as CV_UPLOAD } from '../../common/upload/file-upload';
+import { PDF_UPLOAD as CV_UPLOAD } from '../../common/upload/file-upload';
 import { CandidatesService, type UploadedCv } from './candidates.service';
 import {
+  BulkRejectDto,
+  CandidateQueryDto,
   CreateCandidateDto,
   EmailCandidateDto,
   UpdateCandidateDto,
@@ -44,8 +49,39 @@ export class CandidatesController {
   }
 
   @Get('requisitions/:reqId/candidates')
-  list(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
-    return this.candidates.list(reqId, user.id);
+  list(
+    @Param('reqId') reqId: string,
+    @CurrentUser() user: AuthUser,
+    @Query() query: CandidateQueryDto,
+  ) {
+    return this.candidates.list(reqId, user.id, query);
+  }
+
+  @Get('requisitions/:reqId/candidates/screening-status')
+  screeningStatus(@Param('reqId') reqId: string) {
+    return this.candidates.getScreeningStatus(reqId);
+  }
+
+  @Get('requisitions/:reqId/candidates/export')
+  async exportXlsx(
+    @Param('reqId') reqId: string,
+    @CurrentUser() user: AuthUser,
+    @Query() query: CandidateQueryDto,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.candidates.exportCandidates(reqId, user.id, query);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
+  @Post('requisitions/:reqId/candidates/bulk-reject')
+  bulkReject(
+    @Param('reqId') reqId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: BulkRejectDto,
+  ) {
+    return this.candidates.bulkReject(reqId, user.id, dto);
   }
 
   @Post('requisitions/:reqId/candidates/sync-drive')
@@ -53,7 +89,7 @@ export class CandidatesController {
     return this.candidates.syncFromDrive(reqId, user.id);
   }
 
-  /** AI-screen all un-screened applied CVs in this requisition. */
+  /** AI-screen all un-screened applied CVs in this requisition (non-blocking). */
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('requisitions/:reqId/candidates/screen')
   screenAll(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
@@ -92,6 +128,16 @@ export class CandidatesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.candidates.update(id, dto, user.id);
+  }
+
+  @Get('candidates/:id/apply-history')
+  applyHistory(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.applyHistory(id, user.id);
+  }
+
+  @Patch('candidates/:id/view')
+  markViewed(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.markViewed(id, user.id);
   }
 
   @Post('candidates/:id/cv')
