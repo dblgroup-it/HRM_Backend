@@ -1,7 +1,10 @@
+import { randomBytes } from 'node:crypto';
+
 import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Injectable,
   Logger,
   NotFoundException,
@@ -32,6 +35,7 @@ const roundInclude = {
   panelists: { include: { user: { include: { employee: true } } } },
   evaluations: { include: { evaluator: { select: { name: true } } } },
   candidate: { select: { id: true, name: true, email: true } },
+  evaluationTokens: { select: { panelistUserId: true, token: true, status: true } },
 } satisfies Prisma.InterviewRoundInclude;
 
 type RoundFull = Prisma.InterviewRoundGetPayload<{
@@ -103,8 +107,14 @@ export class InterviewService {
       });
     }
 
-    // Best-effort Google Calendar event (+ Meet link for online interviews):
-    // invites land in panelists' and the candidate's own calendars.
+    // Generate secure one-click evaluation links for each panelist.
+    await this.generateEvalTokens(
+      round.id,
+      [...new Set(dto.panelistUserIds)],
+      toDate(dto.scheduledAt),
+    );
+
+    // Best-effort Google Calendar event (+ Meet link for online interviews).
     const synced = await this.syncCalendarCreate(
       round,
       cand.requisition.designation,
@@ -116,7 +126,13 @@ export class InterviewService {
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'interview_scheduled',
     });
-    return serializeRound(round);
+
+    // Re-fetch with tokens so the response includes evalLink per panelist.
+    const fresh = await this.prisma.interviewRound.findUnique({
+      where: { id: round.id },
+      include: roundInclude,
+    });
+    return serializeRound(fresh ?? round);
   }
 
   async bulkSchedule(
@@ -144,10 +160,15 @@ export class InterviewService {
       where: { id: roundId },
       include: {
         requisition: { select: { unitFactory: true, designation: true } },
+        panelists: { select: { userId: true } },
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
     await this.requireRecruitmentAccess(round.requisition.unitFactory, userId);
+
+    const newPanelistIds = dto.panelistUserIds
+      ? [...new Set(dto.panelistUserIds)]
+      : null;
 
     await this.prisma.interviewRound.update({
       where: { id: roundId },
@@ -163,18 +184,41 @@ export class InterviewService {
         ...(dto.status
           ? { status: dto.status.toUpperCase() as InterviewStatus }
           : {}),
-        ...(dto.panelistUserIds
+        ...(newPanelistIds
           ? {
               panelists: {
                 deleteMany: {},
-                create: [...new Set(dto.panelistUserIds)].map((uid) => ({
-                  userId: uid,
-                })),
+                create: newPanelistIds.map((uid) => ({ userId: uid })),
               },
             }
           : {}),
       },
     });
+
+    // Sync evaluation tokens when panelists change.
+    if (newPanelistIds) {
+      const oldIds = round.panelists.map((p) => p.userId);
+      const removed = oldIds.filter((id) => !newPanelistIds.includes(id));
+      if (removed.length) {
+        await this.prisma.evaluationToken.deleteMany({
+          where: { roundId, panelistUserId: { in: removed } },
+        });
+      }
+      const scheduledAt =
+        dto.scheduledAt !== undefined ? toDate(dto.scheduledAt) : round.scheduledAt;
+      await this.generateEvalTokens(roundId, newPanelistIds, scheduledAt);
+    } else if (dto.scheduledAt !== undefined) {
+      // scheduledAt changed — update expiry on pending tokens.
+      const newDate = toDate(dto.scheduledAt);
+      if (newDate) {
+        const newExpiry = new Date(newDate.getTime() + 48 * 60 * 60 * 1000);
+        await this.prisma.evaluationToken.updateMany({
+          where: { roundId, status: { not: 'submitted' } },
+          data: { expiresAt: newExpiry },
+        });
+      }
+    }
+
     this.notifications.broadcastChange('candidate', round.requisitionId, {
       action: 'interview_updated',
     });
@@ -291,7 +335,6 @@ export class InterviewService {
       throw new ForbiddenException('You are not on this interview panel');
     }
 
-    // Marks are final once submitted — a panelist cannot change them afterwards.
     const already = await this.prisma.evaluation.findUnique({
       where: { roundId_evaluatorId: { roundId, evaluatorId: userId } },
       select: { id: true },
@@ -325,10 +368,217 @@ export class InterviewService {
         total,
       },
     });
+
+    // Also mark the eval token as submitted if it exists.
+    await this.prisma.evaluationToken.updateMany({
+      where: { roundId, panelistUserId: userId, status: { not: 'submitted' } },
+      data: { status: 'submitted', submittedAt: new Date() },
+    });
+
     this.notifications.broadcastChange('candidate', round.requisitionId, {
       action: 'evaluation_submitted',
     });
     return this.myInterviews(userId);
+  }
+
+  // --- secure one-click evaluation (no login) --------------------------------
+
+  /** Public: return the eval form data for a token. Marks as opened on first access. */
+  async getEvalByToken(token: string) {
+    const et = await this.prisma.evaluationToken.findUnique({
+      where: { token },
+      include: {
+        round: {
+          include: {
+            candidate: { select: { name: true } },
+            requisition: {
+              select: {
+                designation: true,
+                unitFactory: true,
+                rubricCriteria: true,
+                interviewQuestions: true,
+              },
+            },
+          },
+        },
+        panelistUser: { select: { name: true } },
+      },
+    });
+
+    if (!et) throw new NotFoundException('Evaluation link not found');
+
+    if (et.status !== 'submitted' && et.expiresAt < new Date()) {
+      throw new GoneException(
+        'This evaluation link has expired. Please contact HR.',
+      );
+    }
+
+    // Mark as opened on first access.
+    if (et.status === 'sent') {
+      await this.prisma.evaluationToken.update({
+        where: { id: et.id },
+        data: { status: 'opened', openedAt: new Date() },
+      });
+    }
+
+    // Check if already evaluated (could have been done via the login path).
+    const existingEval = await this.prisma.evaluation.findUnique({
+      where: {
+        roundId_evaluatorId: {
+          roundId: et.roundId,
+          evaluatorId: et.panelistUserId,
+        },
+      },
+      select: { scores: true, comments: true, total: true },
+    });
+
+    const rubric = [...et.round.requisition.rubricCriteria]
+      .sort((a, b) => a.orderIndex - b.orderIndex)
+      .map((c) => ({ id: c.id, label: c.label, maxScore: c.maxScore }));
+
+    const questions = Array.isArray(et.round.requisition.interviewQuestions)
+      ? (et.round.requisition.interviewQuestions as {
+          category: string;
+          question: string;
+        }[])
+      : [];
+
+    return {
+      status: et.status,
+      alreadySubmitted: !!existingEval,
+      panelistName: et.panelistUser.name,
+      candidate: { name: et.round.candidate.name },
+      interview: {
+        kind: et.round.kind.toLowerCase(),
+        mode: et.round.mode.toLowerCase(),
+        scheduledAt: et.round.scheduledAt?.toISOString() ?? null,
+        location: et.round.location ?? '',
+        designation: et.round.requisition.designation,
+        unit: et.round.requisition.unitFactory,
+      },
+      rubric,
+      interviewQuestions: questions,
+      submittedEval: existingEval
+        ? {
+            scores: existingEval.scores as Record<string, number>,
+            comments: existingEval.comments ?? '',
+            total: existingEval.total,
+          }
+        : null,
+    };
+  }
+
+  /** Public: submit rubric marks via a one-click token (no login). */
+  async submitEvalByToken(token: string, dto: SubmitEvaluationDto) {
+    const et = await this.prisma.evaluationToken.findUnique({
+      where: { token },
+      include: { round: { select: { id: true, requisitionId: true } } },
+    });
+
+    if (!et) throw new NotFoundException('Evaluation link not found');
+    if (et.expiresAt < new Date()) {
+      throw new GoneException(
+        'This evaluation link has expired. Please contact HR.',
+      );
+    }
+
+    // Idempotency: if already in DB, mark token and return gracefully.
+    const existing = await this.prisma.evaluation.findUnique({
+      where: {
+        roundId_evaluatorId: {
+          roundId: et.roundId,
+          evaluatorId: et.panelistUserId,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      await this.prisma.evaluationToken.updateMany({
+        where: { id: et.id, status: { not: 'submitted' } },
+        data: { status: 'submitted', submittedAt: new Date() },
+      });
+      throw new ConflictException(
+        'You have already submitted your evaluation for this interview.',
+      );
+    }
+
+    const criteria = await this.prisma.rubricCriterion.findMany({
+      where: { requisitionId: et.round.requisitionId },
+    });
+    const cleanScores: Record<string, number> = {};
+    let total = 0;
+    for (const c of criteria) {
+      const raw = Number(dto.scores?.[c.id] ?? 0);
+      const score = Number.isFinite(raw)
+        ? Math.max(0, Math.min(c.maxScore, Math.round(raw)))
+        : 0;
+      cleanScores[c.id] = score;
+      total += score;
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.evaluation.create({
+        data: {
+          roundId: et.roundId,
+          evaluatorId: et.panelistUserId,
+          scores: cleanScores,
+          comments: dto.comments?.trim() || null,
+          total,
+        },
+      }),
+      this.prisma.evaluationToken.update({
+        where: { id: et.id },
+        data: { status: 'submitted', submittedAt: new Date() },
+      }),
+    ]);
+
+    this.notifications.broadcastChange(
+      'candidate',
+      et.round.requisitionId,
+      { action: 'evaluation_submitted' },
+    );
+
+    return { ok: true, total };
+  }
+
+  /** Regenerate the evaluation token for a specific panelist (Corp HR / super only). */
+  async resendEvalToken(
+    roundId: string,
+    panelistUserId: string,
+    actorId: string,
+  ) {
+    const round = await this.prisma.interviewRound.findUnique({
+      where: { id: roundId },
+      include: {
+        requisition: { select: { unitFactory: true } },
+        panelists: { select: { userId: true } },
+      },
+    });
+    if (!round) throw new NotFoundException('Interview not found');
+    await this.requireRecruitmentAccess(round.requisition.unitFactory, actorId);
+
+    if (!round.panelists.some((p) => p.userId === panelistUserId)) {
+      throw new BadRequestException('User is not on this panel');
+    }
+
+    const newToken = randomBytes(16).toString('hex');
+    const expiresAt = round.scheduledAt
+      ? new Date(round.scheduledAt.getTime() + 48 * 60 * 60 * 1000)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await this.prisma.evaluationToken.upsert({
+      where: { roundId_panelistUserId: { roundId, panelistUserId } },
+      create: { token: newToken, roundId, panelistUserId, expiresAt },
+      update: {
+        token: newToken,
+        expiresAt,
+        status: 'sent',
+        openedAt: null,
+        submittedAt: null,
+      },
+    });
+
+    return { evalLink: evalLink(newToken) };
   }
 
   // --- send interview questions to panelists --------------------------------
@@ -367,7 +617,6 @@ export class InterviewService {
       return { sent: 0, total: round.panelists.length, note: 'Mail not configured' };
     }
 
-    // Format questions grouped by category
     const grouped = new Map<string, string[]>();
     for (const q of questions) {
       const arr = grouped.get(q.category) ?? [];
@@ -409,7 +658,6 @@ export class InterviewService {
       }
     }
 
-    // Stamp the round so the UI can show "Questions sent" instead of the button.
     if (sent > 0) {
       await this.prisma.interviewRound.update({
         where: { id: roundId },
@@ -421,6 +669,29 @@ export class InterviewService {
   }
 
   // --- helpers -------------------------------------------------------------
+
+  /** Generate (idempotent) one-click evaluation tokens for a list of panelists. */
+  private async generateEvalTokens(
+    roundId: string,
+    panelistUserIds: string[],
+    scheduledAt: Date | null,
+  ) {
+    const expiresAt = scheduledAt
+      ? new Date(scheduledAt.getTime() + 48 * 60 * 60 * 1000)
+      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await Promise.all(
+      panelistUserIds.map(async (panelistUserId) => {
+        const token = randomBytes(16).toString('hex');
+        // Upsert: create for new panelists; do nothing for existing (preserve status).
+        await this.prisma.evaluationToken.upsert({
+          where: { roundId_panelistUserId: { roundId, panelistUserId } },
+          create: { token, roundId, panelistUserId, expiresAt },
+          update: {},
+        });
+      }),
+    );
+  }
 
   /** Create the Calendar event for a new round; returns the updated round. */
   private async syncCalendarCreate(
@@ -437,7 +708,6 @@ export class InterviewService {
       data: {
         calendarEventId: ev.eventId,
         meetLink: ev.meetLink,
-        // Online rounds with no venue get the Meet link as their location.
         ...(ev.meetLink && !round.location ? { location: ev.meetLink } : {}),
       },
       include: roundInclude,
@@ -463,7 +733,6 @@ export class InterviewService {
       if (input) await this.calendar.updateEvent(round.calendarEventId, input);
       return null;
     }
-    // No event yet (e.g. a time was added later) — create one now.
     if (round.status !== 'SCHEDULED') return null;
     return this.syncCalendarCreate(round, designation, true);
   }
@@ -504,7 +773,6 @@ export class InterviewService {
     const kindLabel = round.kind.toLowerCase();
     const modeLabel = round.mode.toLowerCase();
 
-    // In-app notification for each panelist (committee member).
     if (dto.notifyPanel !== false) {
       await this.notifications.notifyMany(
         round.panelists.map((p) => p.userId),
@@ -517,7 +785,6 @@ export class InterviewService {
       );
     }
 
-    // Email the candidate (if requested and an address is on file).
     if (
       dto.notifyCandidate &&
       round.candidate.email &&
@@ -573,6 +840,9 @@ export class InterviewService {
 
 function serializeRound(r: RoundFull) {
   const evaluated = new Set(r.evaluations.map((e) => e.evaluatorId));
+  const tokenMap = new Map(
+    r.evaluationTokens.map((t) => [t.panelistUserId, t]),
+  );
   return {
     id: r.id,
     candidateId: r.candidateId,
@@ -585,13 +855,18 @@ function serializeRound(r: RoundFull) {
     meetLink: r.meetLink ?? null,
     calendarSynced: Boolean(r.calendarEventId),
     questionsSentAt: r.questionsSentAt?.toISOString() ?? null,
-    panelists: r.panelists.map((p) => ({
-      id: p.id,
-      userId: p.userId,
-      name: p.user.name,
-      designation: p.user.employee?.designation ?? null,
-      hasMarked: evaluated.has(p.userId),
-    })),
+    panelists: r.panelists.map((p) => {
+      const tok = tokenMap.get(p.userId);
+      return {
+        id: p.id,
+        userId: p.userId,
+        name: p.user.name,
+        designation: p.user.employee?.designation ?? null,
+        hasMarked: evaluated.has(p.userId),
+        tokenStatus: tok?.status ?? null,
+        evalLink: tok ? evalLink(tok.token) : null,
+      };
+    }),
     evaluations: r.evaluations.map((e) => ({
       evaluatorId: e.evaluatorId,
       evaluatorName: e.evaluator.name,
@@ -601,6 +876,11 @@ function serializeRound(r: RoundFull) {
     })),
     evaluationCount: r.evaluations.length,
   };
+}
+
+function evalLink(token: string): string {
+  const base = process.env.FRONTEND_URL || 'http://localhost:3000';
+  return `${base}/evaluate/${token}`;
 }
 
 function cap(s: string): string {

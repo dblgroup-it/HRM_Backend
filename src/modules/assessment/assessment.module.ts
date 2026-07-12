@@ -7,6 +7,7 @@ import { InterviewController } from './interview.controller';
 import { ExamService } from './exam.service';
 import { ExamController } from './exam.controller';
 import { ExamPublicController } from './exam-public.controller';
+import { EvalPublicController } from './eval-public.controller';
 
 @Module({
   providers: [AssessmentService, InterviewService, ExamService],
@@ -15,6 +16,7 @@ import { ExamPublicController } from './exam-public.controller';
     InterviewController,
     ExamController,
     ExamPublicController,
+    EvalPublicController,
   ],
 })
 export class AssessmentModule {}

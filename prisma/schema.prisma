@@ -187,9 +187,10 @@ model User {
   roleAssignments RoleAssignment[]
   notifications   Notification[]
   committeeRoles  CommitteeMember[]
-  interviewPanels InterviewPanelist[]
-  evaluations     Evaluation[]
-  createdAt       DateTime         @default(now()) @map("created_at")
+  interviewPanels  InterviewPanelist[]
+  evaluations      Evaluation[]
+  evaluationTokens EvaluationToken[]
+  createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
   @@map("users")
@@ -460,9 +461,10 @@ model InterviewRound {
   calendarEventId  String?           @map("calendar_event_id")
   meetLink         String?           @map("meet_link")
   questionsSentAt  DateTime?         @map("questions_sent_at")
-  panelists     InterviewPanelist[]
-  evaluations   Evaluation[]
-  createdAt     DateTime            @default(now()) @map("created_at")
+  panelists        InterviewPanelist[]
+  evaluations      Evaluation[]
+  evaluationTokens EvaluationToken[]
+  createdAt        DateTime            @default(now()) @map("created_at")
 
   @@index([candidateId])
   @@index([requisitionId])
@@ -480,6 +482,28 @@ model InterviewPanelist {
   @@unique([roundId, userId])
   @@index([userId])
   @@map("interview_panelists")
+}
+
+/// Phase 3 — a one-click secure evaluation link sent to each panelist (no login required).
+model EvaluationToken {
+  id             String         @id @default(cuid())
+  /// Unguessable 32-char hex token (16 random bytes).
+  token          String         @unique
+  roundId        String         @map("round_id")
+  round          InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  panelistUserId String         @map("panelist_user_id")
+  panelistUser   User           @relation(fields: [panelistUserId], references: [id], onDelete: Cascade)
+  /// sent | opened | submitted
+  status         String         @default("sent")
+  openedAt       DateTime?      @map("opened_at")
+  submittedAt    DateTime?      @map("submitted_at")
+  /// 48h after the interview date, or 7 days from creation when no scheduledAt.
+  expiresAt      DateTime       @map("expires_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  @@unique([roundId, panelistUserId])
+  @@index([roundId])
+  @@map("evaluation_tokens")
 }
 
 /// Phase 3 — a question in a requisition's online exam (written / excel) bank.

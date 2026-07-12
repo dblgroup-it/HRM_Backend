@@ -96,4 +96,14 @@ export class InterviewController {
   ) {
     return this.interviews.sendQuestions(roundId, user.id);
   }
+
+  /** Regenerate the one-click evaluation link for a specific panelist. */
+  @Post('interviews/:roundId/eval-token/:panelistUserId/resend')
+  resendEvalToken(
+    @Param('roundId') roundId: string,
+    @Param('panelistUserId') panelistUserId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.resendEvalToken(roundId, panelistUserId, user.id);
+  }
 }
