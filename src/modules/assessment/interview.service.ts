@@ -35,7 +35,9 @@ const roundInclude = {
   panelists: { include: { user: { include: { employee: true } } } },
   evaluations: { include: { evaluator: { select: { name: true } } } },
   candidate: { select: { id: true, name: true, email: true } },
-  evaluationTokens: { select: { panelistUserId: true, token: true, status: true } },
+  evaluationTokens: {
+    select: { panelistUserId: true, token: true, status: true },
+  },
 } satisfies Prisma.InterviewRoundInclude;
 
 type RoundFull = Prisma.InterviewRoundGetPayload<{
@@ -99,7 +101,11 @@ export class InterviewService {
     });
 
     // Advance the candidate to the Interview stage if they haven't passed it yet.
-    const PRE_INTERVIEW: string[] = ['APPLIED', 'AI_SHORTLISTED', 'SHORTLISTED'];
+    const PRE_INTERVIEW: string[] = [
+      'APPLIED',
+      'AI_SHORTLISTED',
+      'SHORTLISTED',
+    ];
     if (PRE_INTERVIEW.includes(cand.stage)) {
       await this.prisma.candidate.update({
         where: { id: cand.id },
@@ -205,7 +211,9 @@ export class InterviewService {
         });
       }
       const scheduledAt =
-        dto.scheduledAt !== undefined ? toDate(dto.scheduledAt) : round.scheduledAt;
+        dto.scheduledAt !== undefined
+          ? toDate(dto.scheduledAt)
+          : round.scheduledAt;
       await this.generateEvalTokens(roundId, newPanelistIds, scheduledAt);
     } else if (dto.scheduledAt !== undefined) {
       // scheduledAt changed — update expiry on pending tokens.
@@ -532,11 +540,9 @@ export class InterviewService {
       }),
     ]);
 
-    this.notifications.broadcastChange(
-      'candidate',
-      et.round.requisitionId,
-      { action: 'evaluation_submitted' },
-    );
+    this.notifications.broadcastChange('candidate', et.round.requisitionId, {
+      action: 'evaluation_submitted',
+    });
 
     return { ok: true, total };
   }
@@ -614,7 +620,11 @@ export class InterviewService {
     }
 
     if (!this.mail.isConfigured()) {
-      return { sent: 0, total: round.panelists.length, note: 'Mail not configured' };
+      return {
+        sent: 0,
+        total: round.panelists.length,
+        note: 'Mail not configured',
+      };
     }
 
     const grouped = new Map<string, string[]>();

@@ -113,8 +113,8 @@ export class CandidatesService {
       query.sortBy === 'name'
         ? { name: 'asc' }
         : query.sortBy === 'recent'
-        ? { createdAt: 'desc' }
-        : { matchScore: { sort: 'desc', nulls: 'last' } }; // default: match
+          ? { createdAt: 'desc' }
+          : { matchScore: { sort: 'desc', nulls: 'last' } }; // default: match
 
     const [rows, total] = await Promise.all([
       this.prisma.candidate.findMany({
@@ -130,13 +130,30 @@ export class CandidatesService {
     const baseWhere = { requisitionId: reqId };
     const [s90, s75, s50, s25, unscreened, notViewed, finalists, stageCounts] =
       await Promise.all([
-        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 90 } } }),
-        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 75, lt: 90 } } }),
-        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 50, lt: 75 } } }),
-        this.prisma.candidate.count({ where: { ...baseWhere, matchScore: { gte: 25, lt: 50 } } }),
-        this.prisma.candidate.count({ where: { ...baseWhere, screenedAt: null } }),
-        this.prisma.candidate.count({ where: { ...baseWhere, viewedAt: null } }),
-        this.prisma.candidate.count({ where: { ...baseWhere, stage: { in: ['INTERVIEW', 'FINAL', 'SELECTED'] } } }),
+        this.prisma.candidate.count({
+          where: { ...baseWhere, matchScore: { gte: 90 } },
+        }),
+        this.prisma.candidate.count({
+          where: { ...baseWhere, matchScore: { gte: 75, lt: 90 } },
+        }),
+        this.prisma.candidate.count({
+          where: { ...baseWhere, matchScore: { gte: 50, lt: 75 } },
+        }),
+        this.prisma.candidate.count({
+          where: { ...baseWhere, matchScore: { gte: 25, lt: 50 } },
+        }),
+        this.prisma.candidate.count({
+          where: { ...baseWhere, screenedAt: null },
+        }),
+        this.prisma.candidate.count({
+          where: { ...baseWhere, viewedAt: null },
+        }),
+        this.prisma.candidate.count({
+          where: {
+            ...baseWhere,
+            stage: { in: ['INTERVIEW', 'FINAL', 'SELECTED'] },
+          },
+        }),
         this.prisma.candidate.groupBy({
           by: ['stage'],
           where: baseWhere,
@@ -151,7 +168,9 @@ export class CandidatesService {
     }
 
     // applyCount: how many times each email has applied across ALL requisitions.
-    const emails = [...new Set(rows.map((r) => r.email).filter(Boolean))] as string[];
+    const emails = [
+      ...new Set(rows.map((r) => r.email).filter(Boolean)),
+    ] as string[];
     const emailCounts =
       emails.length > 0
         ? await this.prisma.candidate.groupBy({
@@ -167,7 +186,12 @@ export class CandidatesService {
         ...serializeCandidate(r),
         applyCount: r.email ? (countMap.get(r.email) ?? 1) : 1,
       })),
-      meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) || 1 },
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize) || 1,
+      },
       stats: {
         total: totalAll,
         notViewed,
@@ -182,11 +206,27 @@ export class CandidatesService {
     };
   }
 
-  getScreeningStatus(reqId: string): { done: number; total: number; shortlisted: number; active: boolean } {
-    return this.screeningJobs.get(reqId) ?? { done: 0, total: 0, shortlisted: 0, active: false };
+  getScreeningStatus(reqId: string): {
+    done: number;
+    total: number;
+    shortlisted: number;
+    active: boolean;
+  } {
+    return (
+      this.screeningJobs.get(reqId) ?? {
+        done: 0,
+        total: 0,
+        shortlisted: 0,
+        active: false,
+      }
+    );
   }
 
-  async exportCandidates(reqId: string, userId: string, query: CandidateQueryDto = {}) {
+  async exportCandidates(
+    reqId: string,
+    userId: string,
+    query: CandidateQueryDto = {},
+  ) {
     const req = await this.requireReq(reqId, userId);
 
     const where: Prisma.CandidateWhereInput = { requisitionId: reqId };
@@ -205,8 +245,8 @@ export class CandidatesService {
       query.sortBy === 'name'
         ? { name: 'asc' }
         : query.sortBy === 'recent'
-        ? { createdAt: 'desc' }
-        : { matchScore: { sort: 'desc', nulls: 'last' } };
+          ? { createdAt: 'desc' }
+          : { matchScore: { sort: 'desc', nulls: 'last' } };
 
     const rows = await this.prisma.candidate.findMany({ where, orderBy });
 
@@ -235,26 +275,32 @@ export class CandidatesService {
     wb.creator = 'DBL HRM';
     wb.created = new Date();
 
-    const ws = wb.addWorksheet('Candidates', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const ws = wb.addWorksheet('Candidates', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
 
     // Column definitions
     ws.columns = [
-      { header: '#',              key: 'no',       width: 5  },
-      { header: 'Name',           key: 'name',     width: 28 },
-      { header: 'Email',          key: 'email',    width: 30 },
-      { header: 'Phone',          key: 'phone',    width: 16 },
-      { header: 'AI Match Score', key: 'score',    width: 16 },
-      { header: 'Stage',          key: 'stage',    width: 16 },
-      { header: 'Applied Date',   key: 'applied',  width: 14 },
-      { header: 'Source',         key: 'source',   width: 12 },
-      { header: 'Notes',          key: 'notes',    width: 40 },
+      { header: '#', key: 'no', width: 5 },
+      { header: 'Name', key: 'name', width: 28 },
+      { header: 'Email', key: 'email', width: 30 },
+      { header: 'Phone', key: 'phone', width: 16 },
+      { header: 'AI Match Score', key: 'score', width: 16 },
+      { header: 'Stage', key: 'stage', width: 16 },
+      { header: 'Applied Date', key: 'applied', width: 14 },
+      { header: 'Source', key: 'source', width: 12 },
+      { header: 'Notes', key: 'notes', width: 40 },
     ];
 
     // Style header row
     const headerRow = ws.getRow(1);
     headerRow.eachCell((cell) => {
-      cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1877C0' } };
-      cell.font   = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1877C0' },
+      };
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
       cell.border = { bottom: { style: 'thin', color: { argb: 'FF0F5999' } } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
@@ -266,15 +312,15 @@ export class CandidatesService {
       const stageFill = STAGE_COLOR[r.stage] ?? 'FFFFFFFF';
 
       const row = ws.addRow({
-        no:      idx + 1,
-        name:    r.name ?? '',
-        email:   r.email ?? '',
-        phone:   r.phone ?? '',
-        score:   score,
-        stage:   STAGE_LABEL[r.stage] ?? r.stage,
+        no: idx + 1,
+        name: r.name ?? '',
+        email: r.email ?? '',
+        phone: r.phone ?? '',
+        score: score,
+        stage: STAGE_LABEL[r.stage] ?? r.stage,
         applied: r.createdAt.toISOString().slice(0, 10),
-        source:  r.source ?? '',
-        notes:   r.notes ?? '',
+        source: r.source ?? '',
+        notes: r.notes ?? '',
       });
 
       row.height = 18;
@@ -284,23 +330,33 @@ export class CandidatesService {
 
       row.eachCell({ includeEmpty: true }, (cell, colNum) => {
         cell.alignment = { vertical: 'middle', wrapText: false };
-        cell.font      = { size: 10 };
+        cell.font = { size: 10 };
 
         if (colNum === 6) {
           // Stage column — colored fill
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: stageFill } };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: stageFill },
+          };
           cell.font = { size: 10, bold: true };
         } else if (colNum === 5 && score != null) {
           // Score column — green if ≥75, amber if ≥50, red otherwise
           const scoreBg =
-            score >= 75 ? 'FFD1FAE5' :
-            score >= 50 ? 'FFFEF3C7' :
-            'FFFEE2E2';
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: scoreBg } };
+            score >= 75 ? 'FFD1FAE5' : score >= 50 ? 'FFFEF3C7' : 'FFFEE2E2';
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: scoreBg },
+          };
           cell.font = { size: 10, bold: true };
           cell.numFmt = '0"%"'; // show as number (score is 0-100)
         } else {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: rowBg },
+          };
         }
       });
     });
@@ -325,7 +381,9 @@ export class CandidatesService {
       },
       data: { stage: 'REJECTED' },
     });
-    this.notifications.broadcastChange('candidate', reqId, { action: 'bulk_rejected' });
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'bulk_rejected',
+    });
     return { rejected: result.count };
   }
 
@@ -337,7 +395,8 @@ export class CandidatesService {
     if (!cand) throw new NotFoundException('Candidate not found');
     await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
 
-    if (!cand.email) return { name: cand.name, email: null, total: 1, applications: [] };
+    if (!cand.email)
+      return { name: cand.name, email: null, total: 1, applications: [] };
 
     const all = await this.prisma.candidate.findMany({
       where: { email: cand.email },
@@ -482,7 +541,11 @@ export class CandidatesService {
         mimeType: file.mimetype,
         buffer: file.buffer,
       });
-      this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
+      this.drive
+        .shareAnyoneWithLink(uploaded.id, 'reader')
+        .catch((e) =>
+          this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
+        );
       cvFileId = uploaded.id;
       cvUrl = uploaded.url;
     }
@@ -538,7 +601,11 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
+    this.drive
+      .shareAnyoneWithLink(uploaded.id, 'reader')
+      .catch((e) =>
+        this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
+      );
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
@@ -582,7 +649,11 @@ export class CandidatesService {
       // When a candidate is selected, auto-reject all remaining applied candidates.
       if (stage === 'SELECTED') {
         await this.prisma.candidate.updateMany({
-          where: { requisitionId: cand.requisitionId, stage: 'APPLIED', id: { not: id } },
+          where: {
+            requisitionId: cand.requisitionId,
+            stage: 'APPLIED',
+            id: { not: id },
+          },
           data: { stage: 'REJECTED' },
         });
       }
@@ -622,7 +693,11 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
+    this.drive
+      .shareAnyoneWithLink(uploaded.id, 'reader')
+      .catch((e) =>
+        this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
+      );
 
     const updated = await this.prisma.candidate.update({
       where: { id },
@@ -758,17 +833,36 @@ export class CandidatesService {
     });
 
     if (pending.length === 0) {
-      return { started: false, alreadyRunning: false, total: 0, done: 0, shortlisted: 0, active: false };
+      return {
+        started: false,
+        alreadyRunning: false,
+        total: 0,
+        done: 0,
+        shortlisted: 0,
+        active: false,
+      };
     }
 
-    const job: ScreeningJob = { done: 0, total: pending.length, shortlisted: 0, active: true };
+    const job: ScreeningJob = {
+      done: 0,
+      total: pending.length,
+      shortlisted: 0,
+      active: true,
+    };
     this.screeningJobs.set(reqId, job);
     this.notifications.broadcastRaw('screening:progress', { reqId, ...job });
 
     // Fire and forget — returns immediately so the HTTP response is not held open.
     void this.runScreeningJob(reqId, pending);
 
-    return { started: true, alreadyRunning: false, total: pending.length, done: 0, shortlisted: 0, active: true };
+    return {
+      started: true,
+      alreadyRunning: false,
+      total: pending.length,
+      done: 0,
+      shortlisted: 0,
+      active: true,
+    };
   }
 
   private async runScreeningJob(
@@ -783,14 +877,23 @@ export class CandidatesService {
         const u = await this.runScreen(c);
         if (u?.stage === 'AI_SHORTLISTED') shortlisted++;
       } catch (err) {
-        this.logger.warn(`Screening candidate ${c.id} failed: ${(err as Error).message}`);
+        this.logger.warn(
+          `Screening candidate ${c.id} failed: ${(err as Error).message}`,
+        );
       }
       done++;
-      const job: ScreeningJob = { done, total: pending.length, shortlisted, active: done < pending.length };
+      const job: ScreeningJob = {
+        done,
+        total: pending.length,
+        shortlisted,
+        active: done < pending.length,
+      };
       this.screeningJobs.set(reqId, job);
       this.notifications.broadcastRaw('screening:progress', { reqId, ...job });
     }
-    this.notifications.broadcastChange('candidate', reqId, { action: 'screened_bulk' });
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'screened_bulk',
+    });
   }
 
   /**
@@ -1015,7 +1118,10 @@ export class CandidatesService {
       employmentNature: r.employmentNature.toLowerCase(),
       requiredPosts: r.requiredPosts,
       summary: r.jobDescription
-        ? r.jobDescription.replace(/<[^>]+>/g, '').slice(0, 200).trim()
+        ? r.jobDescription
+            .replace(/<[^>]+>/g, '')
+            .slice(0, 200)
+            .trim()
         : null,
       postedAt: r.createdAt.toISOString(),
     }));
@@ -1083,7 +1189,11 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    this.drive.shareAnyoneWithLink(uploaded.id, 'reader').catch((e) => this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`));
+    this.drive
+      .shareAnyoneWithLink(uploaded.id, 'reader')
+      .catch((e) =>
+        this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
+      );
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
@@ -1164,13 +1274,14 @@ export class CandidatesService {
         await this.drive.shareAnyoneWithLink(c.cvFileId!, 'reader');
         fixed++;
       } catch (e) {
-        this.logger.warn(`Backfill share failed for candidate ${c.id} file ${c.cvFileId}: ${(e as Error)?.message}`);
+        this.logger.warn(
+          `Backfill share failed for candidate ${c.id} file ${c.cvFileId}: ${(e as Error)?.message}`,
+        );
         failed++;
       }
     }
     return { total: candidates.length, fixed, failed };
   }
-
 }
 
 function cvFileName(candidate: string, original: string): string {

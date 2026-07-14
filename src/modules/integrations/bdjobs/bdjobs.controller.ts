@@ -4,16 +4,89 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { UserRole } from '@prisma/client';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { BdJobsSettingsService } from './bdjobs-settings.service';
+
+import {
+  AuthUser,
+  CurrentUser,
+} from '../../../common/decorators/current-user.decorator';
 import { BdJobsService } from './bdjobs.service';
 import { PostBdJobsDto } from './dto/bdjobs.dto';
+import type { PostBdJobsFormData } from './bdjobs.types';
+
+/** Admin-editable BDJobs configuration (blank secrets = keep current). */
+class UpdateBdJobsSettingsDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsString() baseUrl?: string;
+  @IsOptional() @IsString() companyId?: string;
+  @IsOptional() @IsString() authToken?: string;
+  @IsOptional() @IsString() decodeId?: string;
+  @IsOptional() @IsString() signatureFormat?: string;
+  @IsOptional() @IsString() specialInstruction?: string;
+  @IsOptional() @IsString() otherBenefits?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(30) deadlineDays?: number;
+  @IsOptional() @IsBoolean() applyOnlineDefault?: boolean;
+  @IsOptional() @IsString() publicApplyBaseUrl?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(20) entryLevelMaxYears?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(30) midLevelMaxYears?: number;
+}
+
+/** Credentials to test — omitted/blank fields fall back to the saved ones. */
+class TestBdJobsDto {
+  @IsOptional() @IsString() baseUrl?: string;
+  @IsOptional() @IsString() companyId?: string;
+  @IsOptional() @IsString() authToken?: string;
+  @IsOptional() @IsString() decodeId?: string;
+  @IsOptional() @IsString() signatureFormat?: string;
+}
 
 @Controller()
 export class BdJobsController {
-  constructor(private readonly bdjobs: BdJobsService) {}
+  constructor(
+    private readonly bdjobs: BdJobsService,
+    private readonly settings: BdJobsSettingsService,
+  ) {}
+
+  /** Full config for the admin screen — credentials returned masked. */
+  @Roles(UserRole.ADMIN)
+  @Get('integrations/bdjobs/settings')
+  getSettings() {
+    return this.settings.getView();
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Patch('integrations/bdjobs/settings')
+  updateSettings(@Body() dto: UpdateBdJobsSettingsDto) {
+    return this.settings.set(dto);
+  }
+
+  /**
+   * Verify credentials against BDJobs without creating a listing. The admin
+   * screen posts the values currently in the form so "Test" checks what's on
+   * screen (blank secrets fall back to the saved ones).
+   */
+  @Roles(UserRole.ADMIN)
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  @Post('integrations/bdjobs/test')
+  test(@Body() dto: TestBdJobsDto) {
+    return this.bdjobs.testConnection(dto);
+  }
 
   /** Proxy — BDJobs location search (used by the modal's location picker). */
   @Get('integrations/bdjobs/locations')
@@ -51,24 +124,36 @@ export class BdJobsController {
     @Query('search') search: string,
     @Query('catId') catId?: string,
   ) {
-    return this.bdjobs.searchSkills(search ?? '', catId ? Number(catId) : undefined);
+    return this.bdjobs.searchSkills(
+      search ?? '',
+      catId ? Number(catId) : undefined,
+    );
   }
 
   /** Get existing BDJobs post data for a requisition. */
   @Get('requisitions/:reqId/bdjobs')
-  getPost(@Param('reqId') reqId: string) {
-    return this.bdjobs.getPost(reqId);
+  getPost(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+    return this.bdjobs.getPost(reqId, user.id);
   }
 
   /** Save form data and post (or save as draft if no credentials). */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('requisitions/:reqId/bdjobs/post')
-  post(@Param('reqId') reqId: string, @Body() dto: PostBdJobsDto) {
-    return this.bdjobs.saveAndPost(reqId, dto as any);
+  post(
+    @Param('reqId') reqId: string,
+    @Body() dto: PostBdJobsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.bdjobs.saveAndPost(
+      reqId,
+      dto as unknown as PostBdJobsFormData,
+      user.id,
+    );
   }
 
-  /** Check if BDJobs credentials are configured. */
+  /** Whether BDJobs posting is enabled + configured (gates the modal). */
   @Get('integrations/bdjobs/status')
-  status() {
-    return { configured: this.bdjobs.isConfigured() };
+  async status() {
+    return { configured: await this.bdjobs.isConfigured() };
   }
 }

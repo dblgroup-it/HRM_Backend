@@ -114,7 +114,10 @@ export class ZingHrService implements OnModuleInit {
     const MAX_LINES = 300;
     const lines: string[] = [];
     const log = (line: string): void => {
-      const ts = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Dhaka', hour12: false });
+      const ts = new Date().toLocaleTimeString('en-GB', {
+        timeZone: 'Asia/Dhaka',
+        hour12: false,
+      });
       lines.push(`[${ts}] ${line}`);
       if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES);
     };

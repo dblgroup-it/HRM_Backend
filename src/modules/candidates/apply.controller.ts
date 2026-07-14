@@ -34,7 +34,7 @@ export class ApplyController {
 
   /** Candidate self-service: look up application status by email. */
   @Public()
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })   // 5/min — limits email enumeration
+  @Throttle({ default: { limit: 5, ttl: 60_000 } }) // 5/min — limits email enumeration
   @Get('status')
   applicationStatus(@Query('email') email: string) {
     return this.candidates.applicationStatus(email ?? '');

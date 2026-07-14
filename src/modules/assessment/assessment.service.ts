@@ -136,7 +136,9 @@ export class AssessmentService {
       ];
       const combined =
         components.length > 0
-          ? Math.round(components.reduce((a, b) => a + b, 0) / components.length)
+          ? Math.round(
+              components.reduce((a, b) => a + b, 0) / components.length,
+            )
           : null;
 
       return {
@@ -170,7 +172,10 @@ export class AssessmentService {
       include: { requisition: true },
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(candidate.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(
+      candidate.requisition.unitFactory,
+      userId,
+    );
 
     const [rounds, rubric] = await Promise.all([
       this.prisma.interviewRound.findMany({
@@ -203,18 +208,28 @@ export class AssessmentService {
       .filter((r) => r.evaluations.length > 0)
       .map((r) => {
         const kindLabel =
-          r.kind === 'FIRST' ? 'First' : r.kind === 'SECOND' ? 'Second' : 'Final';
+          r.kind === 'FIRST'
+            ? 'First'
+            : r.kind === 'SECOND'
+              ? 'Second'
+              : 'Final';
         const evLines = r.evaluations.map((ev) => {
           const scores = rubric
-            .map((c) => `${c.label}: ${(ev.scores as Record<string, number>)[c.id] ?? 0}/${c.maxScore}`)
+            .map(
+              (c) =>
+                `${c.label}: ${(ev.scores as Record<string, number>)[c.id] ?? 0}/${c.maxScore}`,
+            )
             .join(', ');
-          const comment = ev.comments?.trim() ? ` — "${ev.comments.trim()}"` : '';
+          const comment = ev.comments?.trim()
+            ? ` — "${ev.comments.trim()}"`
+            : '';
           return `    • ${ev.evaluator.name}: ${scores} | Total ${ev.total}/${rubricMax}${comment}`;
         });
         const avg =
           r.evaluations.length > 0
             ? Math.round(
-                r.evaluations.reduce((s, e) => s + e.total, 0) / r.evaluations.length,
+                r.evaluations.reduce((s, e) => s + e.total, 0) /
+                  r.evaluations.length,
               )
             : 0;
         return `${kindLabel} Interview (${r.evaluations.length} panelist${r.evaluations.length > 1 ? 's' : ''}, avg ${avg}/${rubricMax}):\n${evLines.join('\n')}`;

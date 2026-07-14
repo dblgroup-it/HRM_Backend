@@ -97,7 +97,9 @@ export class SettingsService {
       where: { key: NOTIFICATION_KEY },
     });
     const v = (row?.value as Partial<NotificationConfig> | null) ?? {};
-    return { emailEnabled: v.emailEnabled ?? DEFAULT_NOTIFICATION.emailEnabled };
+    return {
+      emailEnabled: v.emailEnabled ?? DEFAULT_NOTIFICATION.emailEnabled,
+    };
   }
 
   async setNotificationConfig(

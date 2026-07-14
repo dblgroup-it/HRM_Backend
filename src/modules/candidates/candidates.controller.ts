@@ -69,8 +69,15 @@ export class CandidatesController {
     @Query() query: CandidateQueryDto,
     @Res() res: Response,
   ) {
-    const { buffer, filename } = await this.candidates.exportCandidates(reqId, user.id, query);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const { buffer, filename } = await this.candidates.exportCandidates(
+      reqId,
+      user.id,
+      query,
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
   }

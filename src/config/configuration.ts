@@ -40,6 +40,14 @@ export interface AppConfig {
     /** Days a requisition may sit with an approver before a daily reminder. */
     approvalDays: number;
   };
+  bdjobs: {
+    baseUrl: string;
+    authToken: string;
+    companyId: string;
+    decodeId: string;
+    /** Template hashed (SHA-256) into X-Api-AuthToken — BDJobs defines the order. */
+    signatureFormat: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -92,5 +100,13 @@ export default (): AppConfig => ({
   },
   nudge: {
     approvalDays: parseInt(process.env.NUDGE_APPROVAL_DAYS ?? '3', 10),
+  },
+  bdjobs: {
+    baseUrl: process.env.BDJOBS_BASE_URL ?? 'https://application.bdjobs.com/v1',
+    authToken: process.env.BDJOBS_AUTH_TOKEN ?? '',
+    companyId: process.env.BDJOBS_COMPANY_ID ?? '',
+    decodeId: process.env.BDJOBS_DECODE_ID ?? '',
+    signatureFormat:
+      process.env.BDJOBS_SIGNATURE_FORMAT ?? '{token}{decodeId}{ts}',
   },
 });

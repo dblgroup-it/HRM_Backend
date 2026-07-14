@@ -58,15 +58,15 @@ export interface PostBdJobsFormData {
   categoryName: string;
   employmentStatus: BdJobsEmploymentStatus[];
   workplace: BdJobsWorkplace[];
-  salaryMin: number;
-  salaryMax: number;
+  salaryMin: number | null;
+  salaryMax: number | null;
   showSalary: boolean;
   jobDescription: string;
   // Step 2 — Candidate requirements
   preferredGender: BdJobsGender;
   ageMin: number | null;
   ageMax: number | null;
-  experienceYears: number;
+  experienceYears: number | null;
   educationLevelId: number | null;
   educationLevelName: string;
   educationDegreeId: number | null;

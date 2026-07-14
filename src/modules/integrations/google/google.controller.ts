@@ -79,13 +79,16 @@ export class GoogleController {
 
     // CSRF protection: verify the HMAC state is valid and < 10 minutes old.
     if (!state || !this.auth.verifyOAuthState(state)) {
-      res.status(403).type('html').send(
-        page(
-          'Invalid request',
-          `<p>OAuth state verification failed — the link may have expired or be a CSRF attempt.
+      res
+        .status(403)
+        .type('html')
+        .send(
+          page(
+            'Invalid request',
+            `<p>OAuth state verification failed — the link may have expired or be a CSRF attempt.
              Please <a href="/api/integrations/google/oauth/start">start again</a>.</p>`,
-        ),
-      );
+          ),
+        );
       return;
     }
 

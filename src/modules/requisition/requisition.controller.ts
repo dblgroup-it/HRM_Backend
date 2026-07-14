@@ -37,6 +37,12 @@ export class RequisitionController {
     return this.requisitionService.findAll(query, user.id);
   }
 
+  /** Status counts for the list page's tiles/chips (static route before :id). */
+  @Get('stats')
+  stats(@Query() query: QueryRequisitionsDto, @CurrentUser() user: AuthUser) {
+    return this.requisitionService.stats(query, user.id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.requisitionService.findOne(id, user.id);

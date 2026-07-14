@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 
 import { BdJobsService } from './bdjobs.service';
+import { BdJobsSettingsService } from './bdjobs-settings.service';
 import { BdJobsController } from './bdjobs.controller';
 
 @Module({
-  providers: [BdJobsService],
+  providers: [BdJobsService, BdJobsSettingsService],
   controllers: [BdJobsController],
-  exports: [BdJobsService],
+  exports: [BdJobsService, BdJobsSettingsService],
 })
 export class BdJobsModule {}

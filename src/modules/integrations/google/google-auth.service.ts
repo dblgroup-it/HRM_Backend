@@ -63,7 +63,9 @@ export class GoogleAuthService {
     const nonce = randomBytes(12).toString('hex');
     const ts = Date.now().toString();
     const secret = this.config.get<string>('jwt.secret') ?? 'fallback-secret';
-    const sig = createHmac('sha256', secret).update(`${nonce}:${ts}`).digest('hex');
+    const sig = createHmac('sha256', secret)
+      .update(`${nonce}:${ts}`)
+      .digest('hex');
     return `${nonce}.${ts}.${sig}`;
   }
 
@@ -74,7 +76,9 @@ export class GoogleAuthService {
       if (!nonce || !ts || !sig) return false;
       if (Date.now() - Number(ts) > 10 * 60 * 1000) return false; // expired
       const secret = this.config.get<string>('jwt.secret') ?? 'fallback-secret';
-      const expected = createHmac('sha256', secret).update(`${nonce}:${ts}`).digest('hex');
+      const expected = createHmac('sha256', secret)
+        .update(`${nonce}:${ts}`)
+        .digest('hex');
       return sig === expected;
     } catch {
       return false;

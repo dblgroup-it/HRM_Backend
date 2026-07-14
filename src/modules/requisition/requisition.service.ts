@@ -229,6 +229,54 @@ export class RequisitionService {
     };
   }
 
+  /**
+   * Counts per status for the tiles/chips — computed in the database so the
+   * page never has to pull every requisition just to count them.
+   */
+  async stats(query: QueryRequisitionsDto, userId: string) {
+    const { search, unitFactory } = query;
+    const scope = await this.permissions.getUnitAccessScope(userId);
+    const visibleUnitFilter = scope.all
+      ? unitFactory && unitFactory !== 'all'
+        ? { equals: unitFactory, mode: 'insensitive' as const }
+        : undefined
+      : this.buildVisibleUnitFilter(scope.unitNames, unitFactory);
+
+    if (!scope.all && visibleUnitFilter === null) {
+      return { total: 0, byStatus: {} };
+    }
+
+    const where: Prisma.RequisitionWhereInput = {
+      ...(visibleUnitFilter && visibleUnitFilter !== undefined
+        ? { unitFactory: visibleUnitFilter }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              { designation: { contains: search, mode: 'insensitive' } },
+              { code: { contains: search, mode: 'insensitive' } },
+              { department: { contains: search, mode: 'insensitive' } },
+              { unitFactory: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const groups = await this.prisma.requisition.groupBy({
+      by: ['status'],
+      where,
+      _count: { _all: true },
+    });
+
+    const byStatus: Record<string, number> = {};
+    let total = 0;
+    for (const g of groups) {
+      byStatus[g.status.toLowerCase()] = g._count._all;
+      total += g._count._all;
+    }
+    return { total, byStatus };
+  }
+
   async findOne(id: string, userId: string) {
     const req = await this.load(id, userId);
     return serialize(req);
