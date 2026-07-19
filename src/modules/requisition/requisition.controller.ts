@@ -22,6 +22,7 @@ import { RequisitionService } from './requisition.service';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
+  DraftRequisitionDto,
   PostRequisitionDto,
   QueryRequisitionsDto,
   UpdateRequisitionDto,
@@ -41,6 +42,17 @@ export class RequisitionController {
   @Get('stats')
   stats(@Query() query: QueryRequisitionsDto, @CurrentUser() user: AuthUser) {
     return this.requisitionService.stats(query, user.id);
+  }
+
+  /**
+   * AI quick-fill: describe the vacancy in plain language and get a drafted
+   * form back. Nothing is saved — the requester reviews and edits before
+   * submitting.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('draft')
+  draft(@Body() dto: DraftRequisitionDto, @CurrentUser() user: AuthUser) {
+    return this.requisitionService.draft(dto.prompt, user.id);
   }
 
   @Get(':id')

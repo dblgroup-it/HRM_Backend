@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   ApprovalDecision,
@@ -16,6 +17,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { sameUnit } from '../../common/util/normalize-unit';
 import { OrganogramService } from '../organogram/organogram.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
@@ -227,6 +229,105 @@ export class RequisitionService {
       items: rows.map(serialize),
       meta: buildMeta(page, pageSize, total),
     };
+  }
+
+  /**
+   * AI quick-fill: turn a one-line request into a drafted requisition. The AI
+   * is grounded on the units this user may actually raise for and their real
+   * departments, so it cannot invent an organisational unit. Nothing is saved —
+   * the draft is returned for the human to review, edit and submit.
+   */
+  async draft(prompt: string, userId: string) {
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const clean = prompt.trim();
+    if (clean.length < 5) {
+      throw new BadRequestException('Describe the vacancy in a few more words');
+    }
+
+    // The units this requester is allowed to raise for (same rule as the form).
+    const scope = await this.permissions.getUnitAccessScope(userId);
+    const allUnits = await this.prisma.unit.findMany({
+      where: { isActive: true },
+      select: { name: true },
+      orderBy: { name: 'asc' },
+    });
+    const units = scope.all
+      ? allUnits.map((u) => u.name)
+      : allUnits
+          .map((u) => u.name)
+          .filter((name) =>
+            scope.unitNames.some((allowed) => sameUnit(allowed, name)),
+          );
+    if (!units.length) {
+      throw new ForbiddenException(
+        'You are not assigned to any unit, so you cannot raise a requisition',
+      );
+    }
+
+    // Real departments + designations per unit, so the AI copies rather than invents.
+    const structure = await Promise.all(
+      units.map(async (unit) => {
+        const tree = await this.employeeStructure(unit);
+        return { unit, departments: tree };
+      }),
+    );
+
+    const result = await this.ai.draftRequisition({
+      prompt: clean,
+      units,
+      structure,
+      today: new Date().toISOString().slice(0, 10),
+    });
+    return result;
+  }
+
+  /** Department → designations for one unit (from synced employees + organogram). */
+  private async employeeStructure(unit: string) {
+    const [rows, orgUnits] = await Promise.all([
+      this.prisma.employee.findMany({
+        where: {
+          unitName: { equals: unit, mode: 'insensitive' },
+          department: { not: null },
+        },
+        select: { department: true, designation: true },
+        take: 4000,
+      }),
+      this.prisma.unit.findMany({
+        where: { name: { equals: unit, mode: 'insensitive' } },
+        select: {
+          departments: {
+            select: {
+              name: true,
+              positions: { select: { designation: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const map = new Map<string, Set<string>>();
+    const add = (dept: string, designation: string) => {
+      const d = dept.trim();
+      if (!d) return;
+      const set = map.get(d) ?? new Set<string>();
+      map.set(d, set);
+      if (designation.trim()) set.add(designation.trim());
+    };
+    for (const r of rows) add(r.department ?? '', r.designation ?? '');
+    for (const u of orgUnits) {
+      for (const d of u.departments) {
+        for (const p of d.positions) add(d.name, p.designation);
+        add(d.name, '');
+      }
+    }
+    return [...map.entries()]
+      .map(([department, designations]) => ({
+        department,
+        designations: [...designations].slice(0, 15),
+      }))
+      .sort((a, b) => a.department.localeCompare(b.department));
   }
 
   /**

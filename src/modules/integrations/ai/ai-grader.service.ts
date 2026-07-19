@@ -138,6 +138,50 @@ export interface CompareFinalistsResult {
   ranking: FinalistRanking[];
 }
 
+export interface DraftRequisitionInput {
+  /** What the user typed, e.g. "executive for production in JTML, 1 post". */
+  prompt: string;
+  /** Units the requester may raise for — the AI must pick one of these. */
+  units: string[];
+  /** Real departments (and their designations) for those units. */
+  structure: {
+    unit: string;
+    departments: { department: string; designations: string[] }[];
+  }[];
+  today: string;
+}
+
+/** A drafted requisition — mirrors the form's fields exactly. */
+export interface DraftRequisitionResult {
+  designation: string;
+  unitFactory: string;
+  department: string;
+  section: string;
+  source: 'factory' | 'ho';
+  requiredPosts: number;
+  placeOfPosting: string;
+  vacantDate: string;
+  whenNeededDate: string;
+  priority: 'top' | 'moderate' | 'ordinary';
+  employmentNature: 'permanent' | 'temporary' | 'contractual';
+  contractualPurpose: string;
+  jobDescription: string;
+  education: string;
+  experience: string;
+  others: string;
+  computer: 'not_applicable' | 'desktop' | 'laptop';
+  computerReason: string;
+  seating: 'existing' | 'new';
+  preferredSources: (
+    | 'job_advertisement'
+    | 'headhunting'
+    | 'referral'
+    | 'cv_bank'
+  )[];
+  /** Short note on what the AI assumed / could not determine. */
+  notes: string;
+}
+
 export interface RouteCvInput {
   subject: string;
   bodyText: string;
@@ -465,6 +509,190 @@ Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experien
       );
       return { score: 0, summary: '', email: null, phone: null };
     }
+  }
+
+  /**
+   * Turn a one-line request ("an executive for production at JTML, 1 post")
+   * into a drafted requisition form. Grounded on the requester's real units and
+   * departments so it can never invent an organisational unit. The result is a
+   * *draft* — the human reviews and edits every field before submitting.
+   */
+  async draftRequisition(
+    input: DraftRequisitionInput,
+  ): Promise<DraftRequisitionResult> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const prompt = this.buildDraftPrompt(input);
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, 1600)
+        : await this.callGemini(prompt);
+    return this.parseDraft(raw, input);
+  }
+
+  private buildDraftPrompt(i: DraftRequisitionInput): string {
+    const structure = i.structure
+      .map((u) => {
+        const depts = u.departments
+          .map(
+            (d) =>
+              `    - ${d.department}${
+                d.designations.length
+                  ? ` (existing roles: ${d.designations.slice(0, 12).join(', ')})`
+                  : ''
+              }`,
+          )
+          .join('\n');
+        return `  UNIT: ${u.unit}\n${depts || '    (no departments on record)'}`;
+      })
+      .join('\n');
+
+    return `You are an HR officer at DBL Group, a large Bangladeshi manufacturing conglomerate (textiles, apparel, ceramics, pharma). Convert the hiring manager's short request into a complete Employee Requisition draft.
+
+REQUEST FROM THE HIRING MANAGER:
+"""${i.prompt}"""
+
+TODAY: ${i.today}
+
+THE ONLY UNITS THIS PERSON MAY RAISE FOR (copy one EXACTLY, character for character):
+${i.units.map((u) => `  - ${u}`).join('\n')}
+
+REAL ORGANISATION STRUCTURE (copy the department name EXACTLY as written):
+${structure}
+
+RULES
+- "unitFactory" MUST be one of the allowed units above, copied exactly. If the request names a unit/abbreviation (e.g. "JTML" = Jinnat Textile Mills), match it to the closest allowed unit. If it names none, use the first allowed unit.
+- "department" MUST be an existing department of the chosen unit, copied exactly. Pick the one the request implies (e.g. "production" → the production department).
+- "section" only if clearly implied, else "".
+- "designation" is the job title (e.g. "Executive", "Senior Executive — Production", "Assistant Manager"). Keep DBL's conventional titles.
+- "requiredPosts": the number of people requested (default 1).
+- "source": "factory" for a manufacturing unit/mill, "ho" for a head-office/corporate function.
+- "placeOfPosting": the unit's usual location if not stated (DBL units are in Gazipur, Kashimpur, Savar, Dhaka etc.). Never leave blank.
+- Dates are "YYYY-MM-DD". "whenNeededDate": if not stated, about 30 days from today. "vacantDate": if not stated, "".
+- "priority": "top" only if the request says urgent/immediately; else "moderate".
+- "employmentNature": "permanent" unless the request says temporary/contract/seasonal. If not permanent, "contractualPurpose" MUST explain why (required by the form).
+- "jobDescription": 3-6 concrete responsibilities for THIS role at THIS department, written as sentences separated by newlines. Be specific to manufacturing, not generic.
+- "education": the realistic academic requirement (e.g. "Bachelor of Science (BSc) in Textile Engineering").
+- "experience": e.g. "3-5 years in a similar role in a large textile/apparel manufacturing setup".
+- "computer": "not_applicable" for floor/operator roles; "desktop" for office/executive roles; "laptop" for managerial/travelling roles. If desktop/laptop, give a one-line "computerReason".
+- "seating": "existing" unless a brand-new seat is clearly implied.
+- "preferredSources": sensible subset of ["job_advertisement","headhunting","referral","cv_bank"].
+- "notes": one short sentence listing anything you assumed or could not determine, so the human can check it.
+- NEVER invent a unit or department that is not listed above.
+
+Respond with ONLY a compact JSON object and nothing else:
+{"designation":"","unitFactory":"","department":"","section":"","source":"factory|ho","requiredPosts":1,"placeOfPosting":"","vacantDate":"","whenNeededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","computer":"not_applicable|desktop|laptop","computerReason":"","seating":"existing|new","preferredSources":[],"notes":""}`;
+  }
+
+  /** Parse + hard-clamp every value to something the form will accept. */
+  private parseDraft(
+    raw: string,
+    input: DraftRequisitionInput,
+  ): DraftRequisitionResult {
+    const pick = <T extends string>(
+      v: unknown,
+      allowed: readonly T[],
+      d: T,
+    ): T =>
+      allowed.includes(String(v ?? '').trim() as T)
+        ? (String(v).trim() as T)
+        : d;
+    const str = (v: unknown, max = 2000): string =>
+      String(v ?? '')
+        .trim()
+        .slice(0, max);
+
+    let obj: Record<string, unknown> = {};
+    try {
+      const m = raw.match(/\{[\s\S]*\}/);
+      obj = JSON.parse(m ? m[0] : raw) as Record<string, unknown>;
+    } catch {
+      this.logger.warn(`Could not parse AI draft: ${raw.slice(0, 120)}`);
+    }
+
+    // The unit must be one the requester actually holds — never trust the model.
+    const wanted = str(obj.unitFactory).toLowerCase();
+    const unitFactory =
+      input.units.find((u) => u.toLowerCase() === wanted) ??
+      input.units.find(
+        (u) =>
+          u.toLowerCase().includes(wanted) || wanted.includes(u.toLowerCase()),
+      ) ??
+      input.units[0] ??
+      '';
+
+    // The department must exist in that unit.
+    const depts =
+      input.structure.find((s) => s.unit === unitFactory)?.departments ?? [];
+    const wantedDept = str(obj.department).toLowerCase();
+    const department =
+      depts.find((d) => d.department.toLowerCase() === wantedDept)
+        ?.department ??
+      depts.find(
+        (d) =>
+          d.department.toLowerCase().includes(wantedDept) ||
+          (wantedDept && wantedDept.includes(d.department.toLowerCase())),
+      )?.department ??
+      '';
+
+    const employmentNature = pick(
+      obj.employmentNature,
+      ['permanent', 'temporary', 'contractual'] as const,
+      'permanent',
+    );
+    const computer = pick(
+      obj.computer,
+      ['not_applicable', 'desktop', 'laptop'] as const,
+      'not_applicable',
+    );
+    const sources = ['job_advertisement', 'headhunting', 'referral', 'cv_bank'];
+    const preferredSources = Array.isArray(obj.preferredSources)
+      ? (obj.preferredSources as unknown[])
+          .map((s) => String(s).trim())
+          .filter((s) => sources.includes(s))
+      : [];
+
+    const posts = Math.max(1, Math.round(Number(obj.requiredPosts) || 1));
+    const date = (v: unknown): string =>
+      /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '').trim())
+        ? String(v).trim()
+        : '';
+
+    return {
+      designation: str(obj.designation, 150),
+      unitFactory,
+      department,
+      section: str(obj.section, 120),
+      source: pick(obj.source, ['factory', 'ho'] as const, 'factory'),
+      requiredPosts: posts,
+      placeOfPosting: str(obj.placeOfPosting, 150),
+      vacantDate: date(obj.vacantDate),
+      whenNeededDate: date(obj.whenNeededDate),
+      priority: pick(
+        obj.priority,
+        ['top', 'moderate', 'ordinary'] as const,
+        'moderate',
+      ),
+      employmentNature,
+      // The form rejects a non-permanent role without a stated purpose.
+      contractualPurpose:
+        employmentNature === 'permanent'
+          ? str(obj.contractualPurpose, 500)
+          : str(obj.contractualPurpose, 500) ||
+            'Temporary requirement — purpose to be confirmed.',
+      jobDescription: str(obj.jobDescription, 4000),
+      education: str(obj.education, 500),
+      experience: str(obj.experience, 500),
+      others: str(obj.others, 1000),
+      computer,
+      computerReason:
+        computer === 'not_applicable' ? '' : str(obj.computerReason, 300),
+      seating: pick(obj.seating, ['existing', 'new'] as const, 'existing'),
+      preferredSources:
+        preferredSources as DraftRequisitionResult['preferredSources'],
+      notes: str(obj.notes, 400),
+    };
   }
 
   /**

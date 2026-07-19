@@ -7,6 +7,7 @@ import {
   IsString,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -124,4 +125,12 @@ export class QueryRequisitionsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   unitFactory?: string;
+}
+
+/** AI quick-fill — the hiring manager's plain-language description. */
+export class DraftRequisitionDto {
+  @IsString()
+  @MinLength(5)
+  @MaxLength(1000)
+  prompt!: string;
 }
