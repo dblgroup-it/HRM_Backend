@@ -550,6 +550,7 @@ export class CandidatesService {
       cvUrl = uploaded.url;
     }
 
+    const flagEntry = await this.checkRegistry(dto.email, dto.phone);
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
@@ -560,6 +561,12 @@ export class CandidatesService {
         source: dto.source ?? (file ? 'upload' : 'manual'),
         cvFileId,
         cvUrl,
+        ...(flagEntry && {
+          isRedFlagged: true,
+          redFlagReason: flagEntry.reason,
+          redFlaggedAt: new Date(),
+          redFlaggedById: flagEntry.flaggedById,
+        }),
       },
     });
 
@@ -1194,6 +1201,7 @@ export class CandidatesService {
       .catch((e) =>
         this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
       );
+    const flagEntry = await this.checkRegistry(dto.email, dto.phone);
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
@@ -1204,6 +1212,12 @@ export class CandidatesService {
         source: 'application',
         cvFileId: uploaded.id,
         cvUrl: uploaded.url,
+        ...(flagEntry && {
+          isRedFlagged: true,
+          redFlagReason: flagEntry.reason,
+          redFlaggedAt: new Date(),
+          redFlaggedById: flagEntry.flaggedById,
+        }),
       },
     });
     this.notifications.broadcastChange('candidate', reqId, {
@@ -1260,6 +1274,74 @@ export class CandidatesService {
     }
   }
 
+  // --- red flag -----------------------------------------------------------
+
+  /** Corp HR or CHRO flags a candidate. Adds email + phone to registry so future applications auto-flag. */
+  async flagCandidate(id: string, userId: string, reason: string) {
+    const candidate = await this.prisma.candidate.findUnique({ where: { id } });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(candidate.requisitionId, userId);
+
+    const normPhone = normalizePhone(candidate.phone);
+    const normEmail = candidate.email?.toLowerCase() ?? null;
+
+    // Build transaction: update candidate + upsert separate registry records per identity key.
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.candidate.update({
+        where: { id },
+        data: { isRedFlagged: true, redFlagReason: reason, redFlaggedAt: new Date(), redFlaggedById: userId },
+      }),
+    ];
+    if (normEmail) {
+      ops.push(
+        this.prisma.redFlagRegistry.upsert({
+          where: { email: normEmail },
+          create: { email: normEmail, reason, flaggedById: userId },
+          update: { reason, flaggedById: userId },
+        }),
+      );
+    }
+    if (normPhone) {
+      ops.push(
+        this.prisma.redFlagRegistry.upsert({
+          where: { phone: normPhone },
+          create: { phone: normPhone, reason, flaggedById: userId },
+          update: { reason, flaggedById: userId },
+        }),
+      );
+    }
+    await this.prisma.$transaction(ops);
+
+    return { ok: true };
+  }
+
+  /** Remove red flag from a candidate (does NOT remove registry entry — other candidates may share it). */
+  async unflagCandidate(id: string, userId: string) {
+    const candidate = await this.prisma.candidate.findUnique({ where: { id } });
+    if (!candidate) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(candidate.requisitionId, userId);
+
+    await this.prisma.candidate.update({
+      where: { id },
+      data: { isRedFlagged: false, redFlagReason: null, redFlaggedAt: null, redFlaggedById: null },
+    });
+    return { ok: true };
+  }
+
+  /** Check registry and return flag data if the email or phone is registered. */
+  private async checkRegistry(email?: string | null, phone?: string | null) {
+    if (!email && !phone) return null;
+    const normPhone = normalizePhone(phone);
+    return this.prisma.redFlagRegistry.findFirst({
+      where: {
+        OR: [
+          ...(email ? [{ email: email.toLowerCase() }] : []),
+          ...(normPhone ? [{ phone: normPhone }] : []),
+        ],
+      },
+    });
+  }
+
   /** Retroactively share every existing CV file as "anyone with link → reader". */
   async backfillCvSharing(userId: string) {
     await this.requireRecruitmentRole(userId);
@@ -1282,6 +1364,13 @@ export class CandidatesService {
     }
     return { total: candidates.length, fixed, failed };
   }
+}
+
+/** Strip all non-digit characters for phone comparison. Returns null for empty/null. */
+function normalizePhone(phone?: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, '');
+  return digits || null;
 }
 
 function cvFileName(candidate: string, original: string): string {
@@ -1337,6 +1426,9 @@ function serializeCandidate(c: CandidateRow) {
     screenedAt: c.screenedAt ? c.screenedAt.toISOString() : null,
     viewedAt: c.viewedAt ? c.viewedAt.toISOString() : null,
     talentPool: c.talentPool,
+    isRedFlagged: c.isRedFlagged,
+    redFlagReason: c.redFlagReason ?? null,
+    redFlaggedAt: c.redFlaggedAt ? c.redFlaggedAt.toISOString() : null,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   };

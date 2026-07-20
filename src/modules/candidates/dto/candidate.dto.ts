@@ -146,6 +146,13 @@ export class EmailCandidateDto {
   message!: string;
 }
 
+export class FlagCandidateDto {
+  @IsString()
+  @MinLength(5)
+  @MaxLength(1000)
+  reason!: string;
+}
+
 /** Public job-application payload (no auth — submitted from the apply page). */
 export class PublicApplyDto {
   @IsString()

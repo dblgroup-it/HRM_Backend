@@ -26,6 +26,7 @@ import {
   CandidateQueryDto,
   CreateCandidateDto,
   EmailCandidateDto,
+  FlagCandidateDto,
   UpdateCandidateDto,
 } from './dto/candidate.dto';
 
@@ -164,6 +165,20 @@ export class CandidatesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.candidates.emailCandidate(id, user.id, dto);
+  }
+
+  @Post('candidates/:id/flag')
+  flag(
+    @Param('id') id: string,
+    @Body() dto: FlagCandidateDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.candidates.flagCandidate(id, user.id, dto.reason);
+  }
+
+  @Delete('candidates/:id/flag')
+  unflag(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.unflagCandidate(id, user.id);
   }
 
   @Delete('candidates/:id')

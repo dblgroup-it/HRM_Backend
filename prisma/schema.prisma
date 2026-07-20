@@ -432,6 +432,11 @@ model Candidate {
   viewedAt      DateTime?      @map("viewed_at")
   /// Phase 3: suitable-but-not-selected candidates kept for future recall.
   talentPool    Boolean        @default(false) @map("talent_pool")
+  /// Red flag: set by Corp HR / CHRO when this candidate is barred from future roles.
+  isRedFlagged    Boolean      @default(false) @map("is_red_flagged")
+  redFlagReason   String?      @map("red_flag_reason")
+  redFlaggedAt    DateTime?    @map("red_flagged_at")
+  redFlaggedById  String?      @map("red_flagged_by_id")
   interviews    InterviewRound[]
   examAttempts  ExamAttempt[]
   onboarding    Onboarding?
@@ -442,6 +447,23 @@ model Candidate {
   @@index([stage])
   @@index([createdAt])
   @@map("candidates")
+}
+
+/// Registry of red-flagged identities (email + phone) for auto-flagging future applications.
+model RedFlagRegistry {
+  id          String    @id @default(cuid())
+  /// Normalised lowercase email (may be null if only phone was known).
+  email       String?   @unique
+  /// Phone digits only (may be null if only email was known).
+  phone       String?   @unique
+  reason      String
+  flaggedById String    @map("flagged_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([email])
+  @@index([phone])
+  @@map("red_flag_registry")
 }
 
 /// Phase 3 — a scheduled interview round for a candidate (first / second / final).
