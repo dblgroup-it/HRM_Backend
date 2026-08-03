@@ -166,7 +166,7 @@ export class GmailIngestService {
     }
 
     const open = await this.prisma.requisition.findMany({
-      where: { status: 'POSTED' },
+      where: { status: 'POSTED', deletedAt: null },
       select: {
         id: true,
         code: true,

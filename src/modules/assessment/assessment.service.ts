@@ -92,6 +92,7 @@ export class AssessmentService {
               'REJECTED',
             ],
           },
+          deletedAt: null,
         },
         include: {
           examAttempts: { where: { status: 'graded' } },

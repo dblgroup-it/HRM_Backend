@@ -37,7 +37,7 @@ import { buildChainSteps, synthesizeRoleProfile } from './requisition.workflow';
 
 const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
-  activities: { orderBy: { at: 'asc' } },
+  activities: { orderBy: { createdAt: 'asc' } },
   candidates: {
     select: { stage: true, onboarding: { select: { status: true } } },
   },
@@ -119,7 +119,7 @@ export class RequisitionService {
         section: dto.section ?? null,
         placeOfPosting: dto.placeOfPosting,
         vacantDate: toDate(dto.vacantDate),
-        whenNeededDate: toDate(dto.whenNeededDate),
+        neededDate: toDate(dto.neededDate),
         priority: dto.priority.toUpperCase() as Priority,
         employmentNature:
           dto.employmentNature.toUpperCase() as EmploymentNature,
@@ -196,6 +196,7 @@ export class RequisitionService {
     }
 
     const where: Prisma.RequisitionWhereInput = {
+      deletedAt: null,
       ...(status && status !== 'all'
         ? { status: status.toUpperCase() as Prisma.EnumRequisitionStatusFilter }
         : {}),
@@ -629,8 +630,8 @@ export class RequisitionService {
         ...(dto.vacantDate !== undefined
           ? { vacantDate: toDate(dto.vacantDate) }
           : {}),
-        ...(dto.whenNeededDate !== undefined
-          ? { whenNeededDate: toDate(dto.whenNeededDate) }
+        ...(dto.neededDate !== undefined
+          ? { neededDate: toDate(dto.neededDate) }
           : {}),
         ...(dto.priority
           ? { priority: dto.priority.toUpperCase() as Priority }
@@ -1061,7 +1062,7 @@ function serialize(req: RequisitionFull) {
     section: req.section ?? '',
     placeOfPosting: req.placeOfPosting,
     vacantDate: req.vacantDate?.toISOString() ?? null,
-    whenNeededDate: req.whenNeededDate?.toISOString() ?? null,
+    neededDate: req.neededDate?.toISOString() ?? null,
     priority: low(req.priority),
     employmentNature: low(req.employmentNature),
     contractualPurpose: req.contractualPurpose ?? '',
@@ -1087,7 +1088,7 @@ function serialize(req: RequisitionFull) {
       actor: a.actor,
       action: low(a.action),
       note: a.note,
-      at: a.at.toISOString(),
+      createdAt: a.createdAt.toISOString(),
     })),
     roleProfile: req.roleProfile ?? null,
     posting: req.posting ?? null,

@@ -1,9 +1,11 @@
 import { Type } from 'class-transformer';
+import { CandidateSource } from '@prisma/client';
 import {
   IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -75,7 +77,7 @@ const STAGES = [
   'rejected',
 ] as const;
 
-const SOURCES = ['manual', 'upload', 'email', 'drive'] as const;
+const SOURCES = ['manual', 'upload', 'email', 'drive', 'application'] as const;
 
 export class CreateCandidateDto {
   @IsString()
@@ -100,7 +102,7 @@ export class CreateCandidateDto {
 
   @IsOptional()
   @IsIn(SOURCES)
-  source?: string;
+  source?: CandidateSource;
 }
 
 export class UpdateCandidateDto {
@@ -170,7 +172,8 @@ export class PublicApplyDto {
   phone?: string;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  salaryExpectation?: string;
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  salaryExpectation?: number;
 }

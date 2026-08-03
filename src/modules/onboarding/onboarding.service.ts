@@ -7,7 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { OnboardingDocStatus, MedicalStatus, Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -160,7 +160,7 @@ export class OnboardingService {
     return this.getByCandidate(doc.onboarding.candidateId, userId);
   }
 
-  async verifyDoc(docId: string, status: string, userId: string) {
+  async verifyDoc(docId: string, status: OnboardingDocStatus, userId: string) {
     const doc = await this.loadDoc(docId);
     await this.requireCandidate(doc.onboarding.candidateId, userId);
     await this.prisma.onboardingDoc.update({

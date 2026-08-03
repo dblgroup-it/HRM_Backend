@@ -37,18 +37,23 @@ export class UnitsService {
     return unit;
   }
 
-  async create(dto: CreateUnitDto): Promise<Unit> {
+  async create(dto: CreateUnitDto, userId: string): Promise<Unit> {
     try {
-      return await this.prisma.unit.create({ data: dto });
+      return await this.prisma.unit.create({
+        data: { ...dto, createdById: userId, updatedById: userId },
+      });
     } catch (e) {
       throw this.handleUnique(e, 'A unit with that name already exists');
     }
   }
 
-  async update(id: string, dto: UpdateUnitDto): Promise<Unit> {
+  async update(id: string, dto: UpdateUnitDto, userId: string): Promise<Unit> {
     await this.ensureExists(id);
     try {
-      return await this.prisma.unit.update({ where: { id }, data: dto });
+      return await this.prisma.unit.update({
+        where: { id },
+        data: { ...dto, updatedById: userId },
+      });
     } catch (e) {
       throw this.handleUnique(e, 'A unit with that name already exists');
     }
@@ -60,22 +65,22 @@ export class UnitsService {
     return { id };
   }
 
-  async addDepartment(unitId: string, dto: CreateDepartmentDto) {
+  async addDepartment(unitId: string, dto: CreateDepartmentDto, userId: string) {
     await this.ensureExists(unitId);
     try {
       return await this.prisma.department.create({
-        data: { unitId, name: dto.name },
+        data: { unitId, name: dto.name, createdById: userId, updatedById: userId },
       });
     } catch (e) {
       throw this.handleUnique(e, 'Department already exists in this unit');
     }
   }
 
-  async updateDepartment(departmentId: string, name: string) {
+  async updateDepartment(departmentId: string, name: string, userId: string) {
     try {
       return await this.prisma.department.update({
         where: { id: departmentId },
-        data: { name },
+        data: { name, updatedById: userId },
       });
     } catch (e) {
       throw this.handleUnique(e, 'Department already exists in this unit');
@@ -88,7 +93,7 @@ export class UnitsService {
   }
 
   /** Create or update a sanctioned seat for a department. */
-  async upsertPosition(departmentId: string, dto: UpsertPositionDto) {
+  async upsertPosition(departmentId: string, dto: UpsertPositionDto, userId: string) {
     const department = await this.prisma.department.findUnique({
       where: { id: departmentId },
     });
@@ -110,6 +115,8 @@ export class UnitsService {
         category: dto.category ?? 'OFFICER',
         sanctioned: dto.sanctioned,
         filled: dto.filled ?? 0,
+        createdById: userId,
+        updatedById: userId,
       },
       update: {
         ...(dto.section !== undefined
@@ -118,12 +125,13 @@ export class UnitsService {
         category: dto.category ?? 'OFFICER',
         sanctioned: dto.sanctioned,
         filled: dto.filled ?? 0,
+        updatedById: userId,
       },
     });
   }
 
   /** Edit an existing seat (designation, category and/or sanctioned) by id. */
-  async updatePosition(positionId: string, dto: UpdatePositionDto) {
+  async updatePosition(positionId: string, dto: UpdatePositionDto, userId: string) {
     try {
       return await this.prisma.position.update({
         where: { id: positionId },
@@ -139,6 +147,7 @@ export class UnitsService {
             ? { sanctioned: dto.sanctioned }
             : {}),
           ...(dto.filled !== undefined ? { filled: dto.filled } : {}),
+          updatedById: userId,
         },
       });
     } catch (e) {

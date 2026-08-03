@@ -148,13 +148,60 @@ enum ExamQuestionKind {
   TEXT
 }
 
+enum EvalTokenStatus {
+  sent
+  opened
+  submitted
+}
+
+enum CandidateSource {
+  drive
+  email
+  upload
+  manual
+  application
+  bdjobs
+}
+
+enum SyncSource {
+  zinghr
+}
+
+enum SyncStatus {
+  running
+  success
+  failed
+}
+
+enum OnboardingStatus {
+  docs_pending
+  docs_submitted
+  offer_sent
+  offer_accepted
+  medical
+  hr_final
+  onboarded
+}
+
+enum MedicalStatus {
+  pending
+  cleared
+  rejected
+}
+
+enum OnboardingDocStatus {
+  pending
+  verified
+  rejected
+}
+
 // ---------------------------------------------------------------------------
 // Identity & people
 // ---------------------------------------------------------------------------
 
 /// Key-value app settings (e.g. AI configuration), editable by super users.
 model Setting {
-  key       String   @id
+  key       String   @id @db.VarChar(100)
   value     Json
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -163,33 +210,44 @@ model Setting {
 
 model User {
   id              String           @id @default(cuid())
-  employeeCode    String           @unique @map("employee_code")
-  name            String
-  email           String?
-  phone           String?
-  passwordHash    String           @map("password_hash")
+  employeeCode    String           @unique @map("employee_code") @db.VarChar(20)
+  name            String           @db.VarChar(150)
+  email           String?          @db.VarChar(254)
+  phone           String?          @db.VarChar(20)
+  passwordHash    String           @map("password_hash") @db.VarChar(100)
   role            UserRole         @default(EMPLOYEE)
   status          UserStatus       @default(ACTIVE)
   /// Bumped on logout / password change to invalidate previously-issued JWTs.
   tokenVersion    Int              @default(0) @map("token_version")
   /// Google Drive file id of the user's profile picture (served via the avatar proxy).
-  avatarFileId    String?          @map("avatar_file_id")
+  avatarFileId    String?          @map("avatar_file_id") @db.VarChar(100)
   /// Per-user toggle: also send notifications to this user's email.
   emailNotifications Boolean       @default(true) @map("email_notifications")
   /// Two-factor auth: enabled flag, method ('email' | 'totp'), and TOTP secret.
   twoFactorEnabled  Boolean        @default(false) @map("two_factor_enabled")
-  twoFactorMethod   String?        @map("two_factor_method")
-  twoFactorSecret   String?        @map("two_factor_secret")
+  twoFactorMethod   String?        @map("two_factor_method") @db.VarChar(10)
+  twoFactorSecret   String?        @map("two_factor_secret") @db.VarChar(100)
   /// Transient one-time code (hashed) for email 2FA + its expiry.
-  otpHash           String?        @map("otp_hash")
+  otpHash           String?        @map("otp_hash") @db.VarChar(100)
   otpExpiresAt      DateTime?      @map("otp_expires_at")
   employee        Employee?
-  roleAssignments RoleAssignment[]
-  notifications   Notification[]
-  committeeRoles  CommitteeMember[]
+  roleAssignments  RoleAssignment[]
+  notifications    Notification[]
+  committeeRoles   CommitteeMember[]
   interviewPanels  InterviewPanelist[]
   evaluations      Evaluation[]
   evaluationTokens EvaluationToken[]
+  unitsCreated     Unit[]             @relation("UnitCreatedBy")
+  unitsUpdated     Unit[]             @relation("UnitUpdatedBy")
+  departmentsCreated Department[]     @relation("DepartmentCreatedBy")
+  departmentsUpdated Department[]     @relation("DepartmentUpdatedBy")
+  positionsCreated Position[]         @relation("PositionCreatedBy")
+  positionsUpdated Position[]         @relation("PositionUpdatedBy")
+  rolesCreated         Role[]             @relation("RoleCreatedBy")
+  rolesUpdated         Role[]             @relation("RoleUpdatedBy")
+  roleAssignmentsGiven RoleAssignment[]   @relation("RoleAssignedBy")
+  interviewRoundsCreated InterviewRound[] @relation("InterviewRoundCreatedBy")
+  candidatesCreated      Candidate[]      @relation("CandidateCreatedBy")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
@@ -201,13 +259,14 @@ model Notification {
   id        String   @id @default(cuid())
   userId    String   @map("user_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  title     String
+  type      String   @db.VarChar(50)
+  title     String   @db.VarChar(200)
   message   String
   /// Optional frontend route to open, e.g. /requisitions/:id
-  link      String?
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
+  link      String?  @db.VarChar(500)
+  read      Boolean   @default(false)
+  seenAt    DateTime? @map("seen_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
   @@index([userId, read])
   @@index([userId, createdAt])
@@ -217,13 +276,17 @@ model Notification {
 /// Dynamic, configurable access role (e.g. Factory HR, Department Head, CHRO).
 model Role {
   id          String           @id @default(cuid())
-  key         String           @unique
-  name        String
+  key         String           @unique @db.VarChar(50)
+  name        String           @db.VarChar(100)
   description String?
   scope       RoleScope        @default(UNIT)
   /// System roles are seeded and cannot be deleted.
   isSystem    Boolean          @default(false) @map("is_system")
   assignments RoleAssignment[]
+  createdById String?          @map("created_by_id")
+  createdBy   User?            @relation("RoleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById String?          @map("updated_by_id")
+  updatedBy   User?            @relation("RoleUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt   DateTime         @default(now()) @map("created_at")
   updatedAt   DateTime         @updatedAt @map("updated_at")
 
@@ -232,14 +295,16 @@ model Role {
 
 /// Grants a user a role, optionally scoped to a unit (null = all units / global).
 model RoleAssignment {
-  id        String   @id @default(cuid())
-  roleId    String   @map("role_id")
-  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  unitId    String?  @map("unit_id")
-  unit      Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String   @id @default(cuid())
+  roleId      String   @map("role_id")
+  role        Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  userId      String   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unitId      String?  @map("unit_id")
+  unit        Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  assignedById String? @map("assigned_by_id")
+  assignedBy  User?    @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @map("created_at")
 
   @@unique([roleId, userId, unitId])
   @@index([userId])
@@ -251,22 +316,22 @@ model Employee {
   id              String         @id @default(cuid())
   userId          String         @unique @map("user_id")
   user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  employeeCode    String         @map("employee_code")
-  designation     String?
-  department      String?
-  section         String?
-  grade           String?
-  category        String?
-  unitName        String?        @map("unit_name")
+  employeeCode    String         @map("employee_code") @db.VarChar(20)
+  designation     String?        @db.VarChar(150)
+  department      String?        @db.VarChar(150)
+  section         String?        @db.VarChar(150)
+  grade           String?        @db.VarChar(50)
+  category        String?        @db.VarChar(50)
+  unitName        String?        @map("unit_name") @db.VarChar(200)
   unitId          String?        @map("unit_id")
   unit            Unit?          @relation(fields: [unitId], references: [id])
-  location        String?
-  gender          String?
-  dateOfBirth     DateTime?      @map("date_of_birth")
-  joiningDate     DateTime?      @map("joining_date")
-  exitDate        DateTime?      @map("exit_date")
-  lineManagerName String?        @map("line_manager_name")
-  lineManagerCode String?        @map("line_manager_code")
+  location        String?        @db.VarChar(200)
+  gender          String?        @db.VarChar(10)
+  dateOfBirth     DateTime?      @map("date_of_birth") @db.Date
+  joiningDate     DateTime?      @map("joining_date") @db.Date
+  exitDate        DateTime?      @map("exit_date") @db.Date
+  lineManagerName String?        @map("line_manager_name") @db.VarChar(150)
+  lineManagerCode String?        @map("line_manager_code") @db.VarChar(20)
   source          EmployeeSource @default(MANUAL)
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")
@@ -282,13 +347,17 @@ model Employee {
 // ---------------------------------------------------------------------------
 
 model Unit {
-  id          String       @id @default(cuid())
-  name        String       @unique
+  id              String           @id @default(cuid())
+  name            String           @unique @db.VarChar(200)
   isActive        Boolean          @default(true) @map("is_active")
   departments     Department[]
   positions       Position[]
   employees       Employee[]
   roleAssignments RoleAssignment[]
+  createdById     String?          @map("created_by_id")
+  createdBy       User?            @relation("UnitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById     String?          @map("updated_by_id")
+  updatedBy       User?            @relation("UnitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
@@ -296,13 +365,17 @@ model Unit {
 }
 
 model Department {
-  id        String     @id @default(cuid())
-  unitId    String     @map("unit_id")
-  unit      Unit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  name      String
-  positions Position[]
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  id          String     @id @default(cuid())
+  unitId      String     @map("unit_id")
+  unit        Unit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  name        String     @db.VarChar(150)
+  positions   Position[]
+  createdById String?    @map("created_by_id")
+  createdBy   User?      @relation("DepartmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById String?    @map("updated_by_id")
+  updatedBy   User?      @relation("DepartmentUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
 
   @@unique([unitId, name])
   @@map("departments")
@@ -315,13 +388,17 @@ model Position {
   unit         Unit         @relation(fields: [unitId], references: [id], onDelete: Cascade)
   departmentId String       @map("department_id")
   department   Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  designation  String
+  designation  String       @db.VarChar(150)
   /// Optional section within the department (e.g. IT Support under IT).
-  section      String?
+  section      String?      @db.VarChar(150)
   category     SeatCategory @default(OFFICER)
   sanctioned   Int          @default(0)
   /// Currently occupied seats (manually maintained). vacant = sanctioned − filled.
   filled       Int          @default(0)
+  createdById  String?      @map("created_by_id")
+  createdBy    User?        @relation("PositionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedById  String?      @map("updated_by_id")
+  updatedBy    User?        @relation("PositionUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
@@ -335,18 +412,18 @@ model Position {
 
 model Requisition {
   id                 String                @id @default(cuid())
-  code               String                @unique
-  designation        String
+  code               String                @unique @db.VarChar(20)
+  designation        String                @db.VarChar(150)
   requirementType    RequirementType       @map("requirement_type")
   source             RequisitionSource
   requiredPosts      Int                   @map("required_posts")
   totalVacantPosts   Int                   @map("total_vacant_posts")
-  unitFactory        String                @map("unit_factory")
-  department         String
-  section            String?
-  placeOfPosting     String                @map("place_of_posting")
-  vacantDate         DateTime?             @map("vacant_date")
-  whenNeededDate     DateTime?             @map("when_needed_date")
+  unitFactory        String                @map("unit_factory") @db.VarChar(200)
+  department         String                @db.VarChar(150)
+  section            String?               @db.VarChar(150)
+  placeOfPosting     String                @map("place_of_posting") @db.VarChar(200)
+  vacantDate         DateTime?             @map("vacant_date") @db.Date
+  neededDate         DateTime?             @map("needed_date") @db.Date
   priority           Priority              @default(MODERATE)
   employmentNature   EmploymentNature      @default(PERMANENT) @map("employment_nature")
   contractualPurpose String?               @map("contractual_purpose")
@@ -365,7 +442,7 @@ model Requisition {
   interviewQuestions Json?                 @map("interview_questions")
   /// Corporate HR committee deliberation / final recommendation notes.
   deliberationNotes  String?               @map("deliberation_notes")
-  raisedBy           String?               @map("raised_by")
+  raisedBy           String?               @map("raised_by") @db.VarChar(150)
   raisedById         String?               @map("raised_by_id")
   /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.
   drive              Json?
@@ -383,10 +460,13 @@ model Requisition {
   bdJobsPost         BdJobsPost?
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
+  /// Soft delete — null means active; set to timestamp when "deleted".
+  deletedAt          DateTime?             @map("deleted_at")
 
   @@index([status])
   @@index([unitFactory])
   @@index([createdAt])
+  @@index([deletedAt])
   @@map("requisitions")
 }
 
@@ -396,9 +476,9 @@ model BdJobsPost {
   requisitionId String      @unique @map("requisition_id")
   requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   /// BDJobs assigned job ID (null until successfully posted)
-  bdJobsJobId   String?     @map("bdjobs_job_id")
+  bdJobsJobId   String?     @map("bdjobs_job_id") @db.VarChar(50)
   /// draft | posted | failed
-  status        String      @default("draft")
+  status        String      @default("draft") @db.VarChar(20)
   /// All form fields submitted by Corporate HR
   formData      Json        @map("form_data")
   errorMessage  String?     @map("error_message")
@@ -414,19 +494,18 @@ model Candidate {
   id            String         @id @default(cuid())
   requisitionId String         @map("requisition_id")
   requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  name          String
-  email         String?
-  phone         String?
-  /// Where the CV came from: drive | email | manual | upload
-  source        String         @default("manual")
-  stage         CandidateStage @default(APPLIED)
+  name          String         @db.VarChar(150)
+  email         String?        @db.VarChar(254)
+  phone         String?        @db.VarChar(20)
+  source        CandidateSource @default(manual)
+  stage         CandidateStage  @default(APPLIED)
   /// Google Drive file id + view link for the CV document.
-  cvFileId      String?        @map("cv_file_id")
-  cvUrl         String?        @map("cv_url")
+  cvFileId      String?         @map("cv_file_id") @db.VarChar(100)
+  cvUrl         String?         @map("cv_url")
   notes         String?
-  salaryExpectation String? @map("salary_expectation")
+  salaryExpectation Float?      @map("salary_expectation")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
-  matchScore    Int?           @map("match_score")
+  matchScore    Float?          @map("match_score")
   matchSummary  String?        @map("match_summary")
   screenedAt    DateTime?      @map("screened_at")
   viewedAt      DateTime?      @map("viewed_at")
@@ -437,15 +516,26 @@ model Candidate {
   redFlagReason   String?      @map("red_flag_reason")
   redFlaggedAt    DateTime?    @map("red_flagged_at")
   redFlaggedById  String?      @map("red_flagged_by_id")
+  createdById   String?         @map("created_by_id")
+  createdBy     User?           @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Bdjobs inbound: unique per Bdjobs application — used for deduplication.
+  bdjobsApplicationId  String?  @unique @map("bdjobs_application_id") @db.VarChar(100)
+  /// Bdjobs inbound: the applicant's Bdjobs profile ID.
+  bdjobsApplicantId    String?  @map("bdjobs_applicant_id") @db.VarChar(100)
+  /// Bdjobs inbound: the Bdjobs job listing ID this candidate applied to.
+  bdjobsJobId          String?  @map("bdjobs_job_id") @db.VarChar(100)
   interviews    InterviewRound[]
   examAttempts  ExamAttempt[]
   onboarding    Onboarding?
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  /// Soft delete — null means active; set to timestamp when "deleted".
+  deletedAt     DateTime?      @map("deleted_at")
 
   @@index([requisitionId, stage])
   @@index([stage])
   @@index([createdAt])
+  @@index([deletedAt])
   @@map("candidates")
 }
 
@@ -453,9 +543,9 @@ model Candidate {
 model RedFlagRegistry {
   id          String    @id @default(cuid())
   /// Normalised lowercase email (may be null if only phone was known).
-  email       String?   @unique
+  email       String?   @unique @db.VarChar(254)
   /// Phone digits only (may be null if only email was known).
-  phone       String?   @unique
+  phone       String?   @unique @db.VarChar(20)
   reason      String
   flaggedById String    @map("flagged_by_id")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -468,24 +558,26 @@ model RedFlagRegistry {
 
 /// Phase 3 — a scheduled interview round for a candidate (first / second / final).
 model InterviewRound {
-  id            String              @id @default(cuid())
-  candidateId   String              @map("candidate_id")
-  candidate     Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  requisitionId String              @map("requisition_id")
-  requisition   Requisition         @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  kind          InterviewKind       @default(FIRST)
-  mode          InterviewMode       @default(PHYSICAL)
-  scheduledAt   DateTime?           @map("scheduled_at")
+  id               String              @id @default(cuid())
+  candidateId      String              @map("candidate_id")
+  candidate        Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requisitionId    String              @map("requisition_id")
+  requisition      Requisition         @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  kind             InterviewKind       @default(FIRST)
+  mode             InterviewMode       @default(PHYSICAL)
+  scheduledAt      DateTime?           @map("scheduled_at")
   /// Venue (physical) or meeting link (online).
-  location      String?
-  status        InterviewStatus     @default(SCHEDULED)
+  location         String?             @db.VarChar(500)
+  status           InterviewStatus     @default(SCHEDULED)
   /// Google Calendar sync: event id + the auto-generated Meet link (online).
-  calendarEventId  String?           @map("calendar_event_id")
-  meetLink         String?           @map("meet_link")
-  questionsSentAt  DateTime?         @map("questions_sent_at")
+  calendarEventId  String?             @map("calendar_event_id") @db.VarChar(200)
+  meetLink         String?             @map("meet_link")
+  questionsSentAt  DateTime?           @map("questions_sent_at")
   panelists        InterviewPanelist[]
   evaluations      Evaluation[]
   evaluationTokens EvaluationToken[]
+  createdById      String?             @map("created_by_id")
+  createdBy        User?               @relation("InterviewRoundCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt        DateTime            @default(now()) @map("created_at")
 
   @@index([candidateId])
@@ -510,13 +602,12 @@ model InterviewPanelist {
 model EvaluationToken {
   id             String         @id @default(cuid())
   /// Unguessable 32-char hex token (16 random bytes).
-  token          String         @unique
+  token          String         @unique @db.VarChar(64)
   roundId        String         @map("round_id")
   round          InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
   panelistUserId String         @map("panelist_user_id")
   panelistUser   User           @relation(fields: [panelistUserId], references: [id], onDelete: Cascade)
-  /// sent | opened | submitted
-  status         String         @default("sent")
+  status         EvalTokenStatus @default(sent)
   openedAt       DateTime?      @map("opened_at")
   submittedAt    DateTime?      @map("submitted_at")
   /// 48h after the interview date, or 7 days from creation when no scheduledAt.
@@ -556,16 +647,16 @@ model ExamAttempt {
   requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   examType      AssessmentType @map("exam_type")
   /// Unguessable link token for the candidate's exam page.
-  token         String         @unique
+  token         String         @unique @db.VarChar(64)
   /// pending | submitted | graded
-  status        String         @default("pending")
+  status        String         @default("pending") @db.VarChar(20)
   /// { questionId: answerText }
   answers       Json?
   /// per-question AI/auto grade: { questionId: { score, feedback } }
   grades        Json?
-  autoScore     Int?           @map("auto_score")
-  totalScore    Int?           @map("total_score")
-  maxScore      Int            @default(0) @map("max_score")
+  autoScore     Float?         @map("auto_score")
+  totalScore    Float?         @map("total_score")
+  maxScore      Float          @default(0) @map("max_score")
   startedAt     DateTime?      @map("started_at")
   submittedAt   DateTime?      @map("submitted_at")
   gradedAt      DateTime?      @map("graded_at")
@@ -583,13 +674,11 @@ model Onboarding {
   candidateId     String          @unique @map("candidate_id")
   candidate       Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   /// Unguessable token for the candidate's document-submission + offer pages.
-  token           String          @unique
-  /// docs_pending | docs_submitted | offer_sent | offer_accepted | medical | hr_final | onboarded
-  status          String          @default("docs_pending")
+  token           String          @unique @db.VarChar(64)
+  status          OnboardingStatus @default(docs_pending)
   offerSentAt     DateTime?       @map("offer_sent_at")
   offerAcceptedAt DateTime?       @map("offer_accepted_at")
-  /// pending | cleared | rejected
-  medicalStatus   String          @default("pending") @map("medical_status")
+  medicalStatus   MedicalStatus   @default(pending) @map("medical_status")
   medicalNote     String?         @map("medical_note")
   medicalClearedAt DateTime?      @map("medical_cleared_at")
   hrVerifiedAt    DateTime?       @map("hr_verified_at")
@@ -600,8 +689,8 @@ model Onboarding {
   archivedAt      DateTime?       @map("archived_at")
   /// Drive folder the joining docs were moved into on archive.
   archiveFolderUrl String?        @map("archive_folder_url")
-  itEmail         String?         @map("it_email")
-  itAssetId       String?         @map("it_asset_id")
+  itEmail         String?         @map("it_email") @db.VarChar(254)
+  itAssetId       String?         @map("it_asset_id") @db.VarChar(50)
   itNotifiedAt    DateTime?       @map("it_notified_at")
   docs            OnboardingDoc[]
   createdAt       DateTime        @default(now()) @map("created_at")
@@ -615,12 +704,11 @@ model OnboardingDoc {
   id           String     @id @default(cuid())
   onboardingId String     @map("onboarding_id")
   onboarding   Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
-  label        String
-  fileId       String     @map("file_id")
+  label        String     @db.VarChar(100)
+  fileId       String     @map("file_id") @db.VarChar(100)
   url          String
-  mimeType     String     @map("mime_type")
-  /// pending | verified | rejected
-  status       String     @default("pending")
+  mimeType     String     @map("mime_type") @db.VarChar(100)
+  status       OnboardingDocStatus @default(pending)
   /// AI (OCR + LLM) extracted structured fields.
   aiExtract    Json?      @map("ai_extract")
   createdAt    DateTime   @default(now()) @map("created_at")
@@ -639,7 +727,7 @@ model Evaluation {
   /// { rubricCriterionId: score, ... }
   scores      Json
   comments    String?
-  total       Int            @default(0)
+  total       Float          @default(0)
   submittedAt DateTime       @default(now()) @map("submitted_at")
 
   @@unique([roundId, evaluatorId])
@@ -655,7 +743,7 @@ model CommitteeMember {
   userId        String      @map("user_id")
   user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// interviewer | evaluator
-  role          String      @default("interviewer")
+  role          String      @default("interviewer") @db.VarChar(20)
   createdAt     DateTime    @default(now()) @map("created_at")
 
   @@unique([requisitionId, userId])
@@ -668,7 +756,7 @@ model RubricCriterion {
   id            String      @id @default(cuid())
   requisitionId String      @map("requisition_id")
   requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  label         String
+  label         String      @db.VarChar(150)
   maxScore      Int         @default(10) @map("max_score")
   orderIndex    Int         @default(0) @map("order_index")
 
@@ -681,7 +769,8 @@ model AssessmentComponent {
   requisitionId String         @map("requisition_id")
   requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   type          AssessmentType
-  maxScore      Int            @default(100) @map("max_score")
+  maxScore      Float          @default(100) @map("max_score")
+  /// Display/sort order within the requisition's assessment plan (lower = shown first).
   orderIndex    Int            @default(0) @map("order_index")
 
   @@unique([requisitionId, type])
@@ -694,9 +783,9 @@ model ApprovalStep {
   requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   orderIndex    Int          @map("order_index")
   role          ApprovalRole
-  title         String
-  subtitle      String
-  assignee      String       @default("")
+  title         String       @db.VarChar(150)
+  subtitle      String       @db.VarChar(200)
+  assignee      String       @default("") @db.VarChar(150)
   status        StepStatus   @default(PENDING)
   note          String       @default("")
   actedAt       DateTime?    @map("acted_at")
@@ -709,13 +798,13 @@ model RequisitionActivity {
   id            String           @id @default(cuid())
   requisitionId String           @map("requisition_id")
   requisition   Requisition      @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  actor         String
+  actor         String           @db.VarChar(150)
   action        ApprovalDecision
   note          String           @default("")
-  at            DateTime         @default(now())
+  createdAt     DateTime         @default(now()) @map("created_at")
 
   @@index([requisitionId])
-  @@index([at])
+  @@index([createdAt])
   @@map("requisition_activities")
 }
 
@@ -725,15 +814,14 @@ model RequisitionActivity {
 
 model SyncLog {
   id         String    @id @default(cuid())
-  source     String    @default("zinghr")
-  total      Int       @default(0)
-  processed  Int       @default(0)
-  inserted   Int       @default(0)
-  updated    Int       @default(0)
-  skipped    Int       @default(0)
-  failed     Int       @default(0)
-  /// running | success | failed
-  status     String    @default("running")
+  source     SyncSource @default(zinghr)
+  total      Int        @default(0)
+  processed  Int        @default(0)
+  inserted   Int        @default(0)
+  updated    Int        @default(0)
+  skipped    Int        @default(0)
+  failed     Int        @default(0)
+  status     SyncStatus @default(running)
   message    String?
   /// Terminal-style log lines streamed to the UI.
   logs       String[]

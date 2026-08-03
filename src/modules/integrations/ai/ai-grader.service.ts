@@ -161,7 +161,7 @@ export interface DraftRequisitionResult {
   requiredPosts: number;
   placeOfPosting: string;
   vacantDate: string;
-  whenNeededDate: string;
+  neededDate: string;
   priority: 'top' | 'moderate' | 'ordinary';
   employmentNature: 'permanent' | 'temporary' | 'contractual';
   contractualPurpose: string;
@@ -569,7 +569,7 @@ RULES
 - "requiredPosts": the number of people requested (default 1).
 - "source": "factory" for a manufacturing unit/mill, "ho" for a head-office/corporate function.
 - "placeOfPosting": the unit's usual location if not stated (DBL units are in Gazipur, Kashimpur, Savar, Dhaka etc.). Never leave blank.
-- Dates are "YYYY-MM-DD". "whenNeededDate": if not stated, about 30 days from today. "vacantDate": if not stated, "".
+- Dates are "YYYY-MM-DD". "neededDate": if not stated, about 30 days from today. "vacantDate": if not stated, "".
 - "priority": "top" only if the request says urgent/immediately; else "moderate".
 - "employmentNature": "permanent" unless the request says temporary/contract/seasonal. If not permanent, "contractualPurpose" MUST explain why (required by the form).
 - "jobDescription": 3-6 concrete responsibilities for THIS role at THIS department, written as sentences separated by newlines. Be specific to manufacturing, not generic.
@@ -582,7 +582,7 @@ RULES
 - NEVER invent a unit or department that is not listed above.
 
 Respond with ONLY a compact JSON object and nothing else:
-{"designation":"","unitFactory":"","department":"","section":"","source":"factory|ho","requiredPosts":1,"placeOfPosting":"","vacantDate":"","whenNeededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","computer":"not_applicable|desktop|laptop","computerReason":"","seating":"existing|new","preferredSources":[],"notes":""}`;
+{"designation":"","unitFactory":"","department":"","section":"","source":"factory|ho","requiredPosts":1,"placeOfPosting":"","vacantDate":"","neededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","computer":"not_applicable|desktop|laptop","computerReason":"","seating":"existing|new","preferredSources":[],"notes":""}`;
   }
 
   /** Parse + hard-clamp every value to something the form will accept. */
@@ -668,7 +668,7 @@ Respond with ONLY a compact JSON object and nothing else:
       requiredPosts: posts,
       placeOfPosting: str(obj.placeOfPosting, 150),
       vacantDate: date(obj.vacantDate),
-      whenNeededDate: date(obj.whenNeededDate),
+      neededDate: date(obj.neededDate),
       priority: pick(
         obj.priority,
         ['top', 'moderate', 'ordinary'] as const,

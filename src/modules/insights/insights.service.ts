@@ -139,6 +139,7 @@ ${JSON.stringify(ctx.requisitions)}`;
     const since = new Date(now - 7 * DAY);
 
     const reqs = await this.prisma.requisition.findMany({
+      where: { deletedAt: null },
       include: {
         approvalSteps: { orderBy: { orderIndex: 'asc' } },
         candidates: { select: { stage: true } },
@@ -233,6 +234,7 @@ ${JSON.stringify(ctx.requisitions)}`;
     // Pipeline + activity
     const candByStage = await this.prisma.candidate.groupBy({
       by: ['stage'],
+      where: { deletedAt: null },
       _count: { _all: true },
     });
     const pipeline: Record<string, number> = {};
@@ -240,10 +242,10 @@ ${JSON.stringify(ctx.requisitions)}`;
       pipeline[c.stage.toLowerCase()] = c._count._all;
 
     const [newReqs7d, newCands7d, acts7d] = await Promise.all([
-      this.prisma.requisition.count({ where: { createdAt: { gte: since } } }),
-      this.prisma.candidate.count({ where: { createdAt: { gte: since } } }),
+      this.prisma.requisition.count({ where: { createdAt: { gte: since }, deletedAt: null } }),
+      this.prisma.candidate.count({ where: { createdAt: { gte: since }, deletedAt: null } }),
       this.prisma.requisitionActivity.findMany({
-        where: { at: { gte: since } },
+        where: { createdAt: { gte: since } },
         select: { action: true },
       }),
     ]);
@@ -332,7 +334,7 @@ ${JSON.stringify(ctx.requisitions)}`;
 
     // Time-to-fill: requisition.createdAt → its selected candidate (updatedAt)
     const selectedCands = await this.prisma.candidate.findMany({
-      where: { stage: 'SELECTED' },
+      where: { stage: 'SELECTED', deletedAt: null },
       select: { updatedAt: true, requisition: { select: { createdAt: true } } },
     });
     const fillDays = selectedCands

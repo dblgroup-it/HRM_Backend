@@ -37,7 +37,7 @@ export class UpdateRequisitionDto {
 
   @IsOptional()
   @IsString()
-  whenNeededDate?: string;
+  neededDate?: string;
 
   @IsOptional()
   @IsIn(['top', 'moderate', 'ordinary'])

@@ -91,6 +91,7 @@ export class InterviewService {
         mode: dto.mode.toUpperCase() as InterviewMode,
         scheduledAt: toDate(dto.scheduledAt),
         location: dto.location?.trim() || null,
+        createdById: actor.id,
         panelists: {
           create: [...new Set(dto.panelistUserIds)].map((uid) => ({
             userId: uid,

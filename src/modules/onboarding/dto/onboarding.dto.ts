@@ -5,6 +5,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { OnboardingDocStatus, MedicalStatus } from '@prisma/client';
 
 export class UploadDocDto {
   @IsString()
@@ -15,12 +16,12 @@ export class UploadDocDto {
 
 export class VerifyDocDto {
   @IsIn(['verified', 'rejected', 'pending'])
-  status!: string;
+  status!: OnboardingDocStatus;
 }
 
 export class MedicalDto {
   @IsIn(['cleared', 'rejected', 'pending'])
-  status!: string;
+  status!: MedicalStatus;
 
   @IsOptional()
   @IsString()

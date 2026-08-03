@@ -4,6 +4,7 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
@@ -20,6 +21,7 @@ import type {
   PostBdJobsFormData,
 } from './bdjobs.types';
 import { EDU_LEVELS } from './bdjobs.types';
+import { BdJobsInboundCandidateDto } from './dto/bdjobs-inbound.dto';
 import {
   BdJobsSettingsService,
   type BdJobsSettings,
@@ -473,5 +475,124 @@ export class BdJobsService {
     if (applyUrl) payload.ApplyURL = applyUrl;
 
     return payload as typeof payload & { ts: string };
+  }
+
+  /**
+   * Inbound webhook: Bdjobs POSTs candidate data to us whenever someone applies
+   * through their job portal. We verify the shared-secret SHA-256 signature,
+   * match the job reference to a requisition, deduplicate by Bdjobs applicationId,
+   * and create the candidate record.
+   *
+   * Returns the ZinqHR response contract directly (not wrapped by ResponseInterceptor).
+   */
+  async receiveCandidate(
+    dto: BdJobsInboundCandidateDto,
+    incomingSignature: string | undefined,
+  ): Promise<{
+    success: boolean;
+    data: {
+      candidateId: string;
+      requisitionCode: string;
+      status: string;
+      duplicate: boolean;
+    } | null;
+    message: string;
+  }> {
+    // 1. Verify SHA-256 signature using the same shared credentials.
+    const settings = await this.settings.get();
+    if (!settings.authToken || !settings.decodeId) {
+      throw new ServiceUnavailableException(
+        'BDJobs credentials are not configured.',
+      );
+    }
+    const expected = createHash('sha256')
+      .update(`${settings.authToken}&^^${settings.decodeId}*&*${dto.ts}`)
+      .digest('hex');
+    if (!incomingSignature || incomingSignature !== expected) {
+      throw new UnauthorizedException('Invalid X-Api-AuthToken signature.');
+    }
+
+    // 2. Reject stale/replayed requests (5-minute window).
+    const drift = Math.abs(Math.floor(Date.now() / 1000) - dto.ts);
+    if (drift > 300) {
+      throw new UnauthorizedException('Request timestamp is expired.');
+    }
+
+    // 3. Resolve the requisition by jobReferenceId (our code) or bdJobsJobId.
+    let requisition: { id: string; code: string } | null = null;
+
+    if (dto.jobReferenceId) {
+      requisition = await this.prisma.requisition.findFirst({
+        where: { code: dto.jobReferenceId },
+        select: { id: true, code: true },
+      });
+    }
+
+    if (!requisition && dto.bdJobsJobId) {
+      const post = await this.prisma.bdJobsPost.findFirst({
+        where: { bdJobsJobId: dto.bdJobsJobId },
+        select: { requisitionId: true },
+      });
+      if (post) {
+        requisition = await this.prisma.requisition.findUnique({
+          where: { id: post.requisitionId },
+          select: { id: true, code: true },
+        });
+      }
+    }
+
+    if (!requisition) {
+      throw new NotFoundException(
+        `No requisition found for jobReferenceId "${dto.jobReferenceId ?? ''}" or bdJobsJobId "${dto.bdJobsJobId}".`,
+      );
+    }
+
+    // 4. Deduplicate by Bdjobs applicationId (globally unique per application).
+    const existing = await this.prisma.candidate.findFirst({
+      where: { bdjobsApplicationId: dto.applicationId },
+      select: { id: true },
+    });
+    if (existing) {
+      return {
+        success: true,
+        data: {
+          candidateId: existing.id,
+          requisitionCode: requisition.code,
+          status: 'duplicate',
+          duplicate: true,
+        },
+        message: 'Candidate has already applied to this job.',
+      };
+    }
+
+    // 5. Create candidate record — CV is a public URL; no Drive upload here.
+    const candidate = await this.prisma.candidate.create({
+      data: {
+        requisitionId: requisition.id,
+        name: dto.candidate.name,
+        email: dto.candidate.email,
+        phone: dto.candidate.phone ?? null,
+        source: 'bdjobs',
+        cvUrl: dto.resume.url,
+        bdjobsApplicationId: dto.applicationId,
+        bdjobsApplicantId: dto.profile.bdjobsApplicantId,
+        bdjobsJobId: dto.bdJobsJobId,
+      },
+    });
+
+    this.logger.log(
+      `BDJobs candidate imported: ${candidate.id} (${dto.candidate.name}) → ${requisition.code}`,
+    );
+
+    return {
+      success: true,
+      data: {
+        candidateId: candidate.id,
+        requisitionCode: requisition.code,
+        status: 'imported',
+        duplicate: false,
+      },
+      message: 'Candidate imported successfully',
+    };
   }
 }

@@ -2,11 +2,14 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { UserRole } from '@prisma/client';
@@ -18,6 +21,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import type { Response } from 'express';
 
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { BdJobsSettingsService } from './bdjobs-settings.service';
@@ -26,8 +30,10 @@ import {
   AuthUser,
   CurrentUser,
 } from '../../../common/decorators/current-user.decorator';
+import { Public } from '../../../common/decorators/public.decorator';
 import { BdJobsService } from './bdjobs.service';
 import { PostBdJobsDto } from './dto/bdjobs.dto';
+import { BdJobsInboundCandidateDto } from './dto/bdjobs-inbound.dto';
 import type { PostBdJobsFormData } from './bdjobs.types';
 
 /** Admin-editable BDJobs configuration (blank secrets = keep current). */
@@ -155,5 +161,24 @@ export class BdJobsController {
   @Get('integrations/bdjobs/status')
   async status() {
     return { configured: await this.bdjobs.isConfigured() };
+  }
+
+  /**
+   * Inbound webhook — Bdjobs calls this endpoint to push candidates who applied
+   * via the Bdjobs portal. No JWT; authenticated by SHA-256 signature in
+   * X-Api-AuthToken. Returns the ZinqHR response contract directly (message
+   * at top level, not wrapped by ResponseInterceptor).
+   */
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('integrations/bdjobs/candidates')
+  async receiveCandidate(
+    @Body() dto: BdJobsInboundCandidateDto,
+    @Headers('x-api-authtoken') authToken: string | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const result = await this.bdjobs.receiveCandidate(dto, authToken);
+    res.json(result);
   }
 }

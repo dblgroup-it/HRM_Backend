@@ -10,6 +10,7 @@ import {
 import { UserRole } from '@prisma/client';
 
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
 import { UnitsService } from './units.service';
 import {
   CreateDepartmentDto,
@@ -36,14 +37,14 @@ export class UnitsController {
 
   @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Post()
-  create(@Body() dto: CreateUnitDto) {
-    return this.unitsService.create(dto);
+  create(@Body() dto: CreateUnitDto, @CurrentUser() user: AuthUser) {
+    return this.unitsService.create(dto, user.id);
   }
 
   @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateUnitDto) {
-    return this.unitsService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateUnitDto, @CurrentUser() user: AuthUser) {
+    return this.unitsService.update(id, dto, user.id);
   }
 
   @Roles(UserRole.ADMIN)
@@ -54,8 +55,8 @@ export class UnitsController {
 
   @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Post(':id/departments')
-  addDepartment(@Param('id') id: string, @Body() dto: CreateDepartmentDto) {
-    return this.unitsService.addDepartment(id, dto);
+  addDepartment(@Param('id') id: string, @Body() dto: CreateDepartmentDto, @CurrentUser() user: AuthUser) {
+    return this.unitsService.addDepartment(id, dto, user.id);
   }
 
   @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
@@ -63,8 +64,9 @@ export class UnitsController {
   updateDepartment(
     @Param('departmentId') departmentId: string,
     @Body() dto: UpdateDepartmentDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.unitsService.updateDepartment(departmentId, dto.name);
+    return this.unitsService.updateDepartment(departmentId, dto.name, user.id);
   }
 
   @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
@@ -78,8 +80,9 @@ export class UnitsController {
   upsertPosition(
     @Param('departmentId') departmentId: string,
     @Body() dto: UpsertPositionDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.unitsService.upsertPosition(departmentId, dto);
+    return this.unitsService.upsertPosition(departmentId, dto, user.id);
   }
 
   @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
@@ -87,8 +90,9 @@ export class UnitsController {
   updatePosition(
     @Param('positionId') positionId: string,
     @Body() dto: UpdatePositionDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.unitsService.updatePosition(positionId, dto);
+    return this.unitsService.updatePosition(positionId, dto, user.id);
   }
 
   @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)

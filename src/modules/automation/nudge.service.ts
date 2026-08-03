@@ -76,7 +76,7 @@ export class NudgeService {
     const days = Number(this.config.get('nudge.approvalDays') ?? 3);
     const cutoff = new Date(Date.now() - days * DAY_MS);
     const rows = await this.prisma.requisition.findMany({
-      where: { status: 'PENDING_APPROVAL', updatedAt: { lt: cutoff } },
+      where: { status: 'PENDING_APPROVAL', updatedAt: { lt: cutoff }, deletedAt: null },
       include: {
         approvalSteps: {
           where: { status: 'PENDING' },

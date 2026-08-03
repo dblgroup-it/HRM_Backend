@@ -65,7 +65,7 @@ export class CreateRequisitionDto {
 
   @IsOptional()
   @IsString()
-  whenNeededDate?: string;
+  neededDate?: string;
 
   @IsIn(['top', 'moderate', 'ordinary'])
   priority!: 'top' | 'moderate' | 'ordinary';

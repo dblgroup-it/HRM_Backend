@@ -47,14 +47,14 @@ export class RbacController {
 
   @Roles(UserRole.ADMIN)
   @Post('roles')
-  createRole(@Body() dto: CreateRoleDto) {
-    return this.rbac.createRole(dto);
+  createRole(@Body() dto: CreateRoleDto, @CurrentUser() user: AuthUser) {
+    return this.rbac.createRole(dto, user.id);
   }
 
   @Roles(UserRole.ADMIN)
   @Patch('roles/:id')
-  updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
-    return this.rbac.updateRole(id, dto);
+  updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto, @CurrentUser() user: AuthUser) {
+    return this.rbac.updateRole(id, dto, user.id);
   }
 
   @Roles(UserRole.ADMIN)
@@ -76,8 +76,8 @@ export class RbacController {
 
   @Roles(UserRole.ADMIN)
   @Post('role-assignments')
-  createAssignment(@Body() dto: CreateAssignmentDto) {
-    return this.rbac.createAssignment(dto);
+  createAssignment(@Body() dto: CreateAssignmentDto, @CurrentUser() user: AuthUser) {
+    return this.rbac.createAssignment(dto, user.id);
   }
 
   @Roles(UserRole.ADMIN)

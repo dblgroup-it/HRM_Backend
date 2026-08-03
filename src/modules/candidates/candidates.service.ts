@@ -97,7 +97,7 @@ export class CandidatesService {
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 50));
 
-    const where: Prisma.CandidateWhereInput = { requisitionId: reqId };
+    const where: Prisma.CandidateWhereInput = { requisitionId: reqId, deletedAt: null };
     if (query.stage) where.stage = query.stage.toUpperCase() as CandidateStage;
     if (query.minScore != null) where.matchScore = { gte: query.minScore };
     if (query.search?.trim()) {
@@ -127,7 +127,7 @@ export class CandidatesService {
     ]);
 
     // Stats across ALL candidates for this requisition (ignores current filter).
-    const baseWhere = { requisitionId: reqId };
+    const baseWhere = { requisitionId: reqId, deletedAt: null };
     const [s90, s75, s50, s25, unscreened, notViewed, finalists, stageCounts] =
       await Promise.all([
         this.prisma.candidate.count({
@@ -229,7 +229,7 @@ export class CandidatesService {
   ) {
     const req = await this.requireReq(reqId, userId);
 
-    const where: Prisma.CandidateWhereInput = { requisitionId: reqId };
+    const where: Prisma.CandidateWhereInput = { requisitionId: reqId, deletedAt: null };
     if (query.stage) where.stage = query.stage.toUpperCase() as CandidateStage;
     if (query.minScore != null) where.matchScore = { gte: query.minScore };
     if (query.search?.trim()) {
@@ -399,7 +399,7 @@ export class CandidatesService {
       return { name: cand.name, email: null, total: 1, applications: [] };
 
     const all = await this.prisma.candidate.findMany({
-      where: { email: cand.email },
+      where: { email: cand.email, deletedAt: null },
       include: { requisition: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -442,7 +442,7 @@ export class CandidatesService {
   async listTalentPool(userId: string) {
     await this.requireRecruitmentRole(userId);
     const rows = await this.prisma.candidate.findMany({
-      where: { talentPool: true },
+      where: { talentPool: true, deletedAt: null },
       include: {
         requisition: {
           select: {
@@ -481,7 +481,7 @@ export class CandidatesService {
 
     const files = await this.drive.listFiles(ws.allCvFolderId);
     const tracked = await this.prisma.candidate.findMany({
-      where: { requisitionId: reqId, cvFileId: { not: null } },
+      where: { requisitionId: reqId, cvFileId: { not: null }, deletedAt: null },
       select: { cvFileId: true },
     });
     const known = new Set(tracked.map((c) => c.cvFileId));
@@ -516,7 +516,7 @@ export class CandidatesService {
     }
 
     const rows = await this.prisma.candidate.findMany({
-      where: { requisitionId: reqId },
+      where: { requisitionId: reqId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
     return { imported: fresh.length, candidates: rows.map(serializeCandidate) };
@@ -559,6 +559,7 @@ export class CandidatesService {
         phone: dto.phone ?? null,
         notes: dto.notes ?? null,
         source: dto.source ?? (file ? 'upload' : 'manual'),
+        createdById: userId,
         cvFileId,
         cvUrl,
         ...(flagEntry && {
@@ -743,7 +744,7 @@ export class CandidatesService {
       }
     }
 
-    await this.prisma.candidate.delete({ where: { id } });
+    await this.prisma.candidate.update({ where: { id }, data: { deletedAt: new Date() } });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'removed',
     });
@@ -835,6 +836,7 @@ export class CandidatesService {
         stage: 'APPLIED',
         cvFileId: { not: null },
         screenedAt: null,
+        deletedAt: null,
       },
       include: { requisition: true },
     });
@@ -917,6 +919,7 @@ export class CandidatesService {
       where: {
         requisitionId: reqId,
         stage: { in: ['INTERVIEW', 'FINAL', 'SELECTED'] },
+        deletedAt: null,
       },
       include: {
         examAttempts: { where: { totalScore: { not: null } } },
@@ -1139,7 +1142,7 @@ export class CandidatesService {
       throw new BadRequestException('Please provide a valid email address');
     }
     const candidates = await this.prisma.candidate.findMany({
-      where: { email: { equals: email.trim(), mode: 'insensitive' } },
+      where: { email: { equals: email.trim(), mode: 'insensitive' }, deletedAt: null },
       include: {
         requisition: {
           select: { code: true, designation: true, unitFactory: true },
@@ -1346,7 +1349,7 @@ export class CandidatesService {
   async backfillCvSharing(userId: string) {
     await this.requireRecruitmentRole(userId);
     const candidates = await this.prisma.candidate.findMany({
-      where: { cvFileId: { not: null } },
+      where: { cvFileId: { not: null }, deletedAt: null },
       select: { id: true, cvFileId: true },
     });
     let fixed = 0;
@@ -1420,7 +1423,7 @@ function serializeCandidate(c: CandidateRow) {
     cvFileId: c.cvFileId,
     cvUrl: c.cvUrl,
     notes: c.notes ?? '',
-    salaryExpectation: c.salaryExpectation ?? '',
+    salaryExpectation: c.salaryExpectation ?? null,
     matchScore: c.matchScore,
     matchSummary: c.matchSummary ?? '',
     screenedAt: c.screenedAt ? c.screenedAt.toISOString() : null,

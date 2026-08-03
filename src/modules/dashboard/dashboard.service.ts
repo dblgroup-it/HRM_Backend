@@ -85,8 +85,8 @@ export class DashboardService {
       ? {}
       : { unitName: { in: scope.unitNames } };
     const reqWhere: Prisma.RequisitionWhereInput = scope.all
-      ? {}
-      : { unitFactory: { in: scope.unitNames } };
+      ? { deletedAt: null }
+      : { unitFactory: { in: scope.unitNames }, deletedAt: null };
     const seatWhere: Prisma.PositionWhereInput = scope.all
       ? {}
       : { unit: { name: { in: scope.unitNames } } };

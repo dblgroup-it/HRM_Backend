@@ -39,7 +39,7 @@ export class RbacService {
     });
   }
 
-  async createRole(dto: CreateRoleDto) {
+  async createRole(dto: CreateRoleDto, userId: string) {
     const key = slugify(dto.name);
     if (!key) throw new BadRequestException('Invalid role name');
     try {
@@ -49,6 +49,8 @@ export class RbacService {
           name: dto.name,
           description: dto.description,
           scope: dto.scope,
+          createdById: userId,
+          updatedById: userId,
         },
       });
     } catch (e) {
@@ -56,7 +58,7 @@ export class RbacService {
     }
   }
 
-  async updateRole(id: string, dto: UpdateRoleDto) {
+  async updateRole(id: string, dto: UpdateRoleDto, userId: string) {
     const role = await this.prisma.role.findUnique({ where: { id } });
     if (!role) throw new NotFoundException('Role not found');
     try {
@@ -68,6 +70,7 @@ export class RbacService {
             ? { description: dto.description }
             : {}),
           ...(dto.scope ? { scope: dto.scope } : {}),
+          updatedById: userId,
         },
       });
       this.permissions.invalidate();
@@ -112,7 +115,7 @@ export class RbacService {
     });
   }
 
-  async createAssignment(dto: CreateAssignmentDto) {
+  async createAssignment(dto: CreateAssignmentDto, assignedById: string) {
     const role = await this.prisma.role.findUnique({
       where: { id: dto.roleId },
     });
@@ -137,7 +140,7 @@ export class RbacService {
 
     try {
       const created = await this.prisma.roleAssignment.create({
-        data: { roleId: dto.roleId, userId: dto.userId, unitId },
+        data: { roleId: dto.roleId, userId: dto.userId, unitId, assignedById },
         include: { role: true, unit: true, user: { select: { name: true } } },
       });
       this.permissions.invalidate(dto.userId);
