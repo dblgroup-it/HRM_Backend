@@ -113,7 +113,7 @@ export class BoardService {
     }
 
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-    const frontendUrl = this.config.get<string>('corsOrigin') ?? 'http://localhost:3000';
+    const frontendUrl = this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
 
     // Delete any existing pending votes for these members on this approval
     await this.prisma.boardApprovalVote.deleteMany({

@@ -366,10 +366,7 @@ export class ExamService {
   // --- helpers -------------------------------------------------------------
 
   private examLink(token: string): string {
-    const base = (this.config.get<string>('corsOrigin') ?? '').replace(
-      /\/$/,
-      '',
-    );
+    const base = this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
     return `${base}/exam/${token}`;
   }
 

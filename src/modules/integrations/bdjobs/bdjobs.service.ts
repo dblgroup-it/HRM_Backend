@@ -422,7 +422,7 @@ export class BdJobsService {
 
     const origin =
       s.publicApplyBaseUrl ||
-      this.config.get<string>('corsOrigin') ||
+      this.config.get<string>('frontendUrl') ||
       'http://localhost:3000';
     const applyUrl = f.applyOnline
       ? `${origin.split(',')[0].replace(/\/$/, '')}/apply/${req.id}`

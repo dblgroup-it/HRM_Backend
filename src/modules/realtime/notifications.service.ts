@@ -47,10 +47,9 @@ export class NotificationsService {
           select: { email: true, name: true, emailNotifications: true },
         });
         if (!user?.email || !user.emailNotifications) return;
-        const origin =
-          this.config.get<string>('corsOrigin') ?? 'http://localhost:3000';
+        const origin = this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
         const link = input.link
-          ? `${origin.replace(/\/$/, '')}${input.link}`
+          ? `${origin}${input.link}`
           : origin;
         await this.mail.send({
           to: user.email,

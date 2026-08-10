@@ -642,9 +642,8 @@ export class OnboardingService {
   // --- helpers -------------------------------------------------------------
 
   private publicLink(token: string): string {
-    const origin =
-      this.config.get<string>('corsOrigin') ?? 'http://localhost:3000';
-    return `${origin.replace(/\/$/, '')}/onboarding/${token}`;
+    const origin = this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
+    return `${origin}/onboarding/${token}`;
   }
 
   private async requireCandidate(candidateId: string, userId: string) {

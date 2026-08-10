@@ -3,6 +3,8 @@ export interface AppConfig {
   port: number;
   apiPrefix: string;
   corsOrigin: string;
+  /** Single public-facing frontend URL used to build links in emails/notifications. */
+  frontendUrl: string;
   jwt: {
     secret: string;
     expiresIn: string;
@@ -55,6 +57,7 @@ export default (): AppConfig => ({
   port: parseInt(process.env.PORT ?? '8000', 10),
   apiPrefix: process.env.API_PREFIX ?? 'api',
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  frontendUrl: (process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN?.split(',')[0] ?? 'http://localhost:3000').replace(/\/$/, ''),
   jwt: {
     secret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
     expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
