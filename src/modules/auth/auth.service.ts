@@ -91,7 +91,12 @@ export class AuthService {
   async login(dto: LoginDto): Promise<LoginResult> {
     const identifier = dto.identifier.trim();
     const user = await this.prisma.user.findFirst({
-      where: { OR: [{ email: identifier }, { employeeCode: identifier }] },
+      where: {
+        OR: [
+          { email: { equals: identifier, mode: 'insensitive' } },
+          { employeeCode: identifier },
+        ],
+      },
     });
 
     if (!user || user.status !== 'ACTIVE') {
