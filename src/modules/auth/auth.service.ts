@@ -38,6 +38,7 @@ export interface UserResponse {
   employeeCode: string;
   name: string;
   email: string | null;
+  phone: string | null;
   role: string;
   jobTitle: string | null;
   department: string | null;
@@ -367,12 +368,26 @@ export class AuthService {
       employeeCode: user.employeeCode,
       name: user.name,
       email: user.email,
+      phone: user.phone,
       role: user.role.toLowerCase(),
       jobTitle: profile?.designation ?? null,
       department: profile?.department ?? null,
       unit: profile?.unitName ?? null,
       avatarUrl: buildAvatarUrl(user.id, user.avatarFileId),
     };
+  }
+
+  async updateProfile(
+    userId: string,
+    dto: { name?: string; email?: string; phone?: string },
+  ): Promise<UserResponse> {
+    const data: { name?: string; email?: string; phone?: string } = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.email !== undefined) data.email = dto.email;
+    if (dto.phone !== undefined) data.phone = dto.phone;
+
+    const user = await this.prisma.user.update({ where: { id: userId }, data });
+    return this.buildUser(user);
   }
 }
 
