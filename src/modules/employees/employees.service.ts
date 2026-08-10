@@ -168,6 +168,37 @@ export class EmployeesService {
     return view;
   }
 
+  async update(id: string, dto: { name?: string; phone?: string; email?: string; gender?: string; dateOfBirth?: string }) {
+    const emp = await this.prisma.employee.findUnique({ where: { id }, include: { user: true } });
+    if (!emp) throw new NotFoundException('Employee not found');
+
+    await this.prisma.$transaction([
+      // User fields
+      ...(dto.name !== undefined || dto.phone !== undefined || dto.email !== undefined
+        ? [this.prisma.user.update({
+            where: { id: emp.userId },
+            data: {
+              ...(dto.name !== undefined ? { name: dto.name } : {}),
+              ...(dto.phone !== undefined ? { phone: dto.phone } : {}),
+              ...(dto.email !== undefined ? { email: dto.email } : {}),
+            },
+          })]
+        : []),
+      // Employee fields
+      ...(dto.gender !== undefined || dto.dateOfBirth !== undefined
+        ? [this.prisma.employee.update({
+            where: { id },
+            data: {
+              ...(dto.gender !== undefined ? { gender: dto.gender } : {}),
+              ...(dto.dateOfBirth !== undefined ? { dateOfBirth: new Date(dto.dateOfBirth) } : {}),
+            },
+          })]
+        : []),
+    ]);
+
+    return this.findOne(id);
+  }
+
   private toView(
     row: Prisma.EmployeeGetPayload<{ include: { user: true } }>,
   ): EmployeeView {
