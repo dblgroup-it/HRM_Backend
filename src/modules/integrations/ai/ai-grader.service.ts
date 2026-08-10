@@ -66,14 +66,29 @@ export interface ScreenInput {
   education: string;
   experience: string;
   others?: string | null;
+  placeOfPosting?: string | null;
   responsibilities?: string[];
   requirements?: string[];
+}
+
+export interface MatchCriterion {
+  label: string;
+  /** Weight as % of the total score (all criteria weights sum to 100). */
+  weight: number;
+  /** Concise statement of what the role requires for this criterion. */
+  requirement: string;
+  /** What the CV shows for this criterion. */
+  applicant: string;
+  /** Points earned (0 – weight). */
+  score: number;
 }
 
 export interface ScreenResult {
   /** 0-100 match against the role. */
   score: number;
   summary: string;
+  /** Per-criterion breakdown used to derive the overall score. */
+  criteria: MatchCriterion[];
   /** Contact details detected in the CV (null if not found / not valid). */
   email: string | null;
   phone: string | null;
@@ -180,6 +195,24 @@ export interface DraftRequisitionResult {
   )[];
   /** Short note on what the AI assumed / could not determine. */
   notes: string;
+}
+
+export interface TalentBankSearchInput {
+  query: string;
+  candidates: {
+    id: string;
+    name: string;
+    role: string;
+    unit: string;
+    department: string;
+    matchSummary: string;
+    matchScore: number | null;
+  }[];
+}
+
+export interface TalentBankSearchOutput {
+  results: { id: string; relevance: number; reason: string }[];
+  summary: string;
 }
 
 export interface RouteCvInput {
@@ -442,6 +475,7 @@ Use clear field names that match the document, for example: Full Name, Document 
       return {
         score: 0,
         summary: `CV format (${input.cvMimeType}) can't be read by AI — please review manually.`,
+        criteria: [],
         email: null,
         phone: null,
       };
@@ -459,22 +493,38 @@ Use clear field names that match the document, for example: Full Name, Document 
       arr && arr.length
         ? arr.map((x) => `- ${x}`).join('\n')
         : '(none specified)';
-    return `You are a recruitment screening assistant. Read the attached candidate CV and judge how well it fits the role below. Be objective and evidence-based.
+    return `You are a recruitment screening assistant. Read the attached candidate CV and score it against the role below. Be objective and evidence-based.
 
 ROLE: ${i.designation}
 Job description: ${i.jobDescription || '(none)'}
 Required education: ${i.education}
 Required experience: ${i.experience}
+Place of posting: ${i.placeOfPosting?.trim() || '(not specified)'}
 Other requirements: ${i.others?.trim() || '(none)'}
 Key responsibilities:
 ${list(i.responsibilities)}
 Key requirements:
 ${list(i.requirements)}
 
-Also extract the candidate's contact email and mobile/phone number if they appear anywhere in the CV (else leave them empty).
+Also extract the candidate's contact email and mobile/phone number if visible anywhere in the CV (else leave empty).
 
-Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experience, education, skills and domain. Respond with ONLY a compact JSON object and nothing else:
-{"score": <integer 0-100>, "summary": "<one or two sentences: key strengths and any gaps vs. the role>", "email": "<email found in the CV or empty>", "phone": "<phone/mobile found in the CV or empty>"}`;
+SCORING — evaluate the candidate using ONLY the standard criteria below. Use the EXACT label names shown.
+
+ALWAYS include these 3:
+1. "Experience" — compare required experience (type, years, industry context) to what the CV demonstrates
+2. "Education" — compare the required qualification/degree to the candidate's academic background
+3. "Skills & Domain" — how well do the candidate's technical and functional skills match the role's requirements and job description
+
+Include these ONLY when the role or CV provides enough information to judge:
+4. "Industry Type" — if the role requires specific industry experience (e.g. textile, garments, pharma, FMCG, manufacturing), compare to the candidate's work history; skip if industry is not relevant to this role
+5. "Location" — if a specific place of posting is given, check whether the candidate's current location or stated preference aligns; skip if location is unspecified
+6. "Gender" — ONLY if gender is explicitly required in "Other requirements"; skip entirely if "Any" or not mentioned
+7. "Expected Salary" — ONLY if the CV explicitly states a salary expectation AND the role's requirements/JD mentions a salary range; skip if either is absent
+
+Select 4–6 criteria total. Assign integer weights that sum to exactly 100. Experience + Education together must carry at least 50% of the total weight. Award each criterion a score from 0 up to its weight (partial credit is fine). The overall score is the sum of all criterion scores.
+
+Respond with ONLY a compact JSON object and nothing else:
+{"score":<integer 0-100>,"summary":"<two sentences: key strengths and main gaps>","email":"<email or empty>","phone":"<phone or empty>","criteria":[{"label":"<exact label from the list above>","weight":<integer>,"requirement":"<concise role requirement for this criterion>","applicant":"<what the CV actually shows for this criterion>","score":<integer 0-weight>}]}`;
   }
 
   private parseScreen(raw: string): ScreenResult {
@@ -485,6 +535,7 @@ Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experien
         summary?: unknown;
         email?: unknown;
         phone?: unknown;
+        criteria?: unknown;
       };
       const score = Math.max(
         0,
@@ -497,9 +548,32 @@ Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experien
       const phoneRaw = String(obj.phone ?? '').trim();
       const phone =
         phoneRaw.replace(/\D/g, '').length >= 7 ? phoneRaw.slice(0, 40) : null;
+
+      const criteria: MatchCriterion[] = Array.isArray(obj.criteria)
+        ? (obj.criteria as unknown[])
+            .map((c) => {
+              const o = c as Record<string, unknown>;
+              const weight = Math.max(0, Math.round(Number(o.weight) || 0));
+              const sc = Math.max(
+                0,
+                Math.min(weight, Math.round(Number(o.score) || 0)),
+              );
+              return {
+                label: String(o.label ?? '').slice(0, 60),
+                weight,
+                requirement: String(o.requirement ?? '').slice(0, 200),
+                applicant: String(o.applicant ?? '').slice(0, 200),
+                score: sc,
+              };
+            })
+            .filter((c) => c.label && c.weight > 0)
+            .slice(0, 8)
+        : [];
+
       return {
         score,
         summary: String(obj.summary ?? '').slice(0, 500),
+        criteria,
         email,
         phone,
       };
@@ -507,7 +581,7 @@ Score the overall fit from 0 to 100 (100 = ideal match). Weigh relevant experien
       this.logger.warn(
         `Could not parse AI screening output: ${raw.slice(0, 120)}`,
       );
-      return { score: 0, summary: '', email: null, phone: null };
+      return { score: 0, summary: '', criteria: [], email: null, phone: null };
     }
   }
 
@@ -761,6 +835,61 @@ Respond with ONLY a compact JSON object and nothing else:
     } catch {
       this.logger.warn(`Could not parse AI routing: ${raw.slice(0, 120)}`);
       return { code: null, confidence: 'low', reason: '' };
+    }
+  }
+
+  /**
+   * Natural-language search over the Talent Bank. Scores each candidate for
+   * relevance to the hiring query and returns ranked results.
+   */
+  async searchTalentBank(input: TalentBankSearchInput): Promise<TalentBankSearchOutput> {
+    if (!this.isConfigured()) throw new ServiceUnavailableException('AI is not configured');
+    const list = input.candidates
+      .map(
+        (c) =>
+          `ID:${c.id} | ${c.name} | Role: ${c.role} | Unit: ${c.unit}${c.department ? ` / ${c.department}` : ''} | Score: ${c.matchScore ?? 'n/a'}% | ${(c.matchSummary ?? '').slice(0, 160)}`,
+      )
+      .join('\n');
+    const prompt = `You are an HR talent search assistant for DBL Group, a Bangladeshi manufacturing company. Search the Talent Bank below and find the best-matched candidates for the hiring query.
+
+HIRING QUERY: "${input.query}"
+
+TALENT BANK (${input.candidates.length} candidates):
+${list}
+
+Analyse the query — extract the role/designation, factory or unit (e.g. JTML = Jinnat Textile Mills), required skills or background — then score each candidate's relevance (0-100). Only include candidates with relevance >= 40. Return up to 10 best matches ranked by relevance.
+
+Respond with ONLY a compact JSON object and nothing else:
+{"summary":"<one sentence on what you found>","results":[{"id":"<candidate id exactly as given>","relevance":<integer 0-100>,"reason":"<one short sentence why this candidate fits the query>"}]}`;
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, 900)
+        : await this.callGemini(prompt);
+    return this.parseTalentBankSearch(raw, input.candidates.map((c) => c.id));
+  }
+
+  private parseTalentBankSearch(raw: string, validIds: string[]): TalentBankSearchOutput {
+    try {
+      const m = raw.match(/\{[\s\S]*\}/);
+      const obj = JSON.parse(m ? m[0] : raw) as { summary?: unknown; results?: unknown };
+      const results = Array.isArray(obj.results)
+        ? (obj.results as unknown[])
+            .map((r) => {
+              const o = r as { id?: unknown; relevance?: unknown; reason?: unknown };
+              return {
+                id: String(o.id ?? '').trim(),
+                relevance: Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))),
+                reason: String(o.reason ?? '').slice(0, 300),
+              };
+            })
+            .filter((r) => validIds.includes(r.id) && r.relevance >= 40)
+            .sort((a, b) => b.relevance - a.relevance)
+            .slice(0, 10)
+        : [];
+      return { results, summary: String(obj.summary ?? '').slice(0, 400) };
+    } catch {
+      this.logger.warn(`Could not parse talent bank search: ${raw.slice(0, 120)}`);
+      return { results: [], summary: '' };
     }
   }
 

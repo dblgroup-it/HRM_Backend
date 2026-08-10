@@ -30,6 +30,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AutomationModule } from './modules/automation/automation.module';
+import { BoardModule } from './modules/board/board.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { AutomationModule } from './modules/automation/automation.module';
     RbacModule,
     RealtimeModule,
     AutomationModule,
+    BoardModule,
   ],
   controllers: [HealthController],
   providers: [

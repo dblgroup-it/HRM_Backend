@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -438,11 +439,16 @@ export class CandidatesService {
     return { ok: true };
   }
 
-  /** Suitable-but-not-selected candidates kept for future recall (talent pool). */
+  /** Talent Bank — finalist/selected candidates auto-collected for future recall. */
   async listTalentPool(userId: string) {
     await this.requireRecruitmentRole(userId);
     const rows = await this.prisma.candidate.findMany({
-      where: { talentPool: true, deletedAt: null },
+      where: {
+        talentPool: true,
+        deletedAt: null,
+        // Onboarding started = HR has selected them to join — remove from Talent Bank.
+        onboarding: null,
+      },
       include: {
         requisition: {
           select: {
@@ -466,6 +472,59 @@ export class CandidatesService {
         department: c.requisition.department,
       },
     }));
+  }
+
+  async aiSearchTalentPool(query: string, userId: string) {
+    await this.requireRecruitmentRole(userId);
+    if (!query?.trim()) return { results: [], summary: '', query: '' };
+
+    const rows = await this.prisma.candidate.findMany({
+      where: { talentPool: true, deletedAt: null, onboarding: null },
+      include: {
+        requisition: {
+          select: { id: true, code: true, designation: true, unitFactory: true, department: true },
+        },
+      },
+      orderBy: { matchScore: 'desc' },
+      take: 120,
+    });
+
+    if (rows.length === 0) return { results: [], summary: 'Talent Bank is empty.', query };
+
+    const aiResult = await this.ai.searchTalentBank({
+      query,
+      candidates: rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        role: c.requisition.designation,
+        unit: c.requisition.unitFactory ?? '',
+        department: c.requisition.department ?? '',
+        matchSummary: c.matchSummary ?? '',
+        matchScore: c.matchScore,
+      })),
+    });
+
+    const byId = new Map(rows.map((c) => [c.id, c]));
+    const results = aiResult.results
+      .map((r) => {
+        const c = byId.get(r.id);
+        if (!c) return null;
+        return {
+          ...serializeCandidate(c),
+          requisition: {
+            id: c.requisition.id,
+            code: c.requisition.code,
+            designation: c.requisition.designation,
+            unit: c.requisition.unitFactory,
+            department: c.requisition.department,
+          },
+          relevance: r.relevance,
+          reason: r.reason,
+        };
+      })
+      .filter(Boolean);
+
+    return { results, summary: aiResult.summary, query };
   }
 
   /**
@@ -654,6 +713,8 @@ export class CandidatesService {
         );
       }
       data.stage = stage;
+      // Finalist / selected → auto-add to Talent Bank.
+      if (stage === 'FINAL' || stage === 'SELECTED') data.talentPool = true;
       // When a candidate is selected, auto-reject all remaining applied candidates.
       if (stage === 'SELECTED') {
         await this.prisma.candidate.updateMany({
@@ -1007,6 +1068,7 @@ export class CandidatesService {
       education: cand.requisition.education,
       experience: cand.requisition.experience,
       others: cand.requisition.others,
+      placeOfPosting: cand.requisition.placeOfPosting,
       responsibilities: Array.isArray(rp?.responsibilities)
         ? rp?.responsibilities
         : undefined,
@@ -1018,6 +1080,7 @@ export class CandidatesService {
     const data: Prisma.CandidateUpdateInput = {
       matchScore: result.score,
       matchSummary: result.summary || null,
+      matchDetails: result.criteria.length > 0 ? (result.criteria as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
       screenedAt: new Date(),
     };
     // Backfill contact details the AI found in the CV — only when we don't
@@ -1261,6 +1324,43 @@ export class CandidatesService {
     }
   }
 
+  /** Copy a talent-bank candidate into a target requisition's pipeline. */
+  async copyToRequisition(candidateId: string, requisitionId: string, userId: string) {
+    await this.requireRecruitmentRole(userId);
+
+    const source = await this.prisma.candidate.findUnique({ where: { id: candidateId } });
+    if (!source) throw new NotFoundException('Candidate not found');
+
+    const req = await this.prisma.requisition.findUnique({ where: { id: requisitionId } });
+    if (!req) throw new NotFoundException('Requisition not found');
+    if (!['APPROVED', 'POSTED'].includes(req.status)) {
+      throw new BadRequestException('Target requisition must be approved or posted');
+    }
+
+    if (source.email) {
+      const dup = await this.prisma.candidate.findFirst({
+        where: { requisitionId, email: source.email },
+      });
+      if (dup) throw new ConflictException('A candidate with this email is already in that pipeline');
+    }
+
+    const copy = await this.prisma.candidate.create({
+      data: {
+        requisitionId,
+        name: source.name,
+        email: source.email,
+        phone: source.phone,
+        source: 'manual',
+        stage: 'APPLIED' as CandidateStage,
+        cvFileId: source.cvFileId,
+        cvUrl: source.cvUrl,
+        notes: `Sourced from Talent Bank`,
+      },
+    });
+
+    return serializeCandidate(copy);
+  }
+
   /** Global recruitment role check (for cross-requisition views like talent pool). */
   private async requireRecruitmentRole(userId: string) {
     const ok =
@@ -1272,7 +1372,7 @@ export class CandidatesService {
       );
     if (!ok) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can view the talent pool',
+        'Only Corporate HR, CHRO or a super user can view the Talent Bank',
       );
     }
   }
@@ -1426,6 +1526,7 @@ function serializeCandidate(c: CandidateRow) {
     salaryExpectation: c.salaryExpectation ?? null,
     matchScore: c.matchScore,
     matchSummary: c.matchSummary ?? '',
+    matchDetails: Array.isArray(c.matchDetails) ? c.matchDetails : null,
     screenedAt: c.screenedAt ? c.screenedAt.toISOString() : null,
     viewedAt: c.viewedAt ? c.viewedAt.toISOString() : null,
     talentPool: c.talentPool,

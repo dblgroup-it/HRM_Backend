@@ -246,8 +246,12 @@ model User {
   rolesCreated         Role[]             @relation("RoleCreatedBy")
   rolesUpdated         Role[]             @relation("RoleUpdatedBy")
   roleAssignmentsGiven RoleAssignment[]   @relation("RoleAssignedBy")
-  interviewRoundsCreated InterviewRound[] @relation("InterviewRoundCreatedBy")
-  candidatesCreated      Candidate[]      @relation("CandidateCreatedBy")
+  interviewRoundsCreated   InterviewRound[]    @relation("InterviewRoundCreatedBy")
+  candidatesCreated        Candidate[]         @relation("CandidateCreatedBy")
+  boardGroupMemberships    BoardGroupMember[]
+  boardApprovalsRequested  BoardApproval[]     @relation("BoardApprovalRequester")
+  boardApprovalsHrApproved BoardApproval[]     @relation("BoardApprovalHrApprover")
+  boardApprovalVotes       BoardApprovalVote[]
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
@@ -507,6 +511,7 @@ model Candidate {
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
   matchScore    Float?          @map("match_score")
   matchSummary  String?        @map("match_summary")
+  matchDetails  Json?          @map("match_details")
   screenedAt    DateTime?      @map("screened_at")
   viewedAt      DateTime?      @map("viewed_at")
   /// Phase 3: suitable-but-not-selected candidates kept for future recall.
@@ -524,10 +529,11 @@ model Candidate {
   bdjobsApplicantId    String?  @map("bdjobs_applicant_id") @db.VarChar(100)
   /// Bdjobs inbound: the Bdjobs job listing ID this candidate applied to.
   bdjobsJobId          String?  @map("bdjobs_job_id") @db.VarChar(100)
-  interviews    InterviewRound[]
-  examAttempts  ExamAttempt[]
-  onboarding    Onboarding?
-  createdAt     DateTime        @default(now()) @map("created_at")
+  interviews      InterviewRound[]
+  examAttempts    ExamAttempt[]
+  onboarding      Onboarding?
+  boardApprovals  BoardApproval[]
+  createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
   /// Soft delete — null means active; set to timestamp when "deleted".
   deletedAt     DateTime?      @map("deleted_at")
@@ -811,6 +817,75 @@ model RequisitionActivity {
 // ---------------------------------------------------------------------------
 // Integration bookkeeping
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Board approval
+// ---------------------------------------------------------------------------
+
+enum BoardApprovalStatus {
+  pending
+  approved
+}
+
+enum BoardVoteStatus {
+  pending
+  approved
+}
+
+model BoardGroup {
+  id          String             @id @default(cuid())
+  name        String             @db.VarChar(150)
+  description String?            @db.VarChar(500)
+  members     BoardGroupMember[]
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  @@map("board_groups")
+}
+
+model BoardGroupMember {
+  groupId String     @map("group_id")
+  group   BoardGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId  String     @map("user_id")
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addedAt DateTime   @default(now()) @map("added_at")
+
+  @@id([groupId, userId])
+  @@map("board_group_members")
+}
+
+model BoardApproval {
+  id               String              @id @default(cuid())
+  candidateId      String              @map("candidate_id")
+  candidate        Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requestedById    String              @map("requested_by_id")
+  requestedBy      User                @relation("BoardApprovalRequester", fields: [requestedById], references: [id])
+  status           BoardApprovalStatus @default(pending)
+  votes            BoardApprovalVote[]
+  hrApprovedById   String?             @map("hr_approved_by_id")
+  hrApprovedBy     User?               @relation("BoardApprovalHrApprover", fields: [hrApprovedById], references: [id], onDelete: SetNull)
+  hrApprovalNote   String?             @db.VarChar(500) @map("hr_approval_note")
+  hrApprovedAt     DateTime?           @map("hr_approved_at")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  @@map("board_approvals")
+}
+
+model BoardApprovalVote {
+  id              String          @id @default(cuid())
+  boardApprovalId String          @map("board_approval_id")
+  boardApproval   BoardApproval   @relation(fields: [boardApprovalId], references: [id], onDelete: Cascade)
+  userId          String          @map("user_id")
+  user            User            @relation(fields: [userId], references: [id])
+  token           String          @unique @db.VarChar(64)
+  tokenExpiresAt  DateTime        @map("token_expires_at")
+  status          BoardVoteStatus @default(pending)
+  notes           String?
+  respondedAt     DateTime?       @map("responded_at")
+
+  @@map("board_approval_votes")
+}
 
 model SyncLog {
   id         String    @id @default(cuid())

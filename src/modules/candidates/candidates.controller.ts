@@ -49,6 +49,14 @@ export class CandidatesController {
     return this.candidates.listTalentPool(user.id);
   }
 
+  @Post('candidates/talent-pool/search')
+  searchTalentPool(
+    @Body() body: { query: string },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.candidates.aiSearchTalentPool(body.query, user.id);
+  }
+
   @Get('requisitions/:reqId/candidates')
   list(
     @Param('reqId') reqId: string,
@@ -184,6 +192,15 @@ export class CandidatesController {
   @Delete('candidates/:id')
   remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.candidates.remove(id, user.id);
+  }
+
+  @Post('candidates/:id/copy-to-requisition')
+  copyToRequisition(
+    @Param('id') id: string,
+    @Body() body: { requisitionId: string },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.candidates.copyToRequisition(id, body.requisitionId, user.id);
   }
 
   /** One-time admin fix: share all existing private CV files as "anyone with link". */
