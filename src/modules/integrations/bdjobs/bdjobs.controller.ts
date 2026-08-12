@@ -4,6 +4,8 @@ import {
   Get,
   Headers,
   HttpCode,
+  HttpException,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
@@ -166,8 +168,9 @@ export class BdJobsController {
   /**
    * Inbound webhook — Bdjobs calls this endpoint to push candidates who applied
    * via the Bdjobs portal. No JWT; authenticated by SHA-256 signature in
-   * X-Api-AuthToken. Returns the ZinqHR response contract directly (message
-   * at top level, not wrapped by ResponseInterceptor).
+   * X-Api-AuthToken. Bypasses the global ResponseInterceptor/HttpExceptionFilter
+   * entirely — success AND error bodies are shaped to match Bdjobs' documented
+   * contract exactly: { success, data, message }, nothing else.
    */
   @Public()
   @Throttle({ default: { limit: 120, ttl: 60_000 } })
@@ -178,7 +181,21 @@ export class BdJobsController {
     @Headers('x-api-authtoken') authToken: string | undefined,
     @Res() res: Response,
   ): Promise<void> {
-    const result = await this.bdjobs.receiveCandidate(dto, authToken);
-    res.json(result);
+    try {
+      const result = await this.bdjobs.receiveCandidate(dto, authToken);
+      res.json(result);
+    } catch (err) {
+      const status =
+        err instanceof HttpException
+          ? err.getStatus()
+          : HttpStatus.INTERNAL_SERVER_ERROR;
+      const body = err instanceof HttpException ? err.getResponse() : null;
+      const message =
+        typeof body === 'string'
+          ? body
+          : ((body as { message?: string })?.message ??
+            (err instanceof Error ? err.message : 'Unexpected server error'));
+      res.status(status).json({ success: false, data: null, message });
+    }
   }
 }
