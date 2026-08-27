@@ -424,6 +424,14 @@ export class BdJobsService {
       s.publicApplyBaseUrl ||
       this.config.get<string>('frontendUrl') ||
       'http://localhost:3000';
+    if (f.applyOnline && origin.includes('localhost')) {
+      // Silent misconfiguration would otherwise post a real, live job ad to
+      // BDJobs with an apply link nobody outside this machine can reach — log
+      // loudly rather than let it slip through unnoticed.
+      this.logger.error(
+        `BDJobs applyUrl resolved to a localhost origin (${origin}) — set publicApplyBaseUrl in Configuration → Integrations → BDJobs, or FRONTEND_URL, before posting live jobs.`,
+      );
+    }
     const applyUrl = f.applyOnline
       ? `${origin.split(',')[0].replace(/\/$/, '')}/apply/${req.id}`
       : '';

@@ -1,0 +1,101 @@
+# DBL HRM — production nginx config (Windows server, C:\nginx\conf\nginx.conf)
+#
+# This is a documented copy of the working config — the live one on the
+# server is NOT version-controlled, which is exactly how a missing
+# /socket.io/ block once shipped unnoticed: without it, EVERY websocket
+# handshake falls through to the SPA fallback below (try_files ... /index.html)
+# and gets back an HTML page instead of a socket.io upgrade response, so
+# realtime silently never connects for any user, with no error visible
+# anywhere except an open ticket that says "notifications aren't showing up."
+#
+# The two things that must both be true, always:
+#   1. The /socket.io/ location block below exists and comes before (or
+#      alongside, nginx matches longest-prefix first regardless of file
+#      order — the point is it must exist at all) the SPA catch-all.
+#   2. It sets Upgrade/Connection headers and proxy_http_version 1.1 — a
+#      plain proxy_pass without these silently downgrades the WebSocket
+#      upgrade to a normal HTTP request, which socket.io's server rejects.
+#
+# Adjust the paths below (dist root, cert paths, port) for this server, then
+# keep this file in sync with C:\nginx\conf\nginx.conf whenever either changes.
+
+worker_processes  auto;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+    keepalive_timeout  65;
+
+    server {
+        listen 80;
+        server_name talenthub.dbl-group.com;
+        # Redirect all plain HTTP to HTTPS.
+        return 301 https://$host$request_uri;
+    }
+
+    server {
+        listen 443 ssl;
+        server_name talenthub.dbl-group.com;
+
+        # --- TLS — adjust to this server's actual certificate paths ---
+        ssl_certificate      "C:/nginx/ssl/talenthub.dbl-group.com.crt";
+        ssl_certificate_key  "C:/nginx/ssl/talenthub.dbl-group.com.key";
+        ssl_protocols TLSv1.2 TLSv1.3;
+
+        # --- Frontend SPA — nginx serves the built static files directly ---
+        # Must point at HRM_Frontend/dist (see scripts/deploy.sh, which
+        # atomically swaps a fresh build into this exact directory).
+        root "C:/apps/DBL-HRM/HRM_Frontend/dist";
+        index index.html;
+
+        # --- Backend API ---
+        location /api/ {
+            proxy_pass http://127.0.0.1:4000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # --- Socket.IO (realtime) — THE block that was missing ---
+        # NestJS's WebSocketGateway mounts socket.io at the server root
+        # (/socket.io/), NOT under /api/ — the global "api" prefix only
+        # applies to HTTP controllers. The frontend derives this from
+        # API_BASE_URL by stripping the trailing /api (see
+        # HRM_Frontend/src/app/providers/RealtimeProvider.tsx), so it must
+        # match here too.
+        location /socket.io/ {
+            proxy_pass http://127.0.0.1:4000;
+
+            # Required for the WebSocket upgrade handshake — without these,
+            # nginx proxies it as a plain HTTP request, the upgrade silently
+            # fails, and socket.io-client falls back to (or just fails at)
+            # long-polling, which this app does not otherwise rely on.
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Sockets are long-lived — nginx's default read timeout (60s)
+            # would silently kill idle-but-connected clients.
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }
+
+        # --- SPA fallback — every other path serves index.html so client-side
+        # routing (React Router) works on a hard refresh / direct link. This
+        # MUST come after /api/ and /socket.io/ above, or it swallows them. ---
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}

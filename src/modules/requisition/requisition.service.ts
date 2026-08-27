@@ -971,31 +971,44 @@ export class RequisitionService {
     updated: Awaited<ReturnType<typeof this.load>>,
     raisedById: string | null,
   ): Promise<void> {
-    const drive = await this.recruitment.ensureWorkspace(updated);
-    if (drive) {
-      await this.prisma.requisition.update({
+    try {
+      const drive = await this.recruitment.ensureWorkspace(updated);
+      if (drive) {
+        await this.prisma.requisition.update({
+          where: { id: updated.id },
+          data: { drive: drive as unknown as Prisma.InputJsonValue },
+        });
+      }
+      // Re-fetch with the latest drive info and broadcast to all connected clients.
+      const fresh = await this.prisma.requisition.findUnique({
         where: { id: updated.id },
-        data: { drive: drive as unknown as Prisma.InputJsonValue },
+        include: reqWithRelations,
       });
-    }
-    // Re-fetch with the latest drive info and broadcast to all connected clients.
-    const fresh = await this.prisma.requisition.findUnique({
-      where: { id: updated.id },
-      include: reqWithRelations,
-    });
-    if (!fresh) return;
-    const serialized = serialize(fresh);
-    this.notifications.broadcastChange('requisition', updated.id, {
-      action: 'posted',
-      record: serialized,
-    });
-    if (raisedById) {
-      await this.notifications.notify(raisedById, {
-        type: 'requisition_posted',
-        title: 'Requisition posted',
-        message: `${updated.code} · ${updated.designation} is now published to candidate sources.`,
-        link: `/requisitions/${updated.id}`,
+      if (!fresh) return;
+      const serialized = serialize(fresh);
+      this.notifications.broadcastChange('requisition', updated.id, {
+        action: 'posted',
+        record: serialized,
       });
+      if (raisedById) {
+        await this.notifications.notify(raisedById, {
+          type: 'requisition_posted',
+          title: 'Requisition posted',
+          message: `${updated.code} · ${updated.designation} is now published to candidate sources.`,
+          link: `/requisitions/${updated.id}`,
+        });
+      }
+    } catch (err) {
+      // Without this, a failure here left `requisition.drive` null forever —
+      // the frontend's "working" spinner (RequisitionDetailPage.drivePhase)
+      // has nothing else to watch and would spin indefinitely. Tell any open
+      // clients so they can show an error + retry instead. The caller's own
+      // .catch() still does the actual warning log — unchanged.
+      this.notifications.broadcastRaw('requisition:drive_failed', {
+        id: updated.id,
+        message: 'Could not set up the Google Drive workspace automatically.',
+      });
+      throw err;
     }
   }
 

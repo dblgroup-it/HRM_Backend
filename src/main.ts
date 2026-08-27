@@ -27,6 +27,17 @@ function validateEnv(): void {
         'CORS_ORIGIN must be your frontend origin(s) in production (not "*")',
       );
     }
+    // Without this, a missing env var silently falls back to a localhost
+    // callback (see configuration.ts) — Google would redirect the OAuth
+    // consent flow to a URL nobody in production can reach.
+    if (
+      !process.env.GOOGLE_OAUTH_REDIRECT_URI ||
+      process.env.GOOGLE_OAUTH_REDIRECT_URI.includes('localhost')
+    ) {
+      errors.push(
+        'GOOGLE_OAUTH_REDIRECT_URI must be set to your production callback URL (not localhost) in production',
+      );
+    }
   }
 
   if (errors.length) {

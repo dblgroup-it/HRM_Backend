@@ -1,4 +1,4 @@
-// PM2 ecosystem — 6-worker cluster for DBL HRM backend (6-core server)
+// PM2 ecosystem for the DBL HRM backend.
 // Usage:
 //   pm2 start ecosystem.config.js          # start / restart
 //   pm2 reload ecosystem.config.js         # zero-downtime reload
@@ -13,9 +13,15 @@ module.exports = {
       name: 'hrm-backend',
       script: './dist/main.js',
 
-      // Cluster mode: one worker per CPU core
-      instances: 6,
-      exec_mode: 'cluster',
+      // DO NOT raise `instances` / switch to exec_mode: 'cluster' without
+      // first wiring a Socket.IO cluster adapter (e.g. @socket.io/cluster-adapter
+      // + a custom IoAdapter in main.ts) AND solving sticky sessions. Right now
+      // EventsGateway.broadcast() is a plain `this.server.emit()`, which only
+      // reaches clients connected to the SAME worker — under cluster mode most
+      // users would silently stop receiving requisition:changed, candidate:changed
+      // and notification events. Single instance avoids this entirely.
+      instances: 1,
+      exec_mode: 'fork',
 
       // Restart a worker that leaks past 1 GB (safety net)
       max_memory_restart: '1G',
