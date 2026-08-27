@@ -12,6 +12,16 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
+import { DriveService } from '../integrations/google/drive.service';
+import { RecruitmentService } from '../candidates/recruitment.service';
+
+/** Multer file subset we use for the HR-approval attachment upload. */
+export interface UploadedAttachment {
+  originalname: string;
+  mimetype: string;
+  buffer: Buffer;
+  size: number;
+}
 
 @Injectable()
 export class BoardService {
@@ -23,6 +33,8 @@ export class BoardService {
     private readonly notifications: NotificationsService,
     private readonly mail: MailService,
     private readonly config: ConfigService,
+    private readonly drive: DriveService,
+    private readonly recruitment: RecruitmentService,
   ) {}
 
   /* ─── Board Groups ─── */
@@ -165,24 +177,68 @@ export class BoardService {
     return serializeApproval(approval);
   }
 
-  async hrApprove(candidateId: string, userId: string, note?: string) {
+  async hrApprove(
+    candidateId: string,
+    userId: string,
+    note: string | undefined,
+    file: UploadedAttachment | undefined,
+  ) {
     await this.requireRecruitmentRole(userId);
 
-    const candidate = await this.prisma.candidate.findUnique({ where: { id: candidateId } });
+    if (!file) {
+      throw new BadRequestException(
+        'Attach a document justifying the approval (a note alone is not enough).',
+      );
+    }
+
+    const candidate = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      include: { requisition: true },
+    });
     if (!candidate) throw new NotFoundException('Candidate not found');
     const ob = await this.prisma.onboarding.findUnique({ where: { candidateId } });
     if (!ob) throw new BadRequestException('Candidate is not in the onboarding stage');
 
+    const ws = await this.recruitment.ensureWorkspace(candidate.requisition);
+    if (!ws) {
+      throw new BadRequestException(
+        'Document upload is temporarily unavailable. Please try again later.',
+      );
+    }
+    let uploaded: { id: string; url: string };
+    try {
+      const folder = await this.drive.ensureFolder(
+        `${candidate.name} — Joining Docs`,
+        ws.joiningFolderId,
+      );
+      uploaded = await this.drive.uploadFile(folder, {
+        name: `Board HR Approval — ${file.originalname}`,
+        mimeType: file.mimetype,
+        buffer: file.buffer,
+      });
+      await this.drive.shareAnyoneWithLink(uploaded.id, 'reader');
+    } catch (e) {
+      this.logger.error(`Failed to upload board HR approval attachment: ${(e as Error).message}`);
+      throw new BadRequestException(
+        'Could not upload the attachment. Please try again later.',
+      );
+    }
+
+    const data = {
+      status: 'approved' as const,
+      hrApprovedById: userId,
+      hrApprovalNote: note ?? null,
+      hrApprovalAttachmentFileId: uploaded.id,
+      hrApprovalAttachmentUrl: uploaded.url,
+      hrApprovalAttachmentName: file.originalname,
+      hrApprovedAt: new Date(),
+    };
+
     const existing = await this.prisma.boardApproval.findFirst({ where: { candidateId } });
     if (existing) {
-      await this.prisma.boardApproval.update({
-        where: { id: existing.id },
-        data: { status: 'approved', hrApprovedById: userId, hrApprovalNote: note ?? null, hrApprovedAt: new Date() },
-      });
+      await this.prisma.boardApproval.update({ where: { id: existing.id }, data });
     } else {
-      await this.prisma.boardApproval.create({
-        data: { candidateId, requestedById: userId, status: 'approved', hrApprovedById: userId, hrApprovalNote: note ?? null, hrApprovedAt: new Date() },
-      });
+      await this.prisma.boardApproval.create({ data: { candidateId, requestedById: userId, ...data } });
     }
     return this.getApprovalStatus(candidateId);
   }
@@ -443,6 +499,8 @@ function serializeApproval(approval: {
   requestedBy: { id: string; name: string };
   hrApprovedBy: { id: string; name: string } | null;
   hrApprovalNote: string | null;
+  hrApprovalAttachmentUrl: string | null;
+  hrApprovalAttachmentName: string | null;
   hrApprovedAt: Date | null;
   votes: Array<{
     id: string;
@@ -461,6 +519,8 @@ function serializeApproval(approval: {
     requestedBy: approval.requestedBy,
     hrApprovedBy: approval.hrApprovedBy,
     hrApprovalNote: approval.hrApprovalNote,
+    hrApprovalAttachmentUrl: approval.hrApprovalAttachmentUrl,
+    hrApprovalAttachmentName: approval.hrApprovalAttachmentName,
     hrApprovedAt: approval.hrApprovedAt?.toISOString() ?? null,
     votes: approval.votes.map((v) => ({
       id: v.id,

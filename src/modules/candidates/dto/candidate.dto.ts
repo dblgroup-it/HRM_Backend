@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { CandidateSource } from '@prisma/client';
 import {
   IsBoolean,
@@ -134,6 +134,14 @@ export class UpdateCandidateDto {
   @IsOptional()
   @IsBoolean()
   talentPool?: boolean;
+
+  /** What the candidate actually asked for — updated as it comes up in
+   * interviews, distinct from the application-time figure and from the
+   * company's own proposed salary. Optional. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salaryExpectation?: number | null;
 }
 
 export class EmailCandidateDto {
@@ -153,6 +161,20 @@ export class FlagCandidateDto {
   @MinLength(5)
   @MaxLength(1000)
   reason!: string;
+}
+
+export class CopyToRequisitionDto {
+  @IsString()
+  @MinLength(1)
+  requisitionId!: string;
+
+  // Explicit transform: the global ValidationPipe's implicit conversion coerces
+  // ANY non-empty string (including the literal "false") to `true` via `Boolean(value)`,
+  // which would silently invert this flag — so convert it ourselves before @IsBoolean sees it.
+  @IsOptional()
+  @Transform(({ value }) => (value === undefined ? value : value === true || value === 'true'))
+  @IsBoolean()
+  force?: boolean;
 }
 
 /** Public job-application payload (no auth — submitted from the apply page). */

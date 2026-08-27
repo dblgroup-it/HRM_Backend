@@ -8,12 +8,10 @@ import {
 } from '@nestjs/common';
 import {
   ApprovalDecision,
-  ComputerRequirement,
   EmploymentNature,
   Prisma,
   Priority,
   RequisitionSource,
-  SeatingArrangement,
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -22,15 +20,20 @@ import { OrganogramService } from '../organogram/organogram.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
+import { CandidatesService } from '../candidates/candidates.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
-import { CreateRequisitionDto } from './dto/create-requisition.dto';
+import {
+  CreateRequisitionDto,
+  FacilitiesRequestDto,
+} from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
   PostRequisitionDto,
   QueryRequisitionsDto,
+  UpdateFacilitiesDto,
   UpdateRequisitionDto,
 } from './dto/requisition-actions.dto';
 import { buildChainSteps, synthesizeRoleProfile } from './requisition.workflow';
@@ -55,6 +58,7 @@ export class RequisitionService {
     private readonly permissions: PermissionsService,
     private readonly notifications: NotificationsService,
     private readonly recruitment: RecruitmentService,
+    private readonly candidates: CandidatesService,
     private readonly drive: DriveService,
     private readonly ai: AiGraderService,
     private readonly settings: SettingsService,
@@ -128,9 +132,9 @@ export class RequisitionService {
         education: dto.education,
         experience: dto.experience,
         others: dto.others ?? null,
-        computer: dto.computer.toUpperCase() as ComputerRequirement,
-        computerReason: dto.computerReason ?? null,
-        seating: dto.seating.toUpperCase() as SeatingArrangement,
+        facilities: buildInitialFacilities(
+          dto.facilities,
+        ) as unknown as Prisma.InputJsonValue,
         preferredSources: dto.preferredSources ?? [],
         status: 'PENDING_APPROVAL',
         raisedBy,
@@ -506,6 +510,10 @@ export class RequisitionService {
 
     const updated = await this.notifyAfterAction(id, dto.decision, actorName);
 
+    if (updated.status === 'APPROVED') {
+      this.candidates.syncTalentBankMatchesOnRequisitionEvent(id);
+    }
+
     // Optionally auto-generate the role profile the moment it's fully approved.
     if (updated.status === 'APPROVED' && this.ai.isConfigured()) {
       const cfg = await this.settings.getAiConfig();
@@ -596,6 +604,158 @@ export class RequisitionService {
     actor: { id: string; name: string },
   ) {
     const req = await this.load(id, actor.id);
+    await this.requireCurrentApprover(req, actor.id);
+
+    const nextGrade = dto.grade !== undefined ? dto.grade.trim() || null : undefined;
+    const gradeChanged = nextGrade !== undefined && nextGrade !== req.grade;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (gradeChanged) {
+        await tx.requisitionActivity.create({
+          data: {
+            requisitionId: id,
+            actor: actor.name,
+            action: 'EDITED',
+            note: req.grade
+              ? `Job Grade changed from ${req.grade} to ${nextGrade ?? '—'}`
+              : `Job Grade set to ${nextGrade ?? '—'}`,
+          },
+        });
+      }
+
+      return tx.requisition.update({
+        where: { id },
+        data: {
+          ...(nextGrade !== undefined ? { grade: nextGrade } : {}),
+          ...(dto.requiredPosts !== undefined
+            ? { requiredPosts: dto.requiredPosts }
+            : {}),
+          ...(dto.totalVacantPosts !== undefined
+            ? { totalVacantPosts: dto.totalVacantPosts }
+            : {}),
+          ...(dto.placeOfPosting !== undefined
+            ? { placeOfPosting: dto.placeOfPosting }
+            : {}),
+          ...(dto.vacantDate !== undefined
+            ? { vacantDate: toDate(dto.vacantDate) }
+            : {}),
+          ...(dto.neededDate !== undefined
+            ? { neededDate: toDate(dto.neededDate) }
+            : {}),
+          ...(dto.priority
+            ? { priority: dto.priority.toUpperCase() as Priority }
+            : {}),
+          ...(dto.employmentNature
+            ? {
+                employmentNature:
+                  dto.employmentNature.toUpperCase() as EmploymentNature,
+              }
+            : {}),
+          ...(dto.contractualPurpose !== undefined
+            ? { contractualPurpose: dto.contractualPurpose }
+            : {}),
+          ...(dto.jobDescription !== undefined
+            ? { jobDescription: dto.jobDescription }
+            : {}),
+          ...(dto.education !== undefined ? { education: dto.education } : {}),
+          ...(dto.experience !== undefined ? { experience: dto.experience } : {}),
+          ...(dto.others !== undefined ? { others: dto.others } : {}),
+          ...(dto.preferredSources !== undefined
+            ? { preferredSources: dto.preferredSources }
+            : {}),
+        },
+        include: reqWithRelations,
+      });
+    });
+    const serialized = serialize(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'updated',
+      record: serialized,
+    });
+    return serialized;
+  }
+
+  /**
+   * HR confirms or skips one or more of the requisitioner's facility requests
+   * (Laptop/Desktop, Transport, Dormitory, Seating). While the requisition is
+   * awaiting approval, only the current pending approver (Factory HR, SBU
+   * Head, Corporate HR — whoever's turn it is) or a super user may act, same
+   * as `update()`. Once approved, there's no more pending step — so from that
+   * point on Corporate HR / CHRO / super users may keep re-confirming or
+   * changing a decision (e.g. from the Onboarding page, right up to joining).
+   */
+  async updateFacilities(
+    id: string,
+    dto: UpdateFacilitiesDto,
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.load(id, actor.id);
+    await this.requireFacilitiesEditAccess(req, actor.id);
+
+    const current = (req.facilities ?? {}) as unknown as Record<string, FacilityDecision>;
+    const next: Record<string, FacilityDecision> = { ...current };
+    const changes: { key: string; note: string }[] = [];
+    for (const d of dto.decisions) {
+      // Requisitions created before the `facilities` column existed have no
+      // seeded entry for this key — fall back to an empty pending decision
+      // instead of silently skipping (see updateFacilities pre-migration bug).
+      const existing: FacilityDecision =
+        next[d.key] ??
+        ({
+          requested: false,
+          option: null,
+          note: '',
+          status: 'pending',
+          hrNote: '',
+          decidedBy: null,
+          decidedAt: null,
+        } satisfies FacilityDecision);
+      if (existing.status === d.status && (existing.hrNote ?? '') === (d.hrNote ?? '')) {
+        continue; // no-op — don't log or touch decidedBy/decidedAt for an unchanged decision
+      }
+      const verb = d.status === 'confirmed' ? 'Confirmed' : 'Skipped';
+      const label = FACILITY_LABEL[d.key] ?? d.key;
+      changes.push({
+        key: d.key,
+        note:
+          existing.status === 'pending'
+            ? `${verb} ${label}${d.hrNote ? ` — "${d.hrNote}"` : ''}`
+            : `Changed ${label} from ${existing.status} to ${d.status}${d.hrNote ? ` — "${d.hrNote}"` : ''}`,
+      });
+      next[d.key] = {
+        ...existing,
+        status: d.status,
+        hrNote: d.hrNote ?? existing.hrNote ?? '',
+        decidedBy: actor.name,
+        decidedAt: new Date().toISOString(),
+      };
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      for (const c of changes) {
+        await tx.requisitionActivity.create({
+          data: { requisitionId: id, actor: actor.name, action: 'EDITED', note: c.note },
+        });
+      }
+      return tx.requisition.update({
+        where: { id },
+        data: { facilities: next as unknown as Prisma.InputJsonValue },
+        include: reqWithRelations,
+      });
+    });
+    const serialized = serialize(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'updated',
+      record: serialized,
+    });
+    return serialized;
+  }
+
+  /** Requisitions can only be edited/have facilities decided by whoever's turn it currently is. */
+  private async requireCurrentApprover(
+    req: RequisitionFull,
+    actorId: string,
+  ): Promise<void> {
     if (req.status !== 'PENDING_APPROVAL') {
       throw new BadRequestException(
         'Only requisitions awaiting approval can be edited',
@@ -605,7 +765,7 @@ export class RequisitionService {
     if (!current) throw new BadRequestException('No pending step to edit on');
 
     const allowed = await this.permissions.hasRoleForUnitName(
-      actor.id,
+      actorId,
       current.role.toLowerCase(),
       req.unitFactory,
     );
@@ -614,55 +774,25 @@ export class RequisitionService {
         'Only the current approver can edit this requisition',
       );
     }
+  }
 
-    const updated = await this.prisma.requisition.update({
-      where: { id },
-      data: {
-        ...(dto.requiredPosts !== undefined
-          ? { requiredPosts: dto.requiredPosts }
-          : {}),
-        ...(dto.totalVacantPosts !== undefined
-          ? { totalVacantPosts: dto.totalVacantPosts }
-          : {}),
-        ...(dto.placeOfPosting !== undefined
-          ? { placeOfPosting: dto.placeOfPosting }
-          : {}),
-        ...(dto.vacantDate !== undefined
-          ? { vacantDate: toDate(dto.vacantDate) }
-          : {}),
-        ...(dto.neededDate !== undefined
-          ? { neededDate: toDate(dto.neededDate) }
-          : {}),
-        ...(dto.priority
-          ? { priority: dto.priority.toUpperCase() as Priority }
-          : {}),
-        ...(dto.employmentNature
-          ? {
-              employmentNature:
-                dto.employmentNature.toUpperCase() as EmploymentNature,
-            }
-          : {}),
-        ...(dto.contractualPurpose !== undefined
-          ? { contractualPurpose: dto.contractualPurpose }
-          : {}),
-        ...(dto.jobDescription !== undefined
-          ? { jobDescription: dto.jobDescription }
-          : {}),
-        ...(dto.education !== undefined ? { education: dto.education } : {}),
-        ...(dto.experience !== undefined ? { experience: dto.experience } : {}),
-        ...(dto.others !== undefined ? { others: dto.others } : {}),
-        ...(dto.preferredSources !== undefined
-          ? { preferredSources: dto.preferredSources }
-          : {}),
-      },
-      include: reqWithRelations,
-    });
-    const serialized = serialize(updated);
-    this.notifications.broadcastChange('requisition', id, {
-      action: 'updated',
-      record: serialized,
-    });
-    return serialized;
+  /** Facilities stay editable after approval (Corporate HR/CHRO/super), unlike the rest of the requisition's content. */
+  private async requireFacilitiesEditAccess(
+    req: RequisitionFull,
+    actorId: string,
+  ): Promise<void> {
+    if (req.status === 'PENDING_APPROVAL') {
+      await this.requireCurrentApprover(req, actorId);
+      return;
+    }
+    const allowed =
+      (await this.permissions.hasRoleForUnitName(actorId, 'corporate_hr', req.unitFactory)) ||
+      (await this.permissions.hasRoleForUnitName(actorId, 'chro', req.unitFactory));
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Only Corporate HR, CHRO or a super user can change facility decisions after approval',
+      );
+    }
   }
 
   /** Step 3 — generate the AI role profile. Corporate HR owns this step. */
@@ -832,6 +962,7 @@ export class RequisitionService {
         `Drive workspace setup failed for ${updated.code}: ${(err as Error).message}`,
       ),
     );
+    this.candidates.syncTalentBankMatchesOnRequisitionEvent(id);
 
     return serialize(updated);
   }
@@ -895,6 +1026,16 @@ export class RequisitionService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
+    // Same as candidate CVs — the folder itself stays private, so each file
+    // needs its own "anyone with the link" grant to be viewable without
+    // being signed in as the recruitment account.
+    this.drive
+      .shareAnyoneWithLink(uploaded.id, 'reader')
+      .catch((err) =>
+        this.logger.warn(
+          `Attachment share failed for ${uploaded.id}: ${(err as Error).message}`,
+        ),
+      );
     const attachments = [
       ...readAttachments(req),
       {
@@ -1053,6 +1194,7 @@ function serialize(req: RequisitionFull) {
     id: req.id,
     code: req.code,
     designation: req.designation,
+    grade: req.grade ?? null,
     requirementType: low(req.requirementType),
     source: low(req.source),
     requiredPosts: req.requiredPosts,
@@ -1070,9 +1212,7 @@ function serialize(req: RequisitionFull) {
     education: req.education,
     experience: req.experience,
     others: req.others ?? '',
-    computer: low(req.computer),
-    computerReason: req.computerReason ?? '',
-    seating: low(req.seating),
+    facilities: req.facilities ?? null,
     preferredSources: req.preferredSources,
     status: low(req.status),
     approvalChain: req.approvalSteps.map((s) => ({
@@ -1106,6 +1246,46 @@ function toDate(value?: string): Date | null {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** One facility line item: the requisitioner's request + HR's confirm/skip decision. */
+export interface FacilityDecision {
+  requested: boolean;
+  option: string | null;
+  note: string;
+  status: 'pending' | 'confirmed' | 'skipped';
+  hrNote: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+}
+
+export const FACILITY_KEYS = ['laptopDesktop', 'transport', 'dormitory', 'seating'] as const;
+
+export const FACILITY_LABEL: Record<string, string> = {
+  laptopDesktop: 'Laptop / Desktop',
+  transport: 'Transport Facility',
+  dormitory: 'Dormitory Facility',
+  seating: 'Seating Arrangement',
+};
+
+/** Seed the facilities JSON from the requisitioner's create-time input — HR hasn't acted yet. */
+function buildInitialFacilities(
+  dto: FacilitiesRequestDto,
+): Record<string, FacilityDecision> {
+  const result: Record<string, FacilityDecision> = {};
+  for (const key of FACILITY_KEYS) {
+    const input = dto[key];
+    result[key] = {
+      requested: input?.requested ?? false,
+      option: input?.option ?? null,
+      note: input?.note ?? '',
+      status: 'pending',
+      hrNote: '',
+      decidedBy: null,
+      decidedAt: null,
+    };
+  }
+  return result;
 }
 
 interface RequisitionAttachment {

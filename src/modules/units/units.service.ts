@@ -113,6 +113,7 @@ export class UnitsService {
         designation: dto.designation,
         section: dto.section?.trim() || null,
         category: dto.category ?? 'OFFICER',
+        grade: dto.grade?.trim() || null,
         sanctioned: dto.sanctioned,
         filled: dto.filled ?? 0,
         createdById: userId,
@@ -123,6 +124,7 @@ export class UnitsService {
           ? { section: dto.section.trim() || null }
           : {}),
         category: dto.category ?? 'OFFICER',
+        ...(dto.grade !== undefined ? { grade: dto.grade.trim() || null } : {}),
         sanctioned: dto.sanctioned,
         filled: dto.filled ?? 0,
         updatedById: userId,
@@ -143,6 +145,7 @@ export class UnitsService {
             ? { section: dto.section.trim() || null }
             : {}),
           ...(dto.category !== undefined ? { category: dto.category } : {}),
+          ...(dto.grade !== undefined ? { grade: dto.grade.trim() || null } : {}),
           ...(dto.sanctioned !== undefined
             ? { sanctioned: dto.sanctioned }
             : {}),

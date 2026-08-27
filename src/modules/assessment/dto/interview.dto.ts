@@ -101,7 +101,7 @@ export class BulkScheduleInterviewDto {
 }
 
 export class SubmitEvaluationDto {
-  /** { rubricCriterionId: score } */
+  /** { criterionKey: score } against the fixed 10-criteria set. */
   @IsObject()
   scores!: Record<string, number>;
 

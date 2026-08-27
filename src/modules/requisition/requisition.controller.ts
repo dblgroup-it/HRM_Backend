@@ -25,6 +25,7 @@ import {
   DraftRequisitionDto,
   PostRequisitionDto,
   QueryRequisitionsDto,
+  UpdateFacilitiesDto,
   UpdateRequisitionDto,
   UpdateRoleProfileDto,
 } from './dto/requisition-actions.dto';
@@ -75,6 +76,19 @@ export class RequisitionController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.requisitionService.update(id, dto, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  /** HR (whoever's turn it currently is) confirms or skips facility requests. */
+  @Patch(':id/facilities')
+  updateFacilities(
+    @Param('id') id: string,
+    @Body() dto: UpdateFacilitiesDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.updateFacilities(id, dto, {
       id: user.id,
       name: user.name,
     });

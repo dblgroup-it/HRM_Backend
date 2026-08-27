@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { CandidateStage, Prisma } from '@prisma/client';
+import { Cron } from '@nestjs/schedule';
 import * as ExcelJS from 'exceljs';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -123,6 +124,7 @@ export class CandidatesService {
         orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
+        include: { onboarding: { select: { status: true } } },
       }),
       this.prisma.candidate.count({ where }),
     ]);
@@ -182,10 +184,24 @@ export class CandidatesService {
         : [];
     const countMap = new Map(emailCounts.map((e) => [e.email, e._count.id]));
 
+    // Finalized salary fixation result, shown as a badge on the candidate row.
+    const rowIds = rows.map((r) => r.id);
+    const fixations =
+      rowIds.length > 0
+        ? await this.prisma.salaryFixation.findMany({
+            where: { candidateId: { in: rowIds }, status: 'fixed' },
+            select: { candidateId: true, proposedSalary: true, jobGrade: true },
+          })
+        : [];
+    const fixationMap = new Map(fixations.map((f) => [f.candidateId, f]));
+
     return {
       items: rows.map((r) => ({
         ...serializeCandidate(r),
         applyCount: r.email ? (countMap.get(r.email) ?? 1) : 1,
+        proposedSalary: fixationMap.get(r.id)?.proposedSalary ?? null,
+        salaryJobGrade: fixationMap.get(r.id)?.jobGrade ?? null,
+        onboardingStatus: r.onboarding?.status ?? null,
       })),
       meta: {
         page,
@@ -703,7 +719,17 @@ export class CandidatesService {
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.notes !== undefined) data.notes = dto.notes;
-    if (dto.talentPool !== undefined) data.talentPool = dto.talentPool;
+    if (dto.salaryExpectation !== undefined) data.salaryExpectation = dto.salaryExpectation;
+    if (dto.talentPool !== undefined) {
+      data.talentPool = dto.talentPool;
+      if (dto.talentPool && !cand.talentPool) {
+        this.syncTalentBankMatchesForOpenRequisitions().catch((err) =>
+          this.logger.warn(
+            `Talent Bank match sync (new pool candidate) failed: ${(err as Error).message}`,
+          ),
+        );
+      }
+    }
 
     if (dto.stage) {
       const stage = dto.stage.toUpperCase() as CandidateStage;
@@ -714,7 +740,17 @@ export class CandidatesService {
       }
       data.stage = stage;
       // Finalist / selected → auto-add to Talent Bank.
-      if (stage === 'FINAL' || stage === 'SELECTED') data.talentPool = true;
+      if (stage === 'FINAL' || stage === 'SELECTED') {
+        data.talentPool = true;
+        // New pool member — re-run matching for every currently open
+        // requisition so this candidate can surface as a suggestion right
+        // away, without waiting for the daily backstop.
+        this.syncTalentBankMatchesForOpenRequisitions().catch((err) =>
+          this.logger.warn(
+            `Talent Bank match sync (new pool candidate) failed: ${(err as Error).message}`,
+          ),
+        );
+      }
       // When a candidate is selected, auto-reject all remaining applied candidates.
       if (stage === 'SELECTED') {
         await this.prisma.candidate.updateMany({
@@ -983,7 +1019,6 @@ export class CandidatesService {
         deletedAt: null,
       },
       include: {
-        examAttempts: { where: { totalScore: { not: null } } },
         interviews: { include: { evaluations: true } },
       },
       orderBy: { createdAt: 'asc' },
@@ -996,6 +1031,29 @@ export class CandidatesService {
     const profile = req.roleProfile as {
       requirements?: string[];
     } | null;
+    const salaryFixations = await this.prisma.salaryFixation.findMany({
+      where: { candidateId: { in: finalists.map((c) => c.id) } },
+      select: {
+        candidateId: true,
+        writtenTestTotal: true,
+        writtenTestObtained: true,
+        aiTestTotal: true,
+        aiTestObtained: true,
+      },
+    });
+    const examsByCandidate = new Map(
+      salaryFixations.map((s) => [
+        s.candidateId,
+        [
+          ...(s.writtenTestTotal !== null && s.writtenTestObtained !== null
+            ? [{ type: 'Written Test', score: s.writtenTestObtained, maxScore: s.writtenTestTotal }]
+            : []),
+          ...(s.aiTestTotal !== null && s.aiTestObtained !== null
+            ? [{ type: 'AI Proficiency Test', score: s.aiTestObtained, maxScore: s.aiTestTotal }]
+            : []),
+        ],
+      ]),
+    );
     const result = await this.ai.compareFinalists({
       role: {
         designation: req.designation,
@@ -1009,11 +1067,7 @@ export class CandidatesService {
         stage: c.stage.toLowerCase(),
         matchScore: c.matchScore,
         matchSummary: c.matchSummary,
-        exams: c.examAttempts.map((a) => ({
-          type: a.examType.toLowerCase(),
-          score: a.totalScore ?? 0,
-          maxScore: a.maxScore,
-        })),
+        exams: examsByCandidate.get(c.id) ?? [],
         interviews: c.interviews
           .filter((r) => r.evaluations.length)
           .map((r) => ({
@@ -1324,12 +1378,29 @@ export class CandidatesService {
     }
   }
 
-  /** Copy a talent-bank candidate into a target requisition's pipeline. */
-  async copyToRequisition(candidateId: string, requisitionId: string, userId: string) {
+  /**
+   * Copy a talent-bank candidate into a target requisition's pipeline.
+   * `force` skips the duplicate-email guard — used when HR explicitly
+   * confirms they want to add someone again despite an existing entry.
+   */
+  async copyToRequisition(
+    candidateId: string,
+    requisitionId: string,
+    userId: string,
+    force = false,
+  ) {
     await this.requireRecruitmentRole(userId);
 
-    const source = await this.prisma.candidate.findUnique({ where: { id: candidateId } });
+    const source = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      include: { onboarding: { select: { id: true } } },
+    });
     if (!source) throw new NotFoundException('Candidate not found');
+    if (source.onboarding) {
+      throw new BadRequestException(
+        'This candidate has already joined the company and cannot be sourced again',
+      );
+    }
 
     const req = await this.prisma.requisition.findUnique({ where: { id: requisitionId } });
     if (!req) throw new NotFoundException('Requisition not found');
@@ -1337,9 +1408,12 @@ export class CandidatesService {
       throw new BadRequestException('Target requisition must be approved or posted');
     }
 
-    if (source.email) {
+    if (source.email && !force) {
+      // Only an ACTIVE entry counts as a duplicate — once someone's been
+      // removed (soft-deleted) from this pipeline, re-adding them is a
+      // normal action, not a conflict.
       const dup = await this.prisma.candidate.findFirst({
-        where: { requisitionId, email: source.email },
+        where: { requisitionId, email: source.email, deletedAt: null },
       });
       if (dup) throw new ConflictException('A candidate with this email is already in that pipeline');
     }
@@ -1374,6 +1448,202 @@ export class CandidatesService {
       throw new ForbiddenException(
         'Only Corporate HR, CHRO or a super user can view the Talent Bank',
       );
+    }
+  }
+
+  // --- Talent Bank auto-sourcing --------------------------------------------
+
+  /** HR-facing read for the "Talent Bank Matches" tab on a requisition. */
+  async listTalentBankMatches(reqId: string, userId: string) {
+    await this.requireReq(reqId, userId);
+    const rows = await this.prisma.talentBankMatch.findMany({
+      where: {
+        requisitionId: reqId,
+        // Defense in depth: re-filter eligibility live, so a not-yet-pruned
+        // row can never surface a candidate who left the pool or joined.
+        candidate: { talentPool: true, deletedAt: null, onboarding: null },
+      },
+      include: {
+        candidate: {
+          include: {
+            requisition: {
+              select: { id: true, code: true, designation: true, unitFactory: true, department: true },
+            },
+          },
+        },
+      },
+      orderBy: { relevance: 'desc' },
+    });
+    const deduped = dedupeByEmail(rows, (m) => m.candidate.email);
+
+    // Live status against THIS requisition's own pipeline — not the pool —
+    // so the UI can tell "never added" apart from "already added" apart
+    // from "added, then removed" (which is fine to add again).
+    const emails = [
+      ...new Set(deduped.map((m) => m.candidate.email).filter(Boolean)),
+    ] as string[];
+    const existingInTarget =
+      emails.length > 0
+        ? await this.prisma.candidate.findMany({
+            where: { requisitionId: reqId, email: { in: emails } },
+            select: { email: true, deletedAt: true },
+          })
+        : [];
+    const statusByEmail = new Map<string, 'in_pipeline' | 'removed'>();
+    for (const c of existingInTarget) {
+      if (!c.email) continue;
+      const key = c.email.trim().toLowerCase();
+      if (!c.deletedAt) statusByEmail.set(key, 'in_pipeline');
+      else if (!statusByEmail.has(key)) statusByEmail.set(key, 'removed');
+    }
+
+    return deduped.map((m) => ({
+      ...serializeCandidate(m.candidate),
+      requisition: {
+        id: m.candidate.requisition.id,
+        code: m.candidate.requisition.code,
+        designation: m.candidate.requisition.designation,
+        unit: m.candidate.requisition.unitFactory,
+        department: m.candidate.requisition.department,
+      },
+      relevance: m.relevance,
+      reason: m.reason,
+      matchedAt: m.computedAt.toISOString(),
+      pipelineStatus:
+        statusByEmail.get(m.candidate.email?.trim().toLowerCase() ?? '') ??
+        'not_added',
+    }));
+  }
+
+  /** Manual "Rescan" — an on-demand refresh alongside the automatic triggers. */
+  async rescanTalentBankMatches(reqId: string, userId: string) {
+    await this.requireReq(reqId, userId);
+    await this.syncTalentBankMatchesForRequisition(reqId);
+    return this.listTalentBankMatches(reqId, userId);
+  }
+
+  /** Fires after a requisition reaches APPROVED/POSTED — non-blocking. */
+  syncTalentBankMatchesOnRequisitionEvent(reqId: string): void {
+    this.syncTalentBankMatchesForRequisition(reqId).catch((err) =>
+      this.logger.warn(
+        `Talent Bank match sync failed for requisition ${reqId}: ${(err as Error).message}`,
+      ),
+    );
+  }
+
+  /** Daily backstop — mirrors the ZingHR cron + manual-sync pattern. */
+  @Cron('15 22 * * *')
+  async talentBankMatchDailySync(): Promise<void> {
+    if (!this.ai.isConfigured()) return;
+    this.logger.log('Talent Bank daily match sync starting');
+    await this.syncTalentBankMatchesForOpenRequisitions();
+    this.logger.log('Talent Bank daily match sync complete');
+  }
+
+  private async syncTalentBankMatchesForOpenRequisitions(): Promise<void> {
+    const openReqs = await this.prisma.requisition.findMany({
+      where: { status: { in: ['APPROVED', 'POSTED'] } },
+      select: { id: true },
+    });
+    // Sequential — one AI call per requisition, same rate-limit-respecting
+    // approach as the bulk CV-screening job.
+    for (const r of openReqs) {
+      await this.syncTalentBankMatchesForRequisition(r.id).catch((err) =>
+        this.logger.warn(
+          `Talent Bank match sync failed for requisition ${r.id}: ${(err as Error).message}`,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Recompute and persist Talent Bank matches for one requisition — fully
+   * replaces its existing rows with the freshly computed set (an empty
+   * result means "no matches right now", not "leave stale rows").
+   */
+  private async syncTalentBankMatchesForRequisition(reqId: string): Promise<void> {
+    const req = await this.prisma.requisition.findUnique({ where: { id: reqId } });
+    if (!req || !['APPROVED', 'POSTED'].includes(req.status)) return;
+    if (!this.ai.isConfigured()) return;
+
+    const poolRows = await this.prisma.candidate.findMany({
+      where: {
+        talentPool: true,
+        deletedAt: null,
+        onboarding: null,
+        requisitionId: { not: reqId },
+      },
+      include: {
+        requisition: { select: { designation: true, unitFactory: true, department: true } },
+      },
+      orderBy: { matchScore: 'desc' },
+      take: 120,
+    });
+    // The same person can end up in the pool more than once (applied to
+    // several past requisitions) — dedupe by email so they're never offered
+    // as two separate "matches" for the same role, which would trip the
+    // duplicate-email guard the moment the second one is added.
+    const pool = dedupeByEmail(poolRows, (c) => c.email);
+
+    const existing = await this.prisma.talentBankMatch.findMany({
+      where: { requisitionId: reqId },
+      select: { candidateId: true },
+    });
+    const existingIds = new Set(existing.map((m) => m.candidateId));
+
+    if (pool.length === 0) {
+      await this.prisma.talentBankMatch.deleteMany({ where: { requisitionId: reqId } });
+      return;
+    }
+
+    const rp =
+      (req.roleProfile as { responsibilities?: string[]; requirements?: string[] } | null) ?? null;
+    const result = await this.ai.matchTalentBankToRequisition({
+      requisition: {
+        designation: req.designation,
+        jobDescription: req.jobDescription,
+        education: req.education,
+        experience: req.experience,
+        others: req.others,
+        placeOfPosting: req.placeOfPosting,
+        responsibilities: Array.isArray(rp?.responsibilities) ? rp?.responsibilities : undefined,
+        requirements: Array.isArray(rp?.requirements) ? rp?.requirements : undefined,
+      },
+      candidates: pool.map((c) => ({
+        id: c.id,
+        name: c.name,
+        role: c.requisition.designation,
+        unit: c.requisition.unitFactory ?? '',
+        department: c.requisition.department ?? '',
+        matchSummary: c.matchSummary ?? '',
+        matchScore: c.matchScore,
+      })),
+    });
+
+    const freshIds = result.results.map((r) => r.id);
+    await this.prisma.$transaction([
+      this.prisma.talentBankMatch.deleteMany({
+        where: { requisitionId: reqId, candidateId: { notIn: freshIds } },
+      }),
+      ...result.results.map((r) =>
+        this.prisma.talentBankMatch.upsert({
+          where: { requisitionId_candidateId: { requisitionId: reqId, candidateId: r.id } },
+          create: { requisitionId: reqId, candidateId: r.id, relevance: r.relevance, reason: r.reason },
+          update: { relevance: r.relevance, reason: r.reason },
+        }),
+      ),
+    ]);
+
+    const newlyMatched = result.results.filter((r) => !existingIds.has(r.id));
+    if (newlyMatched.length > 0) {
+      const hrIds = await this.permissions.roleHolderUserIds('corporate_hr', req.unitFactory);
+      await this.notifications.notifyMany(hrIds, {
+        type: 'talent_bank_match',
+        title: 'New Talent Bank matches',
+        message: `${newlyMatched.length} Talent Bank candidate${newlyMatched.length > 1 ? 's' : ''} matched for ${req.code} · ${req.designation}.`,
+        link: `/requisitions/${reqId}`,
+      });
+      this.notifications.broadcastChange('candidate', reqId, { action: 'talent_bank_matched' });
     }
   }
 
@@ -1509,6 +1779,29 @@ function deriveName(filename: string): string {
   // "John_Doe-CV" / "john doe resume" → "John Doe …"
   const cleaned = base.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   return cleaned || 'Candidate';
+}
+
+/**
+ * The same real person can end up as multiple candidate rows (applied to
+ * several past requisitions) — keep only the first occurrence per email so
+ * they're never surfaced twice. Rows are pre-sorted by preference (e.g.
+ * highest match score / relevance first), so "first occurrence" wins.
+ * Rows without an email can't be deduped and are always kept.
+ */
+function dedupeByEmail<T>(rows: T[], getEmail: (row: T) => string | null): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const email = getEmail(row)?.trim().toLowerCase();
+    if (!email) {
+      out.push(row);
+      continue;
+    }
+    if (seen.has(email)) continue;
+    seen.add(email);
+    out.push(row);
+  }
+  return out;
 }
 
 function serializeCandidate(c: CandidateRow) {

@@ -88,15 +88,6 @@ export class InterviewController {
     return this.interviews.remove(roundId, user.id);
   }
 
-  /** Email the AI-generated interview questions to every panelist on this round. */
-  @Post('interviews/:roundId/send-questions')
-  sendQuestions(
-    @Param('roundId') roundId: string,
-    @CurrentUser() user: AuthUser,
-  ) {
-    return this.interviews.sendQuestions(roundId, user.id);
-  }
-
   /** Regenerate the one-click evaluation link for a specific panelist. */
   @Post('interviews/:roundId/eval-token/:panelistUserId/resend')
   resendEvalToken(

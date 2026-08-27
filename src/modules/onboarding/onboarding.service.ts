@@ -7,7 +7,12 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OnboardingDocStatus, MedicalStatus, Prisma } from '@prisma/client';
+import {
+  OnboardingDocStatus,
+  MedicalStatus,
+  MedicalExam,
+  Prisma,
+} from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,7 +22,12 @@ import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
-import { MedicalDto, NotifyItDto } from './dto/onboarding.dto';
+import {
+  ManualCrossCheckDto,
+  MedicalDto,
+  MedicalExamDto,
+  NotifyItDto,
+} from './dto/onboarding.dto';
 
 /** Role keys allowed to record medical clearance (configurable / either name). */
 export const MEDICAL_ROLE_KEYS = ['medical_officer', 'medical_team'];
@@ -38,6 +48,48 @@ export interface UploadedDoc {
   buffer: Buffer;
   size: number;
 }
+
+/**
+ * Fields on MedicalExam that must be filled in before a candidate can be
+ * cleared — mirrors DBL's paper "Medical Fitness Report" field-for-field.
+ * dutyPosition/refNo/registrationNo/familyHistoryDetail/remarks stay
+ * optional (the paper form itself often leaves them blank).
+ */
+const REQUIRED_MEDICAL_EXAM_FIELDS: { key: keyof MedicalExamValues; label: string }[] = [
+  { key: 'dateOfBirth', label: 'Date of Birth' },
+  { key: 'examDate', label: 'Date of Examination' },
+  { key: 'issueDate', label: 'Date of Issue' },
+  { key: 'consultantName', label: 'Consultant Name' },
+  { key: 'height', label: 'Height' },
+  { key: 'weight', label: 'Weight' },
+  { key: 'pulse', label: 'Pulse' },
+  { key: 'bloodPressure', label: 'Blood Pressure' },
+  { key: 'visionRightEye', label: 'Visual Acuity (Right Eye)' },
+  { key: 'visionLeftEye', label: 'Visual Acuity (Left Eye)' },
+  { key: 'visionWithGlass', label: 'Visual Acuity (with/without glass)' },
+  { key: 'colorVisionYellow', label: 'Color Vision (Yellow)' },
+  { key: 'colorVisionRed', label: 'Color Vision (Red)' },
+  { key: 'colorVisionGreen', label: 'Color Vision (Green)' },
+  { key: 'colorVisionBlue', label: 'Color Vision (Blue)' },
+  { key: 'hearingRightEar', label: 'Hearing (Right Ear)' },
+  { key: 'hearingLeftEar', label: 'Hearing (Left Ear)' },
+  { key: 'speech', label: 'Speech' },
+  { key: 'extremities', label: 'Extremities' },
+  { key: 'noAnemiaJaundiceEtc', label: 'Anemia / Jaundice / Clubbing / Koilonychia / Congenital Malformations' },
+  { key: 'stableNormotensiveNondiabetic', label: 'Physical & Mental Stability / Normotensive / Nondiabetic' },
+  { key: 'urineTestClear', label: 'Urine Test (Sugar / Albumin)' },
+  { key: 'hepatitisBNegative', label: 'Hepatitis B (Negative)' },
+  { key: 'liverFunctionNormal', label: 'Liver Function (Normal)' },
+  { key: 'pastIllnessHistory', label: 'History of Past Illness' },
+  { key: 'familyHistoryDmHtn', label: 'Family History (DM, HTN)' },
+  { key: 'bloodGroup', label: 'Blood Group' },
+  { key: 'fitToJoin', label: 'Fit to Join Determination' },
+];
+
+type MedicalExamValues = Omit<
+  MedicalExam,
+  'id' | 'onboardingId' | 'createdAt' | 'updatedAt'
+>;
 
 type OnboardingWithDocs = Prisma.OnboardingGetPayload<{
   include: { docs: true };
@@ -103,6 +155,15 @@ export class OnboardingService {
         code: cand.requisition.code,
         unit: cand.requisition.unitFactory,
         department: cand.requisition.department,
+        proposedSalary:
+          cand.salaryFixation?.status === 'fixed'
+            ? cand.salaryFixation.proposedSalary
+            : null,
+        salaryJobGrade:
+          cand.salaryFixation?.status === 'fixed'
+            ? cand.salaryFixation.jobGrade
+            : null,
+        facilities: cand.requisition.facilities ?? null,
       },
       onboarding: ob ? this.serialize(ob, cand.name, cand.email) : null,
     };
@@ -158,6 +219,36 @@ export class OnboardingService {
       { action: 'doc_summarized' },
     );
     return this.getByCandidate(doc.onboarding.candidateId, userId);
+  }
+
+  /** HR skips waiting for the candidate to submit documents (e.g. already have physical copies). */
+  async skipDocs(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    const updated = await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: { docsSkippedAt: new Date() },
+      include: { docs: { orderBy: { createdAt: 'asc' } } },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'docs_skipped',
+    });
+    return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /** HR skips individually verifying every submitted document. */
+  async skipVerification(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    const updated = await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: { verificationSkippedAt: new Date() },
+      include: { docs: { orderBy: { createdAt: 'asc' } } },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'verification_skipped',
+    });
+    return { onboarding: this.serialize(updated, cand.name, cand.email) };
   }
 
   async verifyDoc(docId: string, status: OnboardingDocStatus, userId: string) {
@@ -232,6 +323,35 @@ export class OnboardingService {
     return this.getByCandidate(candidateId, userId);
   }
 
+  /** Manual alternative to AI cross-verification — HR records their own verdict, no AI required. */
+  async manualCrossCheck(
+    candidateId: string,
+    dto: ManualCrossCheckDto,
+    actor: { id: string; name: string },
+  ) {
+    const cand = await this.requireCandidate(candidateId, actor.id);
+    const ob = await this.requireOnboarding(candidateId);
+
+    const result = {
+      verdict: dto.verdict,
+      overview: dto.note?.trim() || 'Manually reviewed by HR — no automated check run.',
+      findings: [] as unknown[],
+      source: 'manual',
+      reviewedBy: actor.name,
+    };
+    await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: {
+        crossCheck: result as unknown as Prisma.InputJsonValue,
+        crossCheckedAt: new Date(),
+      },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'cross_checked',
+    });
+    return this.getByCandidate(candidateId, actor.id);
+  }
+
   // --- HR: offer (Stage C) -------------------------------------------------
 
   async sendOffer(candidateId: string, userId: string) {
@@ -260,6 +380,55 @@ export class OnboardingService {
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'offer_sent',
     });
+    return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * HR marks the offer accepted by hand — the candidate confirmed in person
+   * or by phone rather than through the online accept-offer link. Mirrors
+   * `publicAcceptOffer`'s effect (same fields, same notification fan-out) so
+   * the rest of the pipeline (medical queue, etc.) can't tell the difference.
+   */
+  async markOfferAcceptedManually(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    const alreadyAccepted = Boolean(ob.offerAcceptedAt);
+    const updated = await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: alreadyAccepted
+        ? {}
+        : { offerAcceptedAt: new Date(), status: 'offer_accepted' },
+      include: { docs: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (!alreadyAccepted) {
+      const unit = cand.requisition.unitFactory;
+      const hrIds = await this.permissions.roleHolderUserIds(
+        'corporate_hr',
+        unit,
+      );
+      const medIds = (
+        await Promise.all(
+          MEDICAL_ROLE_KEYS.map((k) =>
+            this.permissions.roleHolderUserIds(k, unit),
+          ),
+        )
+      ).flat();
+      await this.notifications.notifyMany(hrIds, {
+        type: 'onboarding',
+        title: 'Offer accepted',
+        message: `${cand.name} accepted the offer for ${cand.requisition.designation} (confirmed by HR).`,
+        link: `/requisitions/${cand.requisitionId}`,
+      });
+      await this.notifications.notifyMany(medIds, {
+        type: 'onboarding',
+        title: 'Medical clearance needed',
+        message: `${cand.name} accepted their offer — please schedule medical clearance.`,
+        link: `/medical`,
+      });
+      this.notifications.broadcastChange('candidate', cand.requisitionId, {
+        action: 'offer_accepted',
+      });
+    }
     return { onboarding: this.serialize(updated, cand.name, cand.email) };
   }
 
@@ -318,6 +487,17 @@ export class OnboardingService {
           );
           await this.drive.moveFile(candFolder, reqArchive);
           archiveFolderUrl = `https://drive.google.com/drive/folders/${candFolder}`;
+          // Folders stay private by default (same as every other Drive
+          // folder in this app) — grant read access so "Open archive
+          // folder" actually opens for whoever clicks it, not just
+          // hr.recruitment@.
+          this.drive
+            .shareAnyoneWithLink(candFolder, 'reader')
+            .catch((err) =>
+              this.logger.warn(
+                `Archive folder share failed for ${candFolder}: ${(err as Error).message}`,
+              ),
+            );
         }
       } catch (err) {
         this.logger.warn(
@@ -341,11 +521,21 @@ export class OnboardingService {
   async notifyIt(candidateId: string, dto: NotifyItDto, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
-    // Guard the state machine: IT hand-off is the final step — HR final
-    // verification (which itself requires medical clearance) must be done first.
+    // Guard the state machine: IT hand-off is the final step, and completes
+    // onboarding — HR final verification (which itself requires medical
+    // clearance) and Board Approval (a real board vote, or HR approving on
+    // the board's behalf with a justifying attachment) must both be done first.
     if (!ob.hrVerifiedAt) {
       throw new BadRequestException(
         'Complete HR final verification before notifying IT',
+      );
+    }
+    const boardApproval = await this.prisma.boardApproval.findFirst({
+      where: { candidateId },
+    });
+    if (boardApproval?.status !== 'approved') {
+      throw new BadRequestException(
+        'Board Approval is required before onboarding can be completed',
       );
     }
 
@@ -452,10 +642,25 @@ export class OnboardingService {
   async setMedical(onboardingId: string, dto: MedicalDto, userId: string) {
     const ob = await this.prisma.onboarding.findUnique({
       where: { id: onboardingId },
-      include: { candidate: { include: { requisition: true } } },
+      include: {
+        candidate: { include: { requisition: true } },
+        medicalExam: true,
+      },
     });
     if (!ob) throw new NotFoundException('Onboarding not found');
     await this.requireMedicalRole(userId);
+
+    if (dto.status === 'cleared') {
+      const exam = ob.medicalExam;
+      const missing = REQUIRED_MEDICAL_EXAM_FIELDS.filter(
+        (f) => exam?.[f.key] === null || exam?.[f.key] === undefined,
+      ).map((f) => f.label);
+      if (missing.length) {
+        throw new BadRequestException(
+          `Complete the medical exam form before clearing: ${missing.join(', ')}`,
+        );
+      }
+    }
 
     await this.prisma.onboarding.update({
       where: { id: onboardingId },
@@ -486,6 +691,166 @@ export class OnboardingService {
       },
     );
     return { ok: true };
+  }
+
+  /** Medical exam form data is readable by the medical team (who fill it in)
+   * and by Corporate HR / CHRO (who view the summary on the onboarding page). */
+  async getMedicalExam(onboardingId: string, userId: string) {
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('Onboarding not found');
+
+    const isMedical =
+      (await this.permissions.isSuperUser(userId)) ||
+      Boolean(
+        await this.prisma.roleAssignment.findFirst({
+          where: { userId, role: { key: { in: MEDICAL_ROLE_KEYS } } },
+        }),
+      );
+    if (!isMedical) {
+      await this.requireRecruitmentAccess(
+        ob.candidate.requisition.unitFactory,
+        userId,
+      );
+    }
+
+    const exam = await this.prisma.medicalExam.findUnique({
+      where: { onboardingId },
+    });
+    return this.serializeMedicalExam(exam);
+  }
+
+  async upsertMedicalExam(
+    onboardingId: string,
+    dto: MedicalExamDto,
+    userId: string,
+  ) {
+    await this.requireMedicalRole(userId);
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+    });
+    if (!ob) throw new NotFoundException('Onboarding not found');
+
+    // Ref No is assigned once, automatically, on first save — not typed in
+    // by the officer (format: DBL/Corp/HR/MT-<seq>/<yy>, seq resets yearly).
+    const existing = await this.prisma.medicalExam.findUnique({
+      where: { onboardingId },
+      select: { refNo: true },
+    });
+    const refNo = existing?.refNo ?? (await this.generateMedicalRefNo());
+
+    // undefined = field not sent, leave alone; null = explicitly cleared;
+    // string = set. Collapsing null into undefined here would make clearing
+    // a date field a no-op that silently keeps the old value.
+    const toDate = (v: string | null | undefined) =>
+      v === undefined ? undefined : v === null ? null : new Date(v);
+
+    const values = {
+      dateOfBirth: toDate(dto.dateOfBirth),
+      dutyPosition: dto.dutyPosition,
+      refNo,
+      registrationNo: dto.registrationNo,
+      examDate: toDate(dto.examDate),
+      issueDate: toDate(dto.issueDate),
+      consultantName: dto.consultantName,
+      height: dto.height,
+      weight: dto.weight,
+      pulse: dto.pulse,
+      bloodPressure: dto.bloodPressure,
+      visionRightEye: dto.visionRightEye,
+      visionLeftEye: dto.visionLeftEye,
+      visionWithGlass: dto.visionWithGlass,
+      colorVisionYellow: dto.colorVisionYellow,
+      colorVisionRed: dto.colorVisionRed,
+      colorVisionGreen: dto.colorVisionGreen,
+      colorVisionBlue: dto.colorVisionBlue,
+      hearingRightEar: dto.hearingRightEar,
+      hearingLeftEar: dto.hearingLeftEar,
+      speech: dto.speech,
+      extremities: dto.extremities,
+      noAnemiaJaundiceEtc: dto.noAnemiaJaundiceEtc,
+      stableNormotensiveNondiabetic: dto.stableNormotensiveNondiabetic,
+      urineTestClear: dto.urineTestClear,
+      hepatitisBNegative: dto.hepatitisBNegative,
+      liverFunctionNormal: dto.liverFunctionNormal,
+      pastIllnessHistory: dto.pastIllnessHistory,
+      familyHistoryDmHtn: dto.familyHistoryDmHtn,
+      familyHistoryDetail: dto.familyHistoryDetail,
+      bloodGroup: dto.bloodGroup,
+      fitToJoin: dto.fitToJoin,
+      remarks: dto.remarks,
+    };
+
+    const exam = await this.prisma.medicalExam.upsert({
+      where: { onboardingId },
+      create: { onboardingId, ...values },
+      update: values,
+    });
+    return this.serializeMedicalExam(exam);
+  }
+
+  /** Medical officer attaches the actual signed report (optional — the
+   * structured fields above are the source of truth for clearance). */
+  async uploadMedicalReport(
+    onboardingId: string,
+    file: UploadedDoc | undefined,
+    userId: string,
+  ) {
+    if (!file) throw new BadRequestException('Please attach a file');
+    await this.requireMedicalRole(userId);
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('Onboarding not found');
+
+    const ws = await this.recruitment.ensureWorkspace(ob.candidate.requisition);
+    if (!ws) {
+      throw new ServiceUnavailableException(
+        'Upload is temporarily unavailable. Please try again later.',
+      );
+    }
+    const folder = await this.drive.ensureFolder(
+      `${ob.candidate.name} — Joining Docs`,
+      ws.joiningFolderId,
+    );
+    const uploaded = await this.drive.uploadFile(folder, {
+      name: `Medical Fitness Report — ${file.originalname}`,
+      mimeType: file.mimetype,
+      buffer: file.buffer,
+    });
+    // Folder stays private by default — grant read access so whoever opens
+    // the report link (not just hr.recruitment@) can actually view it.
+    this.drive
+      .shareAnyoneWithLink(uploaded.id, 'reader')
+      .catch((err) =>
+        this.logger.warn(
+          `Medical report share failed for ${uploaded.id}: ${(err as Error).message}`,
+        ),
+      );
+    const createdDoc = await this.prisma.onboardingDoc.create({
+      data: {
+        onboardingId: ob.id,
+        label: 'Medical Fitness Report',
+        fileId: uploaded.id,
+        url: uploaded.url,
+        mimeType: file.mimetype,
+      },
+    });
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      { action: 'medical_updated' },
+    );
+    return {
+      id: createdDoc.id,
+      label: createdDoc.label,
+      url: createdDoc.url,
+      mimeType: createdDoc.mimeType,
+      createdAt: createdDoc.createdAt.toISOString(),
+    };
   }
 
   // --- Public (candidate, by token) ----------------------------------------
@@ -649,7 +1014,7 @@ export class OnboardingService {
   private async requireCandidate(candidateId: string, userId: string) {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
-      include: { requisition: true },
+      include: { requisition: true, salaryFixation: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
     await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
@@ -805,6 +1170,63 @@ export class OnboardingService {
     }
   }
 
+  /** Next "DBL/Corp/HR/MT-<seq>/<yy>" ref no — sequence resets each year. */
+  private async generateMedicalRefNo(): Promise<string> {
+    const yy = String(new Date().getFullYear()).slice(-2);
+    const prefix = 'DBL/Corp/HR/MT-';
+    const suffix = `/${yy}`;
+    const existing = await this.prisma.medicalExam.findMany({
+      where: { refNo: { startsWith: prefix, endsWith: suffix } },
+      select: { refNo: true },
+    });
+    let max = 0;
+    for (const e of existing) {
+      const m = e.refNo?.match(/-(\d+)\/\d{2}$/);
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+    return `${prefix}${String(max + 1).padStart(3, '0')}${suffix}`;
+  }
+
+  private serializeMedicalExam(exam: MedicalExam | null) {
+    const toDateStr = (d: Date | null | undefined) =>
+      d ? d.toISOString().slice(0, 10) : null;
+    return {
+      dateOfBirth: toDateStr(exam?.dateOfBirth),
+      dutyPosition: exam?.dutyPosition ?? '',
+      refNo: exam?.refNo ?? '',
+      registrationNo: exam?.registrationNo ?? '',
+      examDate: toDateStr(exam?.examDate),
+      issueDate: toDateStr(exam?.issueDate),
+      consultantName: exam?.consultantName ?? '',
+      height: exam?.height ?? '',
+      weight: exam?.weight ?? '',
+      pulse: exam?.pulse ?? '',
+      bloodPressure: exam?.bloodPressure ?? '',
+      visionRightEye: exam?.visionRightEye ?? '',
+      visionLeftEye: exam?.visionLeftEye ?? '',
+      visionWithGlass: exam?.visionWithGlass ?? null,
+      colorVisionYellow: exam?.colorVisionYellow ?? '',
+      colorVisionRed: exam?.colorVisionRed ?? '',
+      colorVisionGreen: exam?.colorVisionGreen ?? '',
+      colorVisionBlue: exam?.colorVisionBlue ?? '',
+      hearingRightEar: exam?.hearingRightEar ?? '',
+      hearingLeftEar: exam?.hearingLeftEar ?? '',
+      speech: exam?.speech ?? '',
+      extremities: exam?.extremities ?? '',
+      noAnemiaJaundiceEtc: exam?.noAnemiaJaundiceEtc ?? null,
+      stableNormotensiveNondiabetic: exam?.stableNormotensiveNondiabetic ?? null,
+      urineTestClear: exam?.urineTestClear ?? null,
+      hepatitisBNegative: exam?.hepatitisBNegative ?? null,
+      liverFunctionNormal: exam?.liverFunctionNormal ?? null,
+      pastIllnessHistory: exam?.pastIllnessHistory ?? '',
+      familyHistoryDmHtn: exam?.familyHistoryDmHtn ?? null,
+      familyHistoryDetail: exam?.familyHistoryDetail ?? '',
+      bloodGroup: exam?.bloodGroup ?? '',
+      fitToJoin: exam?.fitToJoin ?? null,
+      remarks: exam?.remarks ?? '',
+    };
+  }
+
   private serialize(
     ob: OnboardingWithDocs,
     candidateName: string,
@@ -818,6 +1240,8 @@ export class OnboardingService {
       token: ob.token,
       submissionLink: this.publicLink(ob.token),
       status: ob.status,
+      docsSkippedAt: ob.docsSkippedAt?.toISOString() ?? null,
+      verificationSkippedAt: ob.verificationSkippedAt?.toISOString() ?? null,
       offerSentAt: ob.offerSentAt?.toISOString() ?? null,
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
       medicalStatus: ob.medicalStatus,

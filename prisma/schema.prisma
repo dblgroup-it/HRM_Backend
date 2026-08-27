@@ -67,17 +67,6 @@ enum EmploymentNature {
   CONTRACTUAL
 }
 
-enum ComputerRequirement {
-  NOT_APPLICABLE
-  DESKTOP
-  LAPTOP
-}
-
-enum SeatingArrangement {
-  EXISTING
-  NEW
-}
-
 enum ApprovalRole {
   DEPARTMENT_HEAD
   FACTORY_HR
@@ -98,6 +87,7 @@ enum ApprovalDecision {
   REJECTED
   NEED_MORE_INFO
   ESCALATED
+  EDITED
 }
 
 /// GLOBAL roles apply org-wide; UNIT roles are scoped to specific units.
@@ -117,14 +107,6 @@ enum CandidateStage {
   REJECTED
 }
 
-/// Phase 3 assessment components in a requisition's assessment plan.
-enum AssessmentType {
-  WRITTEN
-  EXCEL
-  SKILL
-  VIVA
-}
-
 enum InterviewKind {
   FIRST
   SECOND
@@ -141,11 +123,6 @@ enum InterviewStatus {
   SCHEDULED
   COMPLETED
   CANCELLED
-}
-
-enum ExamQuestionKind {
-  MCQ
-  TEXT
 }
 
 enum EvalTokenStatus {
@@ -252,6 +229,8 @@ model User {
   boardApprovalsRequested  BoardApproval[]     @relation("BoardApprovalRequester")
   boardApprovalsHrApproved BoardApproval[]     @relation("BoardApprovalHrApprover")
   boardApprovalVotes       BoardApprovalVote[]
+  facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
+  facilityNotificationsReceived FacilityNotification[] @relation("FacilityNotificationRecipient")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
@@ -396,6 +375,9 @@ model Position {
   /// Optional section within the department (e.g. IT Support under IT).
   section      String?      @db.VarChar(150)
   category     SeatCategory @default(OFFICER)
+  /// Job grade for this seat (e.g. "M4", "SM1", "T2") — free text, matching
+  /// whatever scheme ZingHR's synced Employee.grade actually uses.
+  grade        String?      @db.VarChar(20)
   sanctioned   Int          @default(0)
   /// Currently occupied seats (manually maintained). vacant = sanctioned − filled.
   filled       Int          @default(0)
@@ -418,6 +400,11 @@ model Requisition {
   id                 String                @id @default(cuid())
   code               String                @unique @db.VarChar(20)
   designation        String                @db.VarChar(150)
+  /// Confirmed job grade for this post — one of JOB_GRADES (salary-fixation.constants.ts).
+  /// Not set by the requisitioner; the current pending approver (Factory HR /
+  /// SBU Head / Corporate HR, whoever's turn it is) confirms it during sign-off,
+  /// informed by the organogram seat's grade + the ZingHR grade reference.
+  grade              String?               @db.VarChar(20)
   requirementType    RequirementType       @map("requirement_type")
   source             RequisitionSource
   requiredPosts      Int                   @map("required_posts")
@@ -435,15 +422,13 @@ model Requisition {
   education          String
   experience         String
   others             String?
-  computer           ComputerRequirement   @default(NOT_APPLICABLE)
-  computerReason     String?               @map("computer_reason")
-  seating            SeatingArrangement    @default(EXISTING)
+  /// Requisitioner's requests (Laptop/Desktop, Transport, Dormitory, Seating)
+  /// + each facility's HR confirm/skip decision — see FacilityDecision on the frontend.
+  facilities         Json?
   preferredSources   String[]              @map("preferred_sources")
   status             RequisitionStatus     @default(PENDING_APPROVAL)
   roleProfile        Json?                 @map("role_profile")
   posting            Json?
-  /// AI-generated interview questions — array of { category, question }.
-  interviewQuestions Json?                 @map("interview_questions")
   /// Corporate HR committee deliberation / final recommendation notes.
   deliberationNotes  String?               @map("deliberation_notes")
   raisedBy           String?               @map("raised_by") @db.VarChar(150)
@@ -456,12 +441,9 @@ model Requisition {
   activities         RequisitionActivity[]
   candidates         Candidate[]
   committeeMembers   CommitteeMember[]
-  rubricCriteria     RubricCriterion[]
-  assessments        AssessmentComponent[]
   interviewRounds    InterviewRound[]
-  examQuestions      ExamQuestion[]
-  examAttempts       ExamAttempt[]
   bdJobsPost         BdJobsPost?
+  talentBankMatches  TalentBankMatch[]
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
   /// Soft delete — null means active; set to timestamp when "deleted".
@@ -530,9 +512,12 @@ model Candidate {
   /// Bdjobs inbound: the Bdjobs job listing ID this candidate applied to.
   bdjobsJobId          String?  @map("bdjobs_job_id") @db.VarChar(100)
   interviews      InterviewRound[]
-  examAttempts    ExamAttempt[]
   onboarding      Onboarding?
   boardApprovals  BoardApproval[]
+  salaryFixation  SalaryFixation?
+  aiProficiencyAttempts AiProficiencyAttempt[]
+  facilityNotifications FacilityNotification[]
+  talentBankMatches     TalentBankMatch[]
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
   /// Soft delete — null means active; set to timestamp when "deleted".
@@ -543,6 +528,85 @@ model Candidate {
   @@index([createdAt])
   @@index([deletedAt])
   @@map("candidates")
+}
+
+/// AI-computed suggestion: a Talent Bank candidate matched against one open
+/// requisition's role. Recomputed automatically (approval/post events, a
+/// daily backstop cron, or a manual rescan) — rows are fully replaced per
+/// requisition on each sync, so this table always reflects the latest run.
+model TalentBankMatch {
+  id            String      @id @default(cuid())
+  requisitionId String      @map("requisition_id")
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  candidateId   String      @map("candidate_id")
+  candidate     Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  relevance     Int
+  reason        String
+  computedAt    DateTime    @default(now()) @map("computed_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@unique([requisitionId, candidateId])
+  @@index([requisitionId])
+  @@index([candidateId])
+  @@map("talent_bank_matches")
+}
+
+enum SalaryFixationStatus {
+  draft
+  screening_failed
+  fixed
+}
+
+/// Phase 4 — post-interview salary fixation: screening-test gate, committee
+/// scoring across 10 fixed weighted criteria, and the resulting salary band
+/// + proposed gross salary for the candidate's job grade.
+model SalaryFixation {
+  id          String    @id @default(cuid())
+  candidateId String    @unique @map("candidate_id")
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  /// One of JOB_GRADES (salary-fixation.constants.ts) — defaults from the
+  /// requisition's confirmed grade the first time this record is opened,
+  /// editable by HR after that.
+  jobGrade String? @map("job_grade") @db.VarChar(10)
+
+  // Pre-interview screening tests (both gated at 50% pass mark).
+  writtenTestEnabled  Boolean @default(false) @map("written_test_enabled")
+  writtenTestTotal    Float?  @map("written_test_total")
+  writtenTestObtained Float?  @map("written_test_obtained")
+  /// HR can skip Step 2 per candidate; defaults on since it was mandatory-only before this field existed.
+  aiTestEnabled       Boolean @default(true) @map("ai_test_enabled")
+  aiTestTotal         Float?  @map("ai_test_total")
+  aiTestObtained      Float?  @map("ai_test_obtained")
+
+  // Committee scoring lives on Evaluation.salaryScores/salaryTotal — panelists
+  // mark it themselves from their own interview-evaluation link. Nothing to
+  // store here; averageScore/computedBand/proposedSalary below are computed
+  // live from those Evaluation rows (and snapshotted at finalize time).
+
+  // Derived — recomputed server-side on every save, never client-supplied.
+  averageScore  Float? @map("average_score")
+  computedBand  Int?   @map("computed_band")
+  /// HR manual override of the computed band, per policy's "Management reserves the right to deviation".
+  bandOverride  Int?   @map("band_override")
+  proposedSalary Float? @map("proposed_salary")
+  /// HR manual override of the auto-computed proposed salary — takes precedence when set.
+  proposedSalaryOverride Float? @map("proposed_salary_override")
+
+  status SalaryFixationStatus @default(draft)
+
+  /// A figure was formally communicated to the candidate — lighter-weight
+  /// than finalize(), doesn't require full committee scoring to be done.
+  offeredAt   DateTime? @map("offered_at")
+  offeredById String?   @map("offered_by_id")
+
+  finalizedAt   DateTime? @map("finalized_at")
+  finalizedById String?   @map("finalized_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("salary_fixations")
 }
 
 /// Registry of red-flagged identities (email + phone) for auto-flagging future applications.
@@ -578,7 +642,6 @@ model InterviewRound {
   /// Google Calendar sync: event id + the auto-generated Meet link (online).
   calendarEventId  String?             @map("calendar_event_id") @db.VarChar(200)
   meetLink         String?             @map("meet_link")
-  questionsSentAt  DateTime?           @map("questions_sent_at")
   panelists        InterviewPanelist[]
   evaluations      Evaluation[]
   evaluationTokens EvaluationToken[]
@@ -625,52 +688,57 @@ model EvaluationToken {
   @@map("evaluation_tokens")
 }
 
-/// Phase 3 — a question in a requisition's online exam (written / excel) bank.
-model ExamQuestion {
-  id            String           @id @default(cuid())
-  requisitionId String           @map("requisition_id")
-  requisition   Requisition      @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  examType      AssessmentType   @map("exam_type")
-  kind          ExamQuestionKind @default(MCQ)
-  prompt        String
+/// Global bank of AI Proficiency screening questions (up to ~500), tagged by
+/// which job grade(s) they apply to — not scoped to a requisition.
+model AiProficiencyQuestion {
+  id        String   @id @default(cuid())
+  prompt    String
   /// MCQ options, e.g. ["A", "B", "C", "D"]
-  options       Json?
-  /// MCQ: the correct option text. TEXT: model answer used for AI grading.
-  answer        String?
-  marks         Int              @default(1)
-  orderIndex    Int              @default(0) @map("order_index")
+  options   Json
+  /// The correct option text.
+  answer    String
+  marks     Int      @default(1)
+  /// Applicable JobGrade codes, e.g. ["M3", "M4"].
+  grades    String[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([requisitionId, examType])
-  @@map("exam_questions")
+  @@index([grades])
+  @@map("ai_proficiency_questions")
 }
 
-/// Phase 3 — a candidate's attempt at an online exam (token-linked, no login).
-model ExamAttempt {
-  id            String         @id @default(cuid())
-  candidateId   String         @map("candidate_id")
-  candidate     Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  requisitionId String         @map("requisition_id")
-  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  examType      AssessmentType @map("exam_type")
-  /// Unguessable link token for the candidate's exam page.
-  token         String         @unique @db.VarChar(64)
-  /// pending | submitted | graded
-  status        String         @default("pending") @db.VarChar(20)
-  /// { questionId: answerText }
-  answers       Json?
-  /// per-question AI/auto grade: { questionId: { score, feedback } }
-  grades        Json?
-  autoScore     Float?         @map("auto_score")
-  totalScore    Float?         @map("total_score")
-  maxScore      Float          @default(0) @map("max_score")
-  startedAt     DateTime?      @map("started_at")
-  submittedAt   DateTime?      @map("submitted_at")
-  gradedAt      DateTime?      @map("graded_at")
-  createdAt     DateTime       @default(now()) @map("created_at")
+/// A candidate's AI Proficiency screening attempt — one per candidate, a
+/// frozen random subset of AiProficiencyQuestion chosen at assignment time,
+/// token-linked (no login), auto-graded on submit.
+model AiProficiencyAttempt {
+  id          String    @id @default(cuid())
+  candidateId String    @map("candidate_id")
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  token       String    @unique @db.VarChar(64)
+  jobGrade    String    @map("job_grade") @db.VarChar(10)
+  /// Frozen shuffled subset of AiProficiencyQuestion ids, in display order.
+  questionIds String[]  @map("question_ids")
+  /// { questionId: selectedOption }
+  answers     Json?
+  totalScore  Float?    @map("total_score")
+  maxScore    Float     @map("max_score")
+  /// pending | submitted
+  status      String    @default("pending") @db.VarChar(20)
+  /// Minutes the candidate gets once they open the test; null = no limit.
+  timeLimitMinutes Int? @map("time_limit_minutes")
+  /// Stamped the first time the candidate opens the test — the countdown
+  /// runs from here, not from assignment, so an unopened link doesn't burn time.
+  startedAt   DateTime? @map("started_at")
+  /// Focus-lock log — array of { leftAt, returnedAt, endedTest }, one entry
+  /// per time the candidate left the test tab/window or exited fullscreen.
+  violations  Json?
+  /// Why the attempt ended: candidate | time_up | violation. Null while pending.
+  terminationReason String? @map("termination_reason") @db.VarChar(20)
+  submittedAt DateTime? @map("submitted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([candidateId])
-  @@index([requisitionId])
-  @@map("exam_attempts")
+  @@map("ai_proficiency_attempts")
 }
 
 /// Phase 4 & 5 — document collection, verification, offer & onboarding for a
@@ -682,6 +750,10 @@ model Onboarding {
   /// Unguessable token for the candidate's document-submission + offer pages.
   token           String          @unique @db.VarChar(64)
   status          OnboardingStatus @default(docs_pending)
+  /// HR can skip waiting for the candidate to submit documents.
+  docsSkippedAt   DateTime?       @map("docs_skipped_at")
+  /// HR can skip individually verifying every submitted document.
+  verificationSkippedAt DateTime? @map("verification_skipped_at")
   offerSentAt     DateTime?       @map("offer_sent_at")
   offerAcceptedAt DateTime?       @map("offer_accepted_at")
   medicalStatus   MedicalStatus   @default(pending) @map("medical_status")
@@ -699,10 +771,71 @@ model Onboarding {
   itAssetId       String?         @map("it_asset_id") @db.VarChar(50)
   itNotifiedAt    DateTime?       @map("it_notified_at")
   docs            OnboardingDoc[]
+  medicalExam     MedicalExam?
   createdAt       DateTime        @default(now()) @map("created_at")
   updatedAt       DateTime        @updatedAt @map("updated_at")
 
   @@map("onboardings")
+}
+
+/// Structured Medical Fitness Report — one per onboarding, filled in by the
+/// medical officer alongside (or instead of) an uploaded signed copy
+/// (stored as an OnboardingDoc). Mirrors DBL's own paper "Medical Fitness
+/// Report" letterhead field-for-field. All columns are nullable so the
+/// officer can save partial progress — completeness is only enforced by
+/// OnboardingService.setMedical() at the moment of clearing.
+model MedicalExam {
+  id             String     @id @default(cuid())
+  onboardingId   String     @unique @map("onboarding_id")
+  onboarding     Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+
+  dateOfBirth    DateTime?  @map("date_of_birth") @db.Date
+  /// Often left blank on the paper form itself — kept optional.
+  dutyPosition   String?    @map("duty_position")
+  refNo          String?    @map("ref_no")
+  registrationNo String?    @map("registration_no")
+  examDate       DateTime?  @map("exam_date") @db.Date
+  issueDate      DateTime?  @map("issue_date") @db.Date
+  consultantName String?    @map("consultant_name")
+
+  height         String?
+  weight         String?
+  pulse          String?
+  bloodPressure  String?    @map("blood_pressure")
+
+  visionRightEye  String?   @map("vision_right_eye")
+  visionLeftEye   String?   @map("vision_left_eye")
+  /// true = "with glass", false = "without glass".
+  visionWithGlass Boolean?  @map("vision_with_glass")
+
+  colorVisionYellow String? @map("color_vision_yellow")
+  colorVisionRed    String? @map("color_vision_red")
+  colorVisionGreen  String? @map("color_vision_green")
+  colorVisionBlue   String? @map("color_vision_blue")
+
+  hearingRightEar String?   @map("hearing_right_ear")
+  hearingLeftEar  String?   @map("hearing_left_ear")
+  speech          String?
+  extremities     String?
+
+  noAnemiaJaundiceEtc           Boolean? @map("no_anemia_jaundice_etc")
+  stableNormotensiveNondiabetic Boolean? @map("stable_normotensive_nondiabetic")
+  urineTestClear                Boolean? @map("urine_test_clear")
+  hepatitisBNegative             Boolean? @map("hepatitis_b_negative")
+  liverFunctionNormal            Boolean? @map("liver_function_normal")
+  pastIllnessHistory             String?  @map("past_illness_history")
+  familyHistoryDmHtn             Boolean? @map("family_history_dm_htn")
+  familyHistoryDetail            String?  @map("family_history_detail")
+
+  bloodGroup     String?    @map("blood_group")
+  /// The doctor's overall determination — drives whether clearance is valid.
+  fitToJoin      Boolean?   @map("fit_to_join")
+  remarks        String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("medical_exams")
 }
 
 /// A document the candidate submitted (stored on Drive), with AI extraction.
@@ -723,14 +856,16 @@ model OnboardingDoc {
   @@map("onboarding_docs")
 }
 
-/// Phase 3 — one panelist's rubric scores + comments for a candidate in a round.
+/// Phase 3 — one panelist's scores + comments for a candidate in a round.
+/// Scored against the fixed 10-criteria set (see salary-fixation.constants.ts)
+/// — the same criteria feed both the hiring scorecard and salary fixation.
 model Evaluation {
   id          String         @id @default(cuid())
   roundId     String         @map("round_id")
   round       InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
   evaluatorId String         @map("evaluator_id")
   evaluator   User           @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
-  /// { rubricCriterionId: score, ... }
+  /// { criterionKey: score, ... }
   scores      Json
   comments    String?
   total       Float          @default(0)
@@ -757,32 +892,7 @@ model CommitteeMember {
   @@map("committee_members")
 }
 
-/// Phase 3 — a scored criterion in a requisition's interview rubric.
-model RubricCriterion {
-  id            String      @id @default(cuid())
-  requisitionId String      @map("requisition_id")
-  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  label         String      @db.VarChar(150)
-  maxScore      Int         @default(10) @map("max_score")
-  orderIndex    Int         @default(0) @map("order_index")
-
-  @@map("rubric_criteria")
-}
-
 /// Phase 3 — a component of a requisition's assessment plan (written/excel/skill/viva).
-model AssessmentComponent {
-  id            String         @id @default(cuid())
-  requisitionId String         @map("requisition_id")
-  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  type          AssessmentType
-  maxScore      Float          @default(100) @map("max_score")
-  /// Display/sort order within the requisition's assessment plan (lower = shown first).
-  orderIndex    Int            @default(0) @map("order_index")
-
-  @@unique([requisitionId, type])
-  @@map("assessment_components")
-}
-
 model ApprovalStep {
   id            String       @id @default(cuid())
   requisitionId String       @map("requisition_id")
@@ -865,6 +975,10 @@ model BoardApproval {
   hrApprovedById   String?             @map("hr_approved_by_id")
   hrApprovedBy     User?               @relation("BoardApprovalHrApprover", fields: [hrApprovedById], references: [id], onDelete: SetNull)
   hrApprovalNote   String?             @db.VarChar(500) @map("hr_approval_note")
+  /// Required whenever HR approves on the board's behalf (not needed for a real board member's vote) — justifying documentation.
+  hrApprovalAttachmentFileId String?   @map("hr_approval_attachment_file_id")
+  hrApprovalAttachmentUrl    String?   @map("hr_approval_attachment_url")
+  hrApprovalAttachmentName   String?   @map("hr_approval_attachment_name")
   hrApprovedAt     DateTime?           @map("hr_approved_at")
   createdAt        DateTime            @default(now()) @map("created_at")
   updatedAt        DateTime            @updatedAt @map("updated_at")
@@ -885,6 +999,33 @@ model BoardApprovalVote {
   respondedAt     DateTime?       @map("responded_at")
 
   @@map("board_approval_votes")
+}
+
+/// Post-selection provisioning: HR notifies whoever will physically arrange a
+/// confirmed facility (Laptop/Desktop → IT, Transport/Dormitory/Seating →
+/// Admin) by email; each recipient gets their own one-time confirmation link.
+/// One or more rows per (candidate, facility) — HR can notify a single person
+/// or several at once; any one of them confirming marks it arranged.
+model FacilityNotification {
+  id              String    @id @default(cuid())
+  candidateId     String    @map("candidate_id")
+  candidate       Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  /// laptopDesktop | transport | dormitory | seating
+  facilityKey     String    @map("facility_key") @db.VarChar(20)
+  recipientUserId String    @map("recipient_user_id")
+  recipientUser   User      @relation("FacilityNotificationRecipient", fields: [recipientUserId], references: [id])
+  recipientName   String    @map("recipient_name") @db.VarChar(150)
+  recipientEmail  String    @map("recipient_email") @db.VarChar(254)
+  token           String    @unique @db.VarChar(64)
+  tokenExpiresAt  DateTime  @map("token_expires_at")
+  sentById        String    @map("sent_by_id")
+  sentBy          User      @relation("FacilityNotificationSentBy", fields: [sentById], references: [id])
+  sentAt          DateTime  @default(now()) @map("sent_at")
+  confirmedAt     DateTime? @map("confirmed_at")
+  confirmNote     String?   @map("confirm_note")
+
+  @@index([candidateId, facilityKey])
+  @@map("facility_notifications")
 }
 
 model SyncLog {

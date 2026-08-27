@@ -1,15 +1,55 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
+  IsDefined,
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNotEmptyObject,
   IsOptional,
   IsString,
   Min,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+/** One facility request from the requisitioner — HR's confirm/skip decision is added server-side. */
+export class FacilityRequestDto {
+  @IsBoolean()
+  requested!: boolean;
+
+  /** 'laptop'|'desktop' for laptopDesktop; 'existing'|'new' for seating; unused otherwise. */
+  @IsOptional()
+  @IsIn(['laptop', 'desktop', 'existing', 'new'])
+  option?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class FacilitiesRequestDto {
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => FacilityRequestDto)
+  laptopDesktop!: FacilityRequestDto;
+
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => FacilityRequestDto)
+  transport!: FacilityRequestDto;
+
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => FacilityRequestDto)
+  dormitory!: FacilityRequestDto;
+
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => FacilityRequestDto)
+  seating!: FacilityRequestDto;
+}
 
 export class SignatoriesDto {
   @IsString()
@@ -93,15 +133,11 @@ export class CreateRequisitionDto {
   @IsString()
   others?: string;
 
-  @IsIn(['not_applicable', 'desktop', 'laptop'])
-  computer!: 'not_applicable' | 'desktop' | 'laptop';
-
-  @IsOptional()
-  @IsString()
-  computerReason?: string;
-
-  @IsIn(['existing', 'new'])
-  seating!: 'existing' | 'new';
+  @IsDefined()
+  @IsNotEmptyObject()
+  @ValidateNested()
+  @Type(() => FacilitiesRequestDto)
+  facilities!: FacilitiesRequestDto;
 
   @IsOptional()
   @IsArray()

@@ -11,8 +11,6 @@ export interface AiConfig {
   autoScreen: boolean;
   /** Auto-generate the AI role profile when a requisition is fully approved. */
   autoRoleProfile: boolean;
-  /** Auto-generate evaluation summary when interview modal is opened. */
-  autoEvalSummary: boolean;
 }
 
 export interface NotificationConfig {
@@ -20,17 +18,29 @@ export interface NotificationConfig {
   emailEnabled: boolean;
 }
 
+export interface ScreeningConfig {
+  /** Minimum % of Written Test marks to pass (0-100). */
+  writtenTestPassPct: number;
+  /** Minimum % of AI Proficiency Test marks to pass (0-100). */
+  aiTestPassPct: number;
+}
+
 const AI_KEY = 'ai';
 const NOTIFICATION_KEY = 'notifications';
+const SCREENING_KEY = 'screening';
 
 const DEFAULT_AI: AiConfig = {
   shortlistThreshold: 60,
   autoScreen: true,
   autoRoleProfile: false,
-  autoEvalSummary: false,
 };
 
 const DEFAULT_NOTIFICATION: NotificationConfig = { emailEnabled: true };
+
+const DEFAULT_SCREENING: ScreeningConfig = {
+  writtenTestPassPct: 50,
+  aiTestPassPct: 50,
+};
 
 const clamp = (n: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, Math.round(n)));
@@ -56,7 +66,6 @@ export class SettingsService {
       ),
       autoScreen: v.autoScreen ?? DEFAULT_AI.autoScreen,
       autoRoleProfile: v.autoRoleProfile ?? DEFAULT_AI.autoRoleProfile,
-      autoEvalSummary: v.autoEvalSummary ?? DEFAULT_AI.autoEvalSummary,
     };
   }
 
@@ -79,7 +88,6 @@ export class SettingsService {
           : current.shortlistThreshold,
       autoScreen: input.autoScreen ?? current.autoScreen,
       autoRoleProfile: input.autoRoleProfile ?? current.autoRoleProfile,
-      autoEvalSummary: input.autoEvalSummary ?? current.autoEvalSummary,
     };
     await this.prisma.setting.upsert({
       where: { key: AI_KEY },
@@ -113,6 +121,51 @@ export class SettingsService {
       where: { key: NOTIFICATION_KEY },
       create: {
         key: NOTIFICATION_KEY,
+        value: merged as unknown as Prisma.InputJsonValue,
+      },
+      update: { value: merged as unknown as Prisma.InputJsonValue },
+    });
+    return merged;
+  }
+
+  /** Effective screening config (defaults merged with stored overrides). */
+  async getScreeningConfig(): Promise<ScreeningConfig> {
+    const row = await this.prisma.setting.findUnique({
+      where: { key: SCREENING_KEY },
+    });
+    const v = (row?.value as Partial<ScreeningConfig> | null) ?? {};
+    return {
+      writtenTestPassPct: clamp(
+        v.writtenTestPassPct ?? DEFAULT_SCREENING.writtenTestPassPct,
+        0,
+        100,
+      ),
+      aiTestPassPct: clamp(
+        v.aiTestPassPct ?? DEFAULT_SCREENING.aiTestPassPct,
+        0,
+        100,
+      ),
+    };
+  }
+
+  async setScreeningConfig(
+    input: Partial<ScreeningConfig>,
+  ): Promise<ScreeningConfig> {
+    const current = await this.getScreeningConfig();
+    const merged: ScreeningConfig = {
+      writtenTestPassPct:
+        input.writtenTestPassPct !== undefined
+          ? clamp(input.writtenTestPassPct, 0, 100)
+          : current.writtenTestPassPct,
+      aiTestPassPct:
+        input.aiTestPassPct !== undefined
+          ? clamp(input.aiTestPassPct, 0, 100)
+          : current.aiTestPassPct,
+    };
+    await this.prisma.setting.upsert({
+      where: { key: SCREENING_KEY },
+      create: {
+        key: SCREENING_KEY,
         value: merged as unknown as Prisma.InputJsonValue,
       },
       update: { value: merged as unknown as Prisma.InputJsonValue },

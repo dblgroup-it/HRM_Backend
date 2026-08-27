@@ -31,6 +31,8 @@ import { RbacModule } from './modules/rbac/rbac.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AutomationModule } from './modules/automation/automation.module';
 import { BoardModule } from './modules/board/board.module';
+import { SalaryFixationModule } from './modules/salary-fixation/salary-fixation.module';
+import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.module';
 
 @Module({
   imports: [
@@ -61,6 +63,8 @@ import { BoardModule } from './modules/board/board.module';
     RealtimeModule,
     AutomationModule,
     BoardModule,
+    SalaryFixationModule,
+    AiProficiencyModule,
   ],
   controllers: [HealthController],
   providers: [

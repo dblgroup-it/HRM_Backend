@@ -16,6 +16,12 @@ export class OrganogramController {
     return this.organogramService.getOrganogram(user.id);
   }
 
+  /** Distinct grade values already in use (Employee + Position) — for the grade input's suggestions. */
+  @Get('grade-values')
+  getGradeValues() {
+    return this.organogramService.getGradeValues();
+  }
+
   @Get('lookup')
   lookup(@Query() query: SeatLookupDto, @CurrentUser() user: AuthUser) {
     return this.organogramService.lookup(

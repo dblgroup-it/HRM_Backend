@@ -1,5 +1,6 @@
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsIn,
   IsInt,
@@ -8,10 +9,36 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 import { PaginationDto } from '../../../common/dto/pagination.dto';
+import { JOB_GRADES } from '../../salary-fixation/salary-fixation.constants';
+
+const FACILITY_KEYS = ['laptopDesktop', 'transport', 'dormitory', 'seating'];
+
+/** One facility confirm/skip decision, made by whichever role is the current pending approver. */
+export class FacilityDecisionDto {
+  @IsIn(FACILITY_KEYS)
+  key!: 'laptopDesktop' | 'transport' | 'dormitory' | 'seating';
+
+  @IsIn(['confirmed', 'skipped'])
+  status!: 'confirmed' | 'skipped';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  hrNote?: string;
+}
+
+export class UpdateFacilitiesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => FacilityDecisionDto)
+  decisions!: FacilityDecisionDto[];
+}
 
 /** Editable fields when a requisition is bounced back for clarification. */
 export class UpdateRequisitionDto {
@@ -73,6 +100,11 @@ export class UpdateRequisitionDto {
     each: true,
   })
   preferredSources?: string[];
+
+  /** Confirmed job grade for this post — one of JOB_GRADES, or '' to clear. */
+  @IsOptional()
+  @IsIn([...JOB_GRADES, ''])
+  grade?: string;
 }
 
 export class ApprovalActionDto {

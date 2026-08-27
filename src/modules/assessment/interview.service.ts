@@ -21,6 +21,10 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
 import {
+  CRITERIA as EVALUATION_CRITERIA,
+  scoreCriteria,
+} from '../salary-fixation/salary-fixation.constants';
+import {
   CalendarService,
   type CalendarEventInput,
 } from '../integrations/google/calendar.service';
@@ -278,8 +282,6 @@ export class InterviewService {
             code: true,
             designation: true,
             unitFactory: true,
-            rubricCriteria: true,
-            interviewQuestions: true,
           },
         },
         evaluations: { where: { evaluatorId: userId } },
@@ -309,15 +311,7 @@ export class InterviewService {
           designation: r.requisition.designation,
           unit: r.requisition.unitFactory,
         },
-        rubric: [...r.requisition.rubricCriteria]
-          .sort((a, b) => a.orderIndex - b.orderIndex)
-          .map((c) => ({ id: c.id, label: c.label, maxScore: c.maxScore })),
-        interviewQuestions: Array.isArray(r.requisition.interviewQuestions)
-          ? (r.requisition.interviewQuestions as {
-              category: string;
-              question: string;
-            }[])
-          : [],
+        criteria: EVALUATION_CRITERIA,
         myEvaluation: mine
           ? {
               scores: mine.scores as Record<string, number>,
@@ -329,7 +323,16 @@ export class InterviewService {
     });
   }
 
-  /** A panelist submits / updates their rubric marks for a candidate. */
+  /** Validate + clamp a panelist's submission against the fixed evaluation criteria. */
+  private buildScores(input: Record<string, number> | undefined) {
+    try {
+      return scoreCriteria(input);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  /** A panelist submits / updates their marks for a candidate. */
   async submitEvaluation(
     roundId: string,
     userId: string,
@@ -354,25 +357,13 @@ export class InterviewService {
       );
     }
 
-    const criteria = await this.prisma.rubricCriterion.findMany({
-      where: { requisitionId: round.requisitionId },
-    });
-    const cleanScores: Record<string, number> = {};
-    let total = 0;
-    for (const c of criteria) {
-      const raw = Number(dto.scores?.[c.id] ?? 0);
-      const score = Number.isFinite(raw)
-        ? Math.max(0, Math.min(c.maxScore, Math.round(raw)))
-        : 0;
-      cleanScores[c.id] = score;
-      total += score;
-    }
+    const { scores, total } = this.buildScores(dto.scores);
 
     await this.prisma.evaluation.create({
       data: {
         roundId,
         evaluatorId: userId,
-        scores: cleanScores,
+        scores,
         comments: dto.comments?.trim() || null,
         total,
       },
@@ -404,8 +395,6 @@ export class InterviewService {
               select: {
                 designation: true,
                 unitFactory: true,
-                rubricCriteria: true,
-                interviewQuestions: true,
               },
             },
           },
@@ -438,19 +427,12 @@ export class InterviewService {
           evaluatorId: et.panelistUserId,
         },
       },
-      select: { scores: true, comments: true, total: true },
+      select: {
+        scores: true,
+        comments: true,
+        total: true,
+      },
     });
-
-    const rubric = [...et.round.requisition.rubricCriteria]
-      .sort((a, b) => a.orderIndex - b.orderIndex)
-      .map((c) => ({ id: c.id, label: c.label, maxScore: c.maxScore }));
-
-    const questions = Array.isArray(et.round.requisition.interviewQuestions)
-      ? (et.round.requisition.interviewQuestions as {
-          category: string;
-          question: string;
-        }[])
-      : [];
 
     return {
       status: et.status,
@@ -465,8 +447,7 @@ export class InterviewService {
         designation: et.round.requisition.designation,
         unit: et.round.requisition.unitFactory,
       },
-      rubric,
-      interviewQuestions: questions,
+      criteria: EVALUATION_CRITERIA,
       submittedEval: existingEval
         ? {
             scores: existingEval.scores as Record<string, number>,
@@ -477,7 +458,7 @@ export class InterviewService {
     };
   }
 
-  /** Public: submit rubric marks via a one-click token (no login). */
+  /** Public: submit marks via a one-click token (no login). */
   async submitEvalByToken(token: string, dto: SubmitEvaluationDto) {
     const et = await this.prisma.evaluationToken.findUnique({
       where: { token },
@@ -511,26 +492,14 @@ export class InterviewService {
       );
     }
 
-    const criteria = await this.prisma.rubricCriterion.findMany({
-      where: { requisitionId: et.round.requisitionId },
-    });
-    const cleanScores: Record<string, number> = {};
-    let total = 0;
-    for (const c of criteria) {
-      const raw = Number(dto.scores?.[c.id] ?? 0);
-      const score = Number.isFinite(raw)
-        ? Math.max(0, Math.min(c.maxScore, Math.round(raw)))
-        : 0;
-      cleanScores[c.id] = score;
-      total += score;
-    }
+    const { scores, total } = this.buildScores(dto.scores);
 
     await this.prisma.$transaction([
       this.prisma.evaluation.create({
         data: {
           roundId: et.roundId,
           evaluatorId: et.panelistUserId,
-          scores: cleanScores,
+          scores,
           comments: dto.comments?.trim() || null,
           total,
         },
@@ -588,96 +557,6 @@ export class InterviewService {
     return { evalLink: evalLink(newToken) };
   }
 
-  // --- send interview questions to panelists --------------------------------
-
-  async sendQuestions(roundId: string, userId: string) {
-    const round = await this.prisma.interviewRound.findUnique({
-      where: { id: roundId },
-      include: {
-        panelists: { include: { user: true } },
-        requisition: {
-          select: {
-            interviewQuestions: true,
-            designation: true,
-            unitFactory: true,
-          },
-        },
-      },
-    });
-    if (!round) throw new NotFoundException('Interview not found');
-    await this.requireRecruitmentAccess(round.requisition.unitFactory, userId);
-
-    const questions = Array.isArray(round.requisition.interviewQuestions)
-      ? (round.requisition.interviewQuestions as {
-          category: string;
-          question: string;
-        }[])
-      : [];
-
-    if (questions.length === 0) {
-      throw new BadRequestException(
-        'No interview questions have been generated for this requisition yet',
-      );
-    }
-
-    if (!this.mail.isConfigured()) {
-      return {
-        sent: 0,
-        total: round.panelists.length,
-        note: 'Mail not configured',
-      };
-    }
-
-    const grouped = new Map<string, string[]>();
-    for (const q of questions) {
-      const arr = grouped.get(q.category) ?? [];
-      arr.push(q.question);
-      grouped.set(q.category, arr);
-    }
-    const body = [...grouped.entries()]
-      .map(
-        ([cat, qs]) =>
-          `${cat}\n${qs.map((q, i) => `  ${i + 1}. ${q}`).join('\n')}`,
-      )
-      .join('\n\n');
-
-    let sent = 0;
-    for (const p of round.panelists) {
-      if (!p.user.email) continue;
-      try {
-        await this.mail.send({
-          to: p.user.email,
-          subject: `Interview Questions — ${round.requisition.designation} | DBL Group`,
-          text: [
-            `Dear ${p.user.name},`,
-            '',
-            `Here are the ${cap(round.kind.toLowerCase())} interview questions for the ${round.requisition.designation} position:`,
-            '',
-            body,
-            '',
-            'Please review these before the interview.',
-            '',
-            'Best regards,',
-            'DBL Group Recruitment',
-          ].join('\n'),
-        });
-        sent++;
-      } catch (err) {
-        this.logger.warn(
-          `Failed to send questions to ${p.user.email}: ${(err as Error).message}`,
-        );
-      }
-    }
-
-    if (sent > 0) {
-      await this.prisma.interviewRound.update({
-        where: { id: roundId },
-        data: { questionsSentAt: new Date() },
-      });
-    }
-
-    return { sent, total: round.panelists.length };
-  }
 
   // --- helpers -------------------------------------------------------------
 
@@ -865,7 +744,7 @@ function serializeRound(r: RoundFull) {
     status: r.status.toLowerCase(),
     meetLink: r.meetLink ?? null,
     calendarSynced: Boolean(r.calendarEventId),
-    questionsSentAt: r.questionsSentAt?.toISOString() ?? null,
+    criteria: EVALUATION_CRITERIA,
     panelists: r.panelists.map((p) => {
       const tok = tokenMap.get(p.userId);
       return {

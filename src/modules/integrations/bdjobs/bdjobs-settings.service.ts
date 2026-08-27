@@ -23,7 +23,7 @@ export interface BdJobsSettings {
   deadlineDays: number;
   /** Send our own apply-page URL with the ad by default. */
   applyOnlineDefault: boolean;
-  /** Public origin used to build the apply link (falls back to CORS_ORIGIN). */
+  /** Public origin used to build the apply link (falls back to FRONTEND_URL). */
   publicApplyBaseUrl: string;
   /** Years of experience below which a job is Entry / Mid (else Top). */
   entryLevelMaxYears: number;

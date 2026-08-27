@@ -37,6 +37,20 @@ class UpdateNotificationSettingsDto {
   emailEnabled?: boolean;
 }
 
+class UpdateScreeningSettingsDto {
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  writtenTestPassPct?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  aiTestPassPct?: number;
+}
+
 @Controller('settings')
 export class SettingsController {
   constructor(
@@ -92,5 +106,25 @@ export class SettingsController {
       );
     }
     return this.settings.setNotificationConfig(dto);
+  }
+
+  /** Anyone authenticated can read the pass marks (shown in Salary Fixation). */
+  @Get('screening')
+  getScreening() {
+    return this.settings.getScreeningConfig();
+  }
+
+  /** Only super users may change the pass marks. */
+  @Patch('screening')
+  async updateScreening(
+    @Body() dto: UpdateScreeningSettingsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (!(await this.permissions.isSuperUser(user.id))) {
+      throw new ForbiddenException(
+        'Only a super user can change screening pass marks',
+      );
+    }
+    return this.settings.setScreeningConfig(dto);
   }
 }

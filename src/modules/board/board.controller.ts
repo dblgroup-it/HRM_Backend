@@ -6,10 +6,14 @@ import {
   Param,
   Patch,
   Post,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 import { AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
-import { BoardService } from './board.service';
+import { DOC_UPLOAD } from '../../common/upload/file-upload';
+import { BoardService, type UploadedAttachment } from './board.service';
 import {
   AddMembersDto,
   CreateBoardGroupDto,
@@ -71,11 +75,13 @@ export class BoardController {
   }
 
   @Post('candidates/:id/board-approval/hr-approve')
+  @UseInterceptors(FileInterceptor('file', DOC_UPLOAD))
   hrApprove(
     @Param('id') candidateId: string,
     @CurrentUser() user: AuthUser,
     @Body() dto: HrApproveDto,
+    @UploadedFile() file?: UploadedAttachment,
   ) {
-    return this.board.hrApprove(candidateId, user.id, dto.note);
+    return this.board.hrApprove(candidateId, user.id, dto.note, file);
   }
 }

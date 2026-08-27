@@ -53,10 +53,29 @@ export interface RoleProfileResult {
   requirements: string[];
 }
 
-export interface InterviewQuestion {
-  category: string;
-  question: string;
+export interface GenerateProficiencyQuestionsInput {
+  grade: string;
+  count: number;
+  topic?: string;
 }
+
+export interface GeneratedProficiencyQuestion {
+  prompt: string;
+  options: string[];
+  answer: string;
+  marks: number;
+}
+
+/** Qualitative seniority hint per job grade — only used to steer AI question difficulty/tone. */
+const GRADE_LEVEL_HINT: Record<string, string> = {
+  M1: 'entry-level / junior staff',
+  M2: 'junior officer',
+  M3: 'officer / mid-level executive',
+  M4: 'senior officer / assistant manager',
+  M5: 'manager',
+  M6: 'senior manager / deputy general manager',
+  M7: 'general manager / director / senior executive leadership',
+};
 
 export interface ScreenInput {
   cvMimeType: string;
@@ -184,9 +203,6 @@ export interface DraftRequisitionResult {
   education: string;
   experience: string;
   others: string;
-  computer: 'not_applicable' | 'desktop' | 'laptop';
-  computerReason: string;
-  seating: 'existing' | 'new';
   preferredSources: (
     | 'job_advertisement'
     | 'headhunting'
@@ -213,6 +229,20 @@ export interface TalentBankSearchInput {
 export interface TalentBankSearchOutput {
   results: { id: string; relevance: number; reason: string }[];
   summary: string;
+}
+
+export interface TalentBankRequisitionMatchInput {
+  requisition: {
+    designation: string;
+    jobDescription: string;
+    education: string;
+    experience: string;
+    others?: string | null;
+    placeOfPosting?: string | null;
+    responsibilities?: string[];
+    requirements?: string[];
+  };
+  candidates: TalentBankSearchInput['candidates'];
 }
 
 export interface RouteCvInput {
@@ -461,6 +491,72 @@ Use clear field names that match the document, for example: Full Name, Document 
   }
 
   /**
+   * Generate a batch of general-knowledge MCQ questions for the AI Proficiency
+   * question bank, pitched at one job grade's seniority level and applicable
+   * across any common requisition type (not tied to a specific department).
+   * Used by Configuration → AI Proficiency Question Bank's "Generate with AI".
+   */
+  async generateProficiencyQuestions(
+    input: GenerateProficiencyQuestionsInput,
+  ): Promise<GeneratedProficiencyQuestion[]> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const prompt = this.buildProficiencyQuestionsPrompt(input);
+    const maxTokens = Math.min(4000, 220 * input.count + 400);
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, maxTokens)
+        : await this.callGemini(prompt);
+    return this.parseProficiencyQuestions(raw, input.count);
+  }
+
+  private buildProficiencyQuestionsPrompt(i: GenerateProficiencyQuestionsInput): string {
+    const level = GRADE_LEVEL_HINT[i.grade] ?? 'general staff';
+    return `You are building an HR pre-interview screening test for DBL Group, a large Bangladeshi manufacturing conglomerate. Generate ${i.count} multiple-choice questions suitable for candidates at job grade ${i.grade} (${level}).
+
+These questions must be GENERAL — applicable across ANY common requisition type the company hires for (accounts, HR, production, sales, admin, IT, supply chain, etc.), NOT specific to one technical field. Cover a mix of: basic numerical/quantitative reasoning, logical reasoning, workplace communication and professional judgment, and general business/office awareness — all calibrated to what a ${level} candidate should reasonably know.
+${i.topic?.trim() ? `Lean the mix toward this focus area where it fits naturally, without abandoning general coverage: ${i.topic.trim()}.` : ''}
+
+Each question needs exactly 4 answer options with exactly one correct answer. Keep prompts concise (under 200 characters) and options short (under 60 characters each). Assign "marks" as an integer 1-3 based on difficulty (1 = easy, 2 = moderate, 3 = harder).
+
+Respond with ONLY a compact JSON array and nothing else, in this exact shape:
+[{"prompt":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"<must exactly match one of the options>","marks":<1-3>}]`;
+  }
+
+  private parseProficiencyQuestions(raw: string, count: number): GeneratedProficiencyQuestion[] {
+    try {
+      const match = raw.match(/\[[\s\S]*\]/);
+      const arr = JSON.parse(match ? match[0] : raw) as unknown[];
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((q) => {
+          const o = q as {
+            prompt?: unknown;
+            options?: unknown;
+            answer?: unknown;
+            marks?: unknown;
+          };
+          const options = Array.isArray(o.options)
+            ? o.options.map((opt) => String(opt).slice(0, 200)).filter(Boolean)
+            : [];
+          const answer = String(o.answer ?? '');
+          return {
+            prompt: String(o.prompt ?? '').slice(0, 500),
+            options,
+            answer,
+            marks: Math.max(1, Math.min(3, Math.round(Number(o.marks)) || 1)),
+          };
+        })
+        .filter((q) => q.prompt && q.options.length >= 2 && q.options.includes(q.answer))
+        .slice(0, count);
+    } catch {
+      this.logger.warn(`Could not parse AI proficiency questions: ${raw.slice(0, 120)}`);
+      return [];
+    }
+  }
+
+  /**
    * Screen a candidate's CV (image/PDF) against a role and return a 0-100 match
    * score with a short rationale. Used by the AI Shortlisting stage.
    */
@@ -649,14 +745,12 @@ RULES
 - "jobDescription": 3-6 concrete responsibilities for THIS role at THIS department, written as sentences separated by newlines. Be specific to manufacturing, not generic.
 - "education": the realistic academic requirement (e.g. "Bachelor of Science (BSc) in Textile Engineering").
 - "experience": e.g. "3-5 years in a similar role in a large textile/apparel manufacturing setup".
-- "computer": "not_applicable" for floor/operator roles; "desktop" for office/executive roles; "laptop" for managerial/travelling roles. If desktop/laptop, give a one-line "computerReason".
-- "seating": "existing" unless a brand-new seat is clearly implied.
 - "preferredSources": sensible subset of ["job_advertisement","headhunting","referral","cv_bank"].
 - "notes": one short sentence listing anything you assumed or could not determine, so the human can check it.
 - NEVER invent a unit or department that is not listed above.
 
 Respond with ONLY a compact JSON object and nothing else:
-{"designation":"","unitFactory":"","department":"","section":"","source":"factory|ho","requiredPosts":1,"placeOfPosting":"","vacantDate":"","neededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","computer":"not_applicable|desktop|laptop","computerReason":"","seating":"existing|new","preferredSources":[],"notes":""}`;
+{"designation":"","unitFactory":"","department":"","section":"","source":"factory|ho","requiredPosts":1,"placeOfPosting":"","vacantDate":"","neededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","preferredSources":[],"notes":""}`;
   }
 
   /** Parse + hard-clamp every value to something the form will accept. */
@@ -699,7 +793,8 @@ Respond with ONLY a compact JSON object and nothing else:
     // The department must exist in that unit.
     const depts =
       input.structure.find((s) => s.unit === unitFactory)?.departments ?? [];
-    const wantedDept = str(obj.department).toLowerCase();
+    const rawDept = str(obj.department);
+    const wantedDept = rawDept.toLowerCase();
     const department =
       depts.find((d) => d.department.toLowerCase() === wantedDept)
         ?.department ??
@@ -709,16 +804,17 @@ Respond with ONLY a compact JSON object and nothing else:
           (wantedDept && wantedDept.includes(d.department.toLowerCase())),
       )?.department ??
       '';
+    // The model's guess didn't match anything real for this unit — say so,
+    // rather than silently leaving Department/Section blank with no clue why.
+    const departmentNote =
+      !department && rawDept
+        ? `Couldn't match a department for "${rawDept}" — please pick one manually.`
+        : '';
 
     const employmentNature = pick(
       obj.employmentNature,
       ['permanent', 'temporary', 'contractual'] as const,
       'permanent',
-    );
-    const computer = pick(
-      obj.computer,
-      ['not_applicable', 'desktop', 'laptop'] as const,
-      'not_applicable',
     );
     const sources = ['job_advertisement', 'headhunting', 'referral', 'cv_bank'];
     const preferredSources = Array.isArray(obj.preferredSources)
@@ -759,13 +855,9 @@ Respond with ONLY a compact JSON object and nothing else:
       education: str(obj.education, 500),
       experience: str(obj.experience, 500),
       others: str(obj.others, 1000),
-      computer,
-      computerReason:
-        computer === 'not_applicable' ? '' : str(obj.computerReason, 300),
-      seating: pick(obj.seating, ['existing', 'new'] as const, 'existing'),
       preferredSources:
         preferredSources as DraftRequisitionResult['preferredSources'],
-      notes: str(obj.notes, 400),
+      notes: [str(obj.notes, 400), departmentNote].filter(Boolean).join(' '),
     };
   }
 
@@ -861,6 +953,54 @@ Analyse the query — extract the role/designation, factory or unit (e.g. JTML =
 
 Respond with ONLY a compact JSON object and nothing else:
 {"summary":"<one sentence on what you found>","results":[{"id":"<candidate id exactly as given>","relevance":<integer 0-100>,"reason":"<one short sentence why this candidate fits the query>"}]}`;
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, 900)
+        : await this.callGemini(prompt);
+    return this.parseTalentBankSearch(raw, input.candidates.map((c) => c.id));
+  }
+
+  /**
+   * Automatic sourcing: scores every eligible Talent Bank candidate's
+   * relevance against one specific requisition's role, instead of a
+   * free-text hiring query. Reuses the same ranked-JSON contract as
+   * `searchTalentBank` so both share `parseTalentBankSearch`.
+   */
+  async matchTalentBankToRequisition(
+    input: TalentBankRequisitionMatchInput,
+  ): Promise<TalentBankSearchOutput> {
+    if (!this.isConfigured()) throw new ServiceUnavailableException('AI is not configured');
+    const list = input.candidates
+      .map(
+        (c) =>
+          `ID:${c.id} | ${c.name} | Role: ${c.role} | Unit: ${c.unit}${c.department ? ` / ${c.department}` : ''} | Score: ${c.matchScore ?? 'n/a'}% | ${(c.matchSummary ?? '').slice(0, 160)}`,
+      )
+      .join('\n');
+    const r = input.requisition;
+    const target = [
+      `Designation: ${r.designation}`,
+      `Place of posting: ${r.placeOfPosting ?? 'n/a'}`,
+      `Education: ${r.education}`,
+      `Experience: ${r.experience}`,
+      r.others ? `Other requirements: ${r.others}` : null,
+      `Job description: ${r.jobDescription}`,
+      r.responsibilities?.length ? `Responsibilities: ${r.responsibilities.join('; ')}` : null,
+      r.requirements?.length ? `Requirements: ${r.requirements.join('; ')}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const prompt = `You are an HR talent-sourcing assistant for DBL Group, a Bangladeshi manufacturing company. Search the Talent Bank below and find candidates who fit the open role, so recruiters can proactively invite them into this requisition's pipeline.
+
+OPEN ROLE:
+${target}
+
+TALENT BANK (${input.candidates.length} candidates):
+${list}
+
+Score each candidate's fit for the open role (0-100), considering designation, unit/department relevance, education and experience alignment. Only include candidates with relevance >= 40. Return up to 10 best matches ranked by relevance.
+
+Respond with ONLY a compact JSON object and nothing else:
+{"summary":"<one sentence on what you found>","results":[{"id":"<candidate id exactly as given>","relevance":<integer 0-100>,"reason":"<one short sentence why this candidate fits the role>"}]}`;
     const raw =
       this.provider === 'claude'
         ? await this.callClaude(prompt, 900)
@@ -1104,55 +1244,6 @@ Include EVERY candidate exactly once using the exact label values (${labels.join
     }
   }
 
-  /** Generate role-specific interview questions for the panel. */
-  async generateInterviewQuestions(
-    input: RoleProfileInput,
-  ): Promise<InterviewQuestion[]> {
-    if (!this.isConfigured()) {
-      throw new ServiceUnavailableException('AI is not configured');
-    }
-    const prompt = `You are an expert interviewer at DBL Group. Generate a focused set of interview questions for the role below, tailored to its responsibilities and requirements.
-
-Position: ${input.designation}
-Department: ${input.department}
-Job description: ${input.jobDescription || '(none)'}
-Required education: ${input.education}
-Required experience: ${input.experience}
-Key responsibilities:
-${(input.responsibilities ?? []).map((r) => `- ${r}`).join('\n') || '(none)'}
-Key requirements:
-${(input.requirements ?? []).map((r) => `- ${r}`).join('\n') || '(none)'}
-
-Produce 10-14 questions grouped by category (e.g. "Technical", "Role-specific", "Behavioral", "Situational"). Make them specific to THIS role, not generic. Respond with ONLY a compact JSON array and nothing else:
-[{"category":"<category>","question":"<question>"}]`;
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt)
-        : await this.callGemini(prompt);
-    return this.parseQuestions(raw);
-  }
-
-  private parseQuestions(raw: string): InterviewQuestion[] {
-    try {
-      const match = raw.match(/\[[\s\S]*\]/);
-      const arr = JSON.parse(match ? match[0] : raw) as unknown[];
-      if (!Array.isArray(arr)) return [];
-      return arr
-        .map((q) => {
-          const o = q as { category?: unknown; question?: unknown };
-          return {
-            category: String(o.category ?? 'General').slice(0, 60),
-            question: String(o.question ?? '').slice(0, 500),
-          };
-        })
-        .filter((q) => q.question)
-        .slice(0, 20);
-    } catch {
-      this.logger.warn(`Could not parse AI questions: ${raw.slice(0, 120)}`);
-      return [];
-    }
-  }
-
   private buildRoleProfilePrompt(i: RoleProfileInput): string {
     return `You are an experienced HR business partner at DBL Group, a large Bangladeshi manufacturing conglomerate. Write a clear, professional job role profile for the position below, ready to publish to candidates.
 
@@ -1267,7 +1358,11 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
 
   private async fetchJson<T>(url: string, init: RequestInit): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60_000);
+    // Large grounding prompts (e.g. the requisition draft, which enumerates
+    // every unit/department a Corporate HR user can see) routinely take
+    // 15-20s and have been observed to occasionally spike well past 60s —
+    // callers already budget up to 90s client-side, so match that here.
+    const timer = setTimeout(() => controller.abort(), 85_000);
     try {
       const r = await fetch(url, { ...init, signal: controller.signal });
       const json = (await r.json()) as T;

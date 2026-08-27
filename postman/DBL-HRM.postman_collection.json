@@ -1,0 +1,5399 @@
+{
+  "info": {
+    "name": "DBL HRM API",
+    "description": "Full API surface for the DBL HRM backend (manpower requisition & hiring lifecycle). Run \"Auth → Login\" first — it saves the JWT into the {{token}} collection variable automatically, which every other request uses via Bearer auth. Routes marked as no-auth in their folder (Public - ...) don't need a token. Path segments like :id are Postman path variables — fill them in the \"Path Variables\" tab or edit the URL directly.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Employee code or admin email as identifier. Saves the JWT into {{token}} automatically.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"15108446\",\n  \"password\": \"15108446\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  if (data && data.data && data.data.token) {",
+                  "    pm.collectionVariables.set(\"token\", data.data.token);",
+                  "    console.log(\"Saved token to {{token}}\");",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get current user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"email\": \"\",\n  \"phone\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/change-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "change-password"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"\",\n  \"newPassword\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reset user password (admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/users/:userId/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "users",
+                ":userId",
+                "reset-password"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login with 2FA code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login/2fa",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login",
+                "2fa"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"challengeToken\": \"\",\n  \"code\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get 2FA status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start TOTP setup",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/totp/setup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "totp",
+                "setup"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Enable TOTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/totp/enable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "totp",
+                "enable"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start email 2FA",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/email/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "email",
+                "start"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Enable email 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/email/enable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "email",
+                "enable"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Disable 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/2fa/disable",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "2fa",
+                "disable"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Employees",
+      "item": [
+        {
+          "name": "List employees",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/employees?page=1&pageSize=20&search=&department=&unit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": false
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20",
+                  "disabled": false
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "department",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "unit",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Org structure",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/employees/structure?unit=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                "structure"
+              ],
+              "query": [
+                {
+                  "key": "unit",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get employee",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/employees/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update employee",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/employees/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "employees",
+                ":id"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"phone\": \"\",\n  \"email\": \"\",\n  \"gender\": \"Male\",\n  \"dateOfBirth\": \"1995-01-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get my preferences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me",
+                "preferences"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update my preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/me/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me",
+                "preferences"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailNotifications\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload my avatar",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me/avatar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me",
+                "avatar"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete my avatar",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/me/avatar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "me",
+                "avatar"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get user avatar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/:userId/avatar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                ":userId",
+                "avatar"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Units (Configuration)",
+      "item": [
+        {
+          "name": "List units",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/units",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get unit",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/units/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create unit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/units",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Unit Ltd.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update unit",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/units/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                ":id"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete unit",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/units/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create department",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/units/:id/departments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                ":id",
+                "departments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"IT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update department",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/units/departments/:departmentId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                "departments",
+                ":departmentId"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete department",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/units/departments/:departmentId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                "departments",
+                ":departmentId"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create/upsert position (seat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/units/departments/:departmentId/positions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                "departments",
+                ":departmentId",
+                "positions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"designation\": \"Executive\",\n  \"section\": \"\",\n  \"category\": \"OFFICER\",\n  \"grade\": \"M4\",\n  \"sanctioned\": 1,\n  \"filled\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update position (seat)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/units/positions/:positionId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                "positions",
+                ":positionId"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"designation\": \"\",\n  \"section\": \"\",\n  \"category\": \"OFFICER\",\n  \"grade\": \"M4\",\n  \"sanctioned\": 1,\n  \"filled\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete position (seat)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/units/positions/:positionId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "units",
+                "positions",
+                ":positionId"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Organogram",
+      "item": [
+        {
+          "name": "Get organogram",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organogram",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organogram"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get grade values",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organogram/grade-values",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organogram",
+                "grade-values"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Seat lookup (new vs replacement)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/organogram/lookup?unit=&department=&designation=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "organogram",
+                "lookup"
+              ],
+              "query": [
+                {
+                  "key": "unit",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "department",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "designation",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "RBAC (Access Control)",
+      "item": [
+        {
+          "name": "My permissions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me/permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "permissions"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"factory_hr\",\n  \"description\": \"\",\n  \"scope\": \"UNIT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update role",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/roles/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles",
+                ":id"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"description\": \"\",\n  \"scope\": \"UNIT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/roles/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "roles",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List role assignments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/role-assignments?roleId=&unitId=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "role-assignments"
+              ],
+              "query": [
+                {
+                  "key": "roleId",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "unitId",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create role assignment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/role-assignments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "role-assignments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roleId\": \"\",\n  \"userId\": \"\",\n  \"unitId\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete role assignment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/role-assignments/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "role-assignments",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "item": [
+        {
+          "name": "Get AI settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/settings/ai",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "ai"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update AI settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/ai",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "ai"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shortlistThreshold\": 60,\n  \"autoScreen\": true,\n  \"autoRoleProfile\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get notification settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/settings/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "notifications"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update notification settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "notifications"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailEnabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get screening settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/settings/screening",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "screening"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update screening settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/screening",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "settings",
+                "screening"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"writtenTestPassPct\": 50,\n  \"aiTestPassPct\": 45\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Requisitions",
+      "item": [
+        {
+          "name": "List requisitions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions?page=1&pageSize=20&search=&status=&unitFactory=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": false
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20",
+                  "disabled": false
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "unitFactory",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Requisition stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/stats?page=1&pageSize=20&search=&status=&unitFactory=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                "stats"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": false
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20",
+                  "disabled": false
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "unitFactory",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "AI-draft a requisition",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/draft",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                "draft"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"We need a Junior System Engineer for the IT department at JTML\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get requisition",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create requisition",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"designation\": \"Jr System Engineer\",\n  \"source\": \"factory\",\n  \"requiredPosts\": 1,\n  \"totalVacantPosts\": 1,\n  \"unitFactory\": \"\",\n  \"department\": \"IT\",\n  \"section\": \"\",\n  \"placeOfPosting\": \"\",\n  \"vacantDate\": \"2026-09-01\",\n  \"neededDate\": \"2026-09-15\",\n  \"priority\": \"moderate\",\n  \"employmentNature\": \"permanent\",\n  \"contractualPurpose\": \"\",\n  \"jobDescription\": \"Describe the role...\",\n  \"education\": \"BSc in CSE\",\n  \"experience\": \"0-2 years\",\n  \"others\": \"\",\n  \"facilities\": {\n    \"laptopDesktop\": {\n      \"requested\": true,\n      \"option\": \"laptop\",\n      \"note\": \"\"\n    },\n    \"transport\": {\n      \"requested\": false,\n      \"option\": \"\",\n      \"note\": \"\"\n    },\n    \"dormitory\": {\n      \"requested\": false,\n      \"option\": \"\",\n      \"note\": \"\"\n    },\n    \"seating\": {\n      \"requested\": true,\n      \"option\": \"\",\n      \"note\": \"\"\n    }\n  },\n  \"preferredSources\": [\n    \"job_advertisement\"\n  ],\n  \"signatories\": {\n    \"departmentHeadName\": \"\",\n    \"departmentHeadDesignation\": \"\",\n    \"factoryHRName\": \"\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update requisition",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requiredPosts\": 1,\n  \"totalVacantPosts\": 1,\n  \"placeOfPosting\": \"\",\n  \"vacantDate\": \"\",\n  \"neededDate\": \"\",\n  \"priority\": \"moderate\",\n  \"employmentNature\": \"permanent\",\n  \"contractualPurpose\": \"\",\n  \"jobDescription\": \"\",\n  \"education\": \"\",\n  \"experience\": \"\",\n  \"others\": \"\",\n  \"preferredSources\": [\n    \"job_advertisement\"\n  ],\n  \"grade\": \"M4\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update facility decisions",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id/facilities",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id",
+                "facilities"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisions\": [\n    {\n      \"key\": \"laptopDesktop\",\n      \"status\": \"confirmed\",\n      \"hrNote\": \"\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Act on approval step",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id/approval",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id",
+                "approval"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"approved\",\n  \"note\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Generate AI role profile",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id/role-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id",
+                "role-profile"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update role profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id/role-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id",
+                "role-profile"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"summary\": \"\",\n  \"jobDescription\": \"\",\n  \"responsibilities\": [\n    \"Responsibility 1\"\n  ],\n  \"requirements\": [\n    \"Requirement 1\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Post requisition (publish to sources)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id",
+                "post"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sources\": [\n    \"job_advertisement\",\n    \"cv_bank\"\n  ],\n  \"closingDate\": \"2026-10-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload attachment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id/attachments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id",
+                "attachments"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete attachment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:id/attachments/:fileId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":id",
+                "attachments",
+                ":fileId"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Candidates / Recruitment",
+      "item": [
+        {
+          "name": "Get recruitment workspace",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/recruitment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "recruitment"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Setup recruitment workspace (Drive tree)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/recruitment/setup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "recruitment",
+                "setup"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Talent Bank",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/talent-pool",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                "talent-pool"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search Talent Bank",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/talent-pool/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                "talent-pool",
+                "search"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List candidates for requisition",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates?page=1&pageSize=50&stage=&minScore=&search=&sortBy=recent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": false
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50",
+                  "disabled": false
+                },
+                {
+                  "key": "stage",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "minScore",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "sortBy",
+                  "value": "recent",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Talent Bank matches",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/talent-bank-matches",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "talent-bank-matches"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Sync Talent Bank matches",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/talent-bank-matches/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "talent-bank-matches",
+                "sync"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get screening status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates/screening-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates",
+                "screening-status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Export candidates (CSV)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates/export?page=1&pageSize=200&stage=&minScore=&search=&sortBy=recent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": false
+                },
+                {
+                  "key": "pageSize",
+                  "value": "200",
+                  "disabled": false
+                },
+                {
+                  "key": "stage",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "minScore",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "sortBy",
+                  "value": "recent",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk reject below score",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates/bulk-reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates",
+                "bulk-reject"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"maxScore\": 40\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Sync CVs from Drive",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates/sync-drive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates",
+                "sync-drive"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "AI screen all candidates",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates/screen",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates",
+                "screen"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "AI compare finalists",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates/compare",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates",
+                "compare"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "AI screen one candidate",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/screen",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "screen"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create candidate (manual, with CV)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "candidates"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "name",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "email",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "phone",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "notes",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "source",
+                  "value": "manual",
+                  "type": "text"
+                },
+                {
+                  "key": "cv",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update candidate",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"email\": \"\",\n  \"phone\": \"\",\n  \"notes\": \"\",\n  \"stage\": \"shortlisted\",\n  \"talentPool\": false,\n  \"salaryExpectation\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get apply history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/apply-history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "apply-history"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark candidate viewed",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/view",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "view"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Replace candidate CV",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/cv",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "cv"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "cv",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Email candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/email",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "email"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"\",\n  \"message\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Flag candidate (red flag)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/flag",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "flag"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unflag candidate",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/flag",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "flag"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete candidate",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Copy candidate to another requisition",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/copy-to-requisition",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "copy-to-requisition"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requisitionId\": \"\",\n  \"force\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin: fix CV sharing",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/candidates/fix-cv-sharing",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "candidates",
+                "fix-cv-sharing"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Public - Apply",
+      "item": [
+        {
+          "name": "List open jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/apply/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "apply",
+                "jobs"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Application status by email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/apply/status?email=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "apply",
+                "status"
+              ],
+              "query": [
+                {
+                  "key": "email",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get job posting",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/apply/:reqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "apply",
+                ":reqId"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit application",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/apply/:reqId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "apply",
+                ":reqId"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "name",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "email",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "phone",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "salaryExpectation",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "cv",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Assessment",
+      "item": [
+        {
+          "name": "Get assessment setup",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/assessment",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "assessment"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Add committee member",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/committee",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "committee"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"memberUserId\": \"\",\n  \"role\": \"interviewer\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove committee member",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/committee/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "committee",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get scorecard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/assessment/scorecard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "assessment",
+                "scorecard"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Save assessment notes",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/assessment/notes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "assessment",
+                "notes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Generate AI evaluation summary",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:candidateId/evaluation-summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":candidateId",
+                "evaluation-summary"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Public - Evaluation",
+      "item": [
+        {
+          "name": "Get evaluation form by token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/eval/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "eval",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit evaluation by token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/eval/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "eval",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scores\": {\n    \"criterionKey\": 5\n  },\n  \"comments\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Interviews",
+      "item": [
+        {
+          "name": "My interviews (as panelist)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/my-interviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "my-interviews"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit interview evaluation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/interviews/:roundId/evaluation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "interviews",
+                ":roundId",
+                "evaluation"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scores\": {\n    \"criterionKey\": 5\n  },\n  \"comments\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List interviews for requisition",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/interviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "interviews"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List interviews for candidate",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:candidateId/interviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":candidateId",
+                "interviews"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk schedule interviews",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/interviews/bulk",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "interviews",
+                "bulk"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"candidateIds\": [\n    \"\"\n  ],\n  \"kind\": \"first\",\n  \"mode\": \"physical\",\n  \"scheduledAts\": [],\n  \"location\": \"\",\n  \"panelistUserIds\": [\n    \"\"\n  ],\n  \"notifyCandidate\": true,\n  \"notifyPanel\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Schedule interview for candidate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:candidateId/interviews",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":candidateId",
+                "interviews"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"first\",\n  \"mode\": \"physical\",\n  \"scheduledAt\": \"2026-09-10T10:00:00\",\n  \"location\": \"HQ Board Room\",\n  \"panelistUserIds\": [\n    \"\"\n  ],\n  \"notifyCandidate\": true,\n  \"notifyPanel\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update interview round",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/interviews/:roundId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "interviews",
+                ":roundId"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"first\",\n  \"mode\": \"physical\",\n  \"scheduledAt\": \"\",\n  \"location\": \"\",\n  \"status\": \"completed\",\n  \"panelistUserIds\": [\n    \"\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete interview round",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/interviews/:roundId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "interviews",
+                ":roundId"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Resend evaluation link to panelist",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/interviews/:roundId/eval-token/:panelistUserId/resend",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "interviews",
+                ":roundId",
+                "eval-token",
+                ":panelistUserId",
+                "resend"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Board Approval",
+      "item": [
+        {
+          "name": "List board groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/board-groups",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-groups"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create board group",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/board-groups",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-groups"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"description\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update board group",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/board-groups/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-groups",
+                ":id"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"description\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete board group",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/board-groups/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-groups",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Add board group members",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/board-groups/:id/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-groups",
+                ":id",
+                "members"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userIds\": [\n    \"\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove board group member",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/board-groups/:id/members/:userId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-groups",
+                ":id",
+                "members",
+                ":userId"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Send for board approval",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/board-approval",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "board-approval"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"memberIds\": [\n    \"\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get board approval status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/board-approval",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "board-approval"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "HR records approval manually (with doc)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/board-approval/hr-approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "board-approval",
+                "hr-approve"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "note",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Public - Board Vote",
+      "item": [
+        {
+          "name": "Get board vote by token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/board-vote/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-vote",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit board vote",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/board-vote/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "board-vote",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Salary Fixation",
+      "item": [
+        {
+          "name": "Get salary fixation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/salary-fixation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "salary-fixation"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upsert salary fixation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/salary-fixation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "salary-fixation"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobGrade\": \"M4\",\n  \"writtenTestEnabled\": false,\n  \"writtenTestTotal\": null,\n  \"writtenTestObtained\": null,\n  \"aiTestEnabled\": true,\n  \"aiTestTotal\": null,\n  \"aiTestObtained\": null,\n  \"bandOverride\": null,\n  \"proposedSalaryOverride\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark as offered",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/salary-fixation/offer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "salary-fixation",
+                "offer"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Finalize salary fixation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/salary-fixation/finalize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "salary-fixation",
+                "finalize"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "AI Proficiency (Admin)",
+      "item": [
+        {
+          "name": "List questions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/questions?search=&grade=&page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                "questions"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "grade",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Add question",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                "questions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"\",\n  \"options\": [\n    \"Option A\",\n    \"Option B\"\n  ],\n  \"answer\": \"Option A\",\n  \"marks\": 1,\n  \"grades\": [\n    \"M4\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "AI-generate questions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/questions/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                "questions",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grade\": \"M4\",\n  \"count\": 10,\n  \"topic\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk add generated questions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/questions/bulk",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                "questions",
+                "bulk"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"prompt\": \"\",\n      \"options\": [\n        \"Option A\",\n        \"Option B\"\n      ],\n      \"answer\": \"Option A\",\n      \"marks\": 1,\n      \"grades\": [\n        \"M4\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update question",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/questions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                "questions",
+                ":id"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"\",\n  \"options\": [\n    \"Option A\",\n    \"Option B\"\n  ],\n  \"answer\": \"Option A\",\n  \"marks\": 1,\n  \"grades\": [\n    \"M4\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete question",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/questions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                "questions",
+                ":id"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk delete questions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/questions/bulk-delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                "questions",
+                "bulk-delete"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ids\": [\n    \"\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get candidate AI test status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/ai-proficiency",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "ai-proficiency"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get candidate AI test review (breakdown)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/ai-proficiency/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "ai-proficiency",
+                "review"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Assign AI proficiency test",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/ai-proficiency",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "ai-proficiency"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobGrade\": \"M4\",\n  \"questionCount\": 20,\n  \"notifyCandidate\": true,\n  \"timeLimitMinutes\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Public - AI Proficiency Test",
+      "item": [
+        {
+          "name": "Get test by token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start test",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/:token/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                ":token",
+                "start"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Record a tab-switch violation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/:token/violation",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                ":token",
+                "violation"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leftAt\": \"2026-09-01T10:05:00Z\",\n  \"returnedAt\": \"\",\n  \"endedTest\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit test",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai-proficiency/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai-proficiency",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answers\": {\n    \"questionId\": \"Option A\"\n  },\n  \"reason\": \"time_up\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Onboarding",
+      "item": [
+        {
+          "name": "Medical clearance queue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/medical-queue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "medical-queue"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Set medical clearance status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/:id/medical",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                ":id",
+                "medical"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"cleared\",\n  \"note\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get medical exam form",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/:id/medical-exam",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                ":id",
+                "medical-exam"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Save medical exam form",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/:id/medical-exam",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                ":id",
+                "medical-exam"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dateOfBirth\": \"1995-01-01\",\n  \"dutyPosition\": \"\",\n  \"registrationNo\": \"\",\n  \"examDate\": \"2026-09-01\",\n  \"issueDate\": \"2026-09-01\",\n  \"consultantName\": \"\",\n  \"height\": \"\",\n  \"weight\": \"\",\n  \"pulse\": \"\",\n  \"bloodPressure\": \"\",\n  \"visionRightEye\": \"\",\n  \"visionLeftEye\": \"\",\n  \"visionWithGlass\": false,\n  \"colorVisionYellow\": \"Normal\",\n  \"colorVisionRed\": \"Normal\",\n  \"colorVisionGreen\": \"Normal\",\n  \"colorVisionBlue\": \"Normal\",\n  \"hearingRightEar\": \"Normal\",\n  \"hearingLeftEar\": \"Normal\",\n  \"speech\": \"Normal\",\n  \"extremities\": \"Normal\",\n  \"noAnemiaJaundiceEtc\": true,\n  \"stableNormotensiveNondiabetic\": true,\n  \"urineTestClear\": true,\n  \"hepatitisBNegative\": true,\n  \"liverFunctionNormal\": true,\n  \"pastIllnessHistory\": \"Not remarkable\",\n  \"familyHistoryDmHtn\": true,\n  \"familyHistoryDetail\": \"\",\n  \"bloodGroup\": \"A+ve\",\n  \"fitToJoin\": true,\n  \"remarks\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload signed medical report",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/:id/medical-report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                ":id",
+                "medical-report"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "AI-summarize a document",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/docs/:docId/summarize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "docs",
+                ":docId",
+                "summarize"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify a document",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/docs/:docId/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "docs",
+                ":docId",
+                "verify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"verified\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get onboarding for candidate",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start onboarding",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Send document submission link",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/send-link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "send-link"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Send offer letter",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/offer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "offer"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark offer accepted manually",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/offer/mark-accepted",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "offer",
+                "mark-accepted"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "AI cross-check documents",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/cross-check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "cross-check"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Manual cross-check verdict",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/cross-check/manual",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "cross-check",
+                "manual"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verdict\": \"consistent\",\n  \"note\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "HR final verification",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/hr-verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "hr-verify"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Skip document collection",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/skip-docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "skip-docs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Skip document verification",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/skip-verification",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "skip-verification"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Archive joining documents",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/archive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "archive"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Notify IT & complete onboarding",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/onboarding/notify-it",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "onboarding",
+                "notify-it"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Public - Onboarding",
+      "item": [
+        {
+          "name": "Get onboarding by token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/public/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "public",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Submit a joining document",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/public/:token/docs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "public",
+                ":token",
+                "docs"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "label",
+                  "value": "National ID / Passport",
+                  "type": "text"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Accept offer",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/onboarding/public/:token/accept-offer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "onboarding",
+                "public",
+                ":token",
+                "accept-offer"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Facility Provisioning",
+      "item": [
+        {
+          "name": "Get facility provisioning",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/facility-provisioning",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "facility-provisioning"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Suggest recipients for a facility",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/facility-provisioning/:key/suggest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "facility-provisioning",
+                ":key",
+                "suggest"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Notify recipients for a facility",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/candidates/:id/facility-provisioning/:key/notify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "candidates",
+                ":id",
+                "facility-provisioning",
+                ":key",
+                "notify"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipients\": [\n    {\n      \"userId\": \"\",\n      \"name\": \"\",\n      \"email\": \"\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Public - Facility Provisioning",
+      "item": [
+        {
+          "name": "Get facility confirmation by token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/facility-provisioning/:token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "facility-provisioning",
+                ":token"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Confirm facility provisioned",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/facility-provisioning/:token/confirm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "facility-provisioning",
+                ":token",
+                "confirm"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Integrations - ZingHR",
+      "item": [
+        {
+          "name": "Trigger manual sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/zinghr/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "zinghr",
+                "sync"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get sync status (live log)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/zinghr/sync/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "zinghr",
+                "sync",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get sync logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/zinghr/logs?take=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "zinghr",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "take",
+                  "value": "50",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Integrations - Google",
+      "item": [
+        {
+          "name": "Get Drive connection status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/google/drive/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "google",
+                "drive",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Start OAuth consent",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/google/oauth/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "google",
+                "oauth",
+                "start"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "OAuth callback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/google/oauth/callback?code=&error=&state=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "google",
+                "oauth",
+                "callback"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "error",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "state",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Integrations - BDJobs",
+      "item": [
+        {
+          "name": "Get BDJobs settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "settings"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update BDJobs settings",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "settings"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"baseUrl\": \"\",\n  \"companyId\": \"\",\n  \"authToken\": \"\",\n  \"decodeId\": \"\",\n  \"signatureFormat\": \"\",\n  \"specialInstruction\": \"\",\n  \"otherBenefits\": \"\",\n  \"deadlineDays\": 15,\n  \"applyOnlineDefault\": true,\n  \"publicApplyBaseUrl\": \"\",\n  \"entryLevelMaxYears\": 2,\n  \"midLevelMaxYears\": 8\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Test BDJobs credentials",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/test",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "test"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"baseUrl\": \"\",\n  \"companyId\": \"\",\n  \"authToken\": \"\",\n  \"decodeId\": \"\",\n  \"signatureFormat\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search locations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/locations?search=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "locations"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "categories"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List education levels",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/education-levels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "education-levels"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List degrees for an education level",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/degrees?eduLevelId=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "degrees"
+              ],
+              "query": [
+                {
+                  "key": "eduLevelId",
+                  "value": "1",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search industries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/industry?searchtxt=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "industry"
+              ],
+              "query": [
+                {
+                  "key": "searchtxt",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search skills",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/skills?search=&catId=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "skills"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "disabled": false
+                },
+                {
+                  "key": "catId",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get BDJobs posting for requisition",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/bdjobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "bdjobs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Post requisition to BDJobs",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/requisitions/:reqId/bdjobs/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "requisitions",
+                ":reqId",
+                "bdjobs",
+                "post"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobTitle\": \"\",\n  \"vacancyNo\": 1,\n  \"locationIds\": [\n    1\n  ],\n  \"locationNames\": [\n    \"Dhaka\"\n  ],\n  \"categoryId\": null,\n  \"categoryName\": \"\",\n  \"employmentStatus\": [\n    \"Full Time\"\n  ],\n  \"workplace\": [\n    \"Work at office\"\n  ],\n  \"salaryMin\": null,\n  \"salaryMax\": null,\n  \"showSalary\": false,\n  \"jobDescription\": \"\",\n  \"preferredGender\": \"Both\",\n  \"ageMin\": null,\n  \"ageMax\": null,\n  \"experienceYears\": null,\n  \"educationLevelId\": null,\n  \"educationLevelName\": \"\",\n  \"educationDegreeId\": null,\n  \"educationDegreeName\": \"\",\n  \"educationConcentration\": \"\",\n  \"industryExperience\": [\n    {\n      \"id\": \"\",\n      \"name\": \"\"\n    }\n  ],\n  \"skills\": [\n    {\n      \"id\": 0,\n      \"name\": \"\"\n    }\n  ],\n  \"additionalRequirements\": \"\",\n  \"restrictAge\": false,\n  \"restrictGender\": false,\n  \"restrictExperience\": false,\n  \"applyOnline\": true,\n  \"publishLinkedIn\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get BDJobs integration status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Inbound candidate webhook (from BDJobs)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-authtoken",
+                "value": ""
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/integrations/bdjobs/candidates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "integrations",
+                "bdjobs",
+                "candidates"
+              ]
+            },
+            "description": "Signed webhook from BDJobs — normally not called manually. Requires a valid x-api-authtoken header (SHA-256 signature) verified server-side.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jobReferenceId\": \"\",\n  \"bdJobsJobId\": \"\",\n  \"applicationId\": \"\",\n  \"candidate\": {\n    \"name\": \"\",\n    \"email\": \"\",\n    \"phone\": \"\"\n  },\n  \"profile\": {\n    \"bdjobsApplicantId\": \"\",\n    \"skills\": []\n  },\n  \"resume\": {\n    \"url\": \"\",\n    \"fileName\": \"\",\n    \"mimeType\": \"application/pdf\"\n  },\n  \"ts\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Automation (Admin only)",
+      "item": [
+        {
+          "name": "Get automation status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/automation/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "automation",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get automation logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/automation/logs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "automation",
+                "logs"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Pause a job",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/automation/:job/pause",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "automation",
+                ":job",
+                "pause"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"days\": 7\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Resume a job",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/automation/:job/resume",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "automation",
+                ":job",
+                "resume"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger Gmail ingest",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/automation/gmail-ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "automation",
+                "gmail-ingest"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger nudges",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/automation/nudges",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "automation",
+                "nudges"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger backup",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/automation/backup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "automation",
+                "backup"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Insights",
+      "item": [
+        {
+          "name": "Get insights status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/insights/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "insights",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Ask AI a question",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/insights/ask",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "insights",
+                "ask"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How many requisitions are open right now?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get daily digest",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/insights/digest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "insights",
+                "digest"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get pipeline bottlenecks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/insights/bottlenecks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "insights",
+                "bottlenecks"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Get dashboard data",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/dashboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "dashboard"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unread count",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/unread-count",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "unread-count"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark one as read",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                ":id",
+                "read"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Mark all as read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "read-all"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

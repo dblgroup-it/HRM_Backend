@@ -24,6 +24,7 @@ import { CandidatesService, type UploadedCv } from './candidates.service';
 import {
   BulkRejectDto,
   CandidateQueryDto,
+  CopyToRequisitionDto,
   CreateCandidateDto,
   EmailCandidateDto,
   FlagCandidateDto,
@@ -64,6 +65,19 @@ export class CandidatesController {
     @Query() query: CandidateQueryDto,
   ) {
     return this.candidates.list(reqId, user.id, query);
+  }
+
+  /** Talent Bank candidates the AI has automatically matched to this requisition. */
+  @Get('requisitions/:reqId/talent-bank-matches')
+  talentBankMatches(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.listTalentBankMatches(reqId, user.id);
+  }
+
+  /** Manual refresh alongside the automatic triggers. */
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('requisitions/:reqId/talent-bank-matches/sync')
+  rescanTalentBankMatches(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.rescanTalentBankMatches(reqId, user.id);
   }
 
   @Get('requisitions/:reqId/candidates/screening-status')
@@ -197,10 +211,15 @@ export class CandidatesController {
   @Post('candidates/:id/copy-to-requisition')
   copyToRequisition(
     @Param('id') id: string,
-    @Body() body: { requisitionId: string },
+    @Body() body: CopyToRequisitionDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.candidates.copyToRequisition(id, body.requisitionId, user.id);
+    return this.candidates.copyToRequisition(
+      id,
+      body.requisitionId,
+      user.id,
+      body.force,
+    );
   }
 
   /** One-time admin fix: share all existing private CV files as "anyone with link". */

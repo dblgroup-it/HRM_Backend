@@ -5,6 +5,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
@@ -52,6 +53,11 @@ export class UpsertPositionDto {
   @IsEnum(SeatCategory)
   category?: SeatCategory;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  grade?: string;
+
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -77,6 +83,11 @@ export class UpdatePositionDto {
   @IsOptional()
   @IsEnum(SeatCategory)
   category?: SeatCategory;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  grade?: string;
 
   @IsOptional()
   @Type(() => Number)

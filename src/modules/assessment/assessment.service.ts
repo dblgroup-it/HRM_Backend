@@ -5,16 +5,11 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { AssessmentType, Prisma } from '@prisma/client';
-
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
-import {
-  AddCommitteeMemberDto,
-  SetPlanDto,
-  SetRubricDto,
-} from './dto/assessment.dto';
+import { CRITERIA, TOTAL_MAX } from '../salary-fixation/salary-fixation.constants';
+import { AddCommitteeMemberDto } from './dto/assessment.dto';
 
 @Injectable()
 export class AssessmentService {
@@ -26,22 +21,11 @@ export class AssessmentService {
 
   async getSetup(reqId: string, userId: string) {
     const req = await this.loadReq(reqId, userId);
-    const [committee, rubric, plan, aiSetting] = await Promise.all([
-      this.prisma.committeeMember.findMany({
-        where: { requisitionId: reqId },
-        include: { user: { include: { employee: true } } },
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.rubricCriterion.findMany({
-        where: { requisitionId: reqId },
-        orderBy: { orderIndex: 'asc' },
-      }),
-      this.prisma.assessmentComponent.findMany({
-        where: { requisitionId: reqId },
-        orderBy: { orderIndex: 'asc' },
-      }),
-      this.prisma.setting.findUnique({ where: { key: 'ai' } }),
-    ]);
+    const committee = await this.prisma.committeeMember.findMany({
+      where: { requisitionId: reqId },
+      include: { user: { include: { employee: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
 
     return {
       committee: committee.map((m) => ({
@@ -53,23 +37,7 @@ export class AssessmentService {
         department: m.user.employee?.department ?? null,
         role: m.role,
       })),
-      rubric: rubric.map((c) => ({
-        id: c.id,
-        label: c.label,
-        maxScore: c.maxScore,
-      })),
-      plan: plan.map((p) => ({
-        id: p.id,
-        type: p.type.toLowerCase(),
-        maxScore: p.maxScore,
-      })),
       aiEnabled: this.ai.isConfigured(),
-      autoEvalSummary:
-        (aiSetting?.value as { autoEvalSummary?: boolean } | null)
-          ?.autoEvalSummary ?? false,
-      interviewQuestions: Array.isArray(req.interviewQuestions)
-        ? (req.interviewQuestions as { category: string; question: string }[])
-        : [],
       deliberationNotes: req.deliberationNotes ?? null,
     };
   }
@@ -77,69 +45,61 @@ export class AssessmentService {
   async getScorecard(reqId: string, userId: string) {
     await this.loadReq(reqId, userId);
 
-    const [rubric, candidates] = await Promise.all([
-      this.prisma.rubricCriterion.findMany({ where: { requisitionId: reqId } }),
-      this.prisma.candidate.findMany({
-        where: {
-          requisitionId: reqId,
-          stage: {
-            in: [
-              'AI_SHORTLISTED',
-              'SHORTLISTED',
-              'INTERVIEW',
-              'FINAL',
-              'SELECTED',
-              'REJECTED',
-            ],
-          },
-          deletedAt: null,
+    const candidates = await this.prisma.candidate.findMany({
+      where: {
+        requisitionId: reqId,
+        stage: {
+          in: [
+            'AI_SHORTLISTED',
+            'SHORTLISTED',
+            'INTERVIEW',
+            'FINAL',
+            'SELECTED',
+            'REJECTED',
+          ],
         },
-        include: {
-          examAttempts: { where: { status: 'graded' } },
-          interviews: { include: { evaluations: true } },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
+        deletedAt: null,
+      },
+      include: {
+        interviews: { include: { evaluations: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
 
-    const rubricMax = rubric.reduce((s, r) => s + r.maxScore, 0);
+    const salaryFixations = await this.prisma.salaryFixation.findMany({
+      where: { candidateId: { in: candidates.map((c) => c.id) } },
+      select: { candidateId: true, aiTestTotal: true, aiTestObtained: true },
+    });
+    const aiScoreByCandidate = new Map(
+      salaryFixations
+        .filter((s) => s.aiTestTotal !== null && s.aiTestObtained !== null && s.aiTestTotal > 0)
+        .map((s) => [s.candidateId, round1((s.aiTestObtained! / s.aiTestTotal!) * 100)]),
+    );
 
     return candidates.map((c) => {
       // matchScore of 0 means "not screened" (default), not a genuine 0% match.
       const cvScore: number | null =
         c.matchScore !== null && c.matchScore > 0 ? c.matchScore : null;
 
-      // Best graded exam score per type, normalised to 0-100
-      const examScores: Record<string, number> = {};
-      for (const attempt of c.examAttempts) {
-        const raw = attempt.totalScore ?? attempt.autoScore;
-        if (raw === null || attempt.maxScore === 0) continue;
-        const pct = Math.round((raw / attempt.maxScore) * 100);
-        const key = attempt.examType.toLowerCase();
-        if (examScores[key] === undefined || examScores[key] < pct) {
-          examScores[key] = pct;
-        }
-      }
-
       // Average of all panelist evaluation totals, normalised to 0-100
       const allEvals = c.interviews.flatMap((r) => r.evaluations);
       let interviewAvg: number | null = null;
-      if (allEvals.length > 0 && rubricMax > 0) {
+      if (allEvals.length > 0) {
         const sum = allEvals.reduce((s, e) => s + e.total, 0);
-        interviewAvg = Math.round((sum / allEvals.length / rubricMax) * 100);
+        interviewAvg = round1((sum / allEvals.length / TOTAL_MAX) * 100);
       }
+
+      const aiProficiencyScore: number | null = aiScoreByCandidate.get(c.id) ?? null;
 
       // Simple average of non-null normalised components
       const components: number[] = [
         ...(cvScore !== null ? [cvScore] : []),
-        ...Object.values(examScores),
+        ...(aiProficiencyScore !== null ? [aiProficiencyScore] : []),
         ...(interviewAvg !== null ? [interviewAvg] : []),
       ];
       const combined =
         components.length > 0
-          ? Math.round(
-              components.reduce((a, b) => a + b, 0) / components.length,
-            )
+          ? round1(components.reduce((a, b) => a + b, 0) / components.length)
           : null;
 
       return {
@@ -147,7 +107,7 @@ export class AssessmentService {
         candidateName: c.name,
         stage: c.stage.toLowerCase(),
         cvScore,
-        examScores,
+        aiProficiencyScore,
         interviewAvg,
         combined,
       };
@@ -178,19 +138,13 @@ export class AssessmentService {
       userId,
     );
 
-    const [rounds, rubric] = await Promise.all([
-      this.prisma.interviewRound.findMany({
-        where: { candidateId },
-        include: {
-          evaluations: { include: { evaluator: { select: { name: true } } } },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.rubricCriterion.findMany({
-        where: { requisitionId: candidate.requisitionId },
-        orderBy: { orderIndex: 'asc' },
-      }),
-    ]);
+    const rounds = await this.prisma.interviewRound.findMany({
+      where: { candidateId },
+      include: {
+        evaluations: { include: { evaluator: { select: { name: true } } } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
 
     const allEvals = rounds.flatMap((r) => r.evaluations);
     if (allEvals.length === 0) {
@@ -199,11 +153,7 @@ export class AssessmentService {
       );
     }
 
-    const rubricMax = rubric.reduce((s, r) => s + r.maxScore, 0);
-    const rubricLine =
-      rubric.length > 0
-        ? rubric.map((c) => `${c.label} (max ${c.maxScore})`).join(', ')
-        : 'No rubric defined';
+    const criteriaLine = CRITERIA.map((c) => `${c.label} (max ${c.max})`).join(', ');
 
     const roundLines = rounds
       .filter((r) => r.evaluations.length > 0)
@@ -215,16 +165,14 @@ export class AssessmentService {
               ? 'Second'
               : 'Final';
         const evLines = r.evaluations.map((ev) => {
-          const scores = rubric
-            .map(
-              (c) =>
-                `${c.label}: ${(ev.scores as Record<string, number>)[c.id] ?? 0}/${c.maxScore}`,
-            )
-            .join(', ');
+          const scores = CRITERIA.map(
+            (c) =>
+              `${c.label}: ${(ev.scores as Record<string, number>)[c.key] ?? 0}/${c.max}`,
+          ).join(', ');
           const comment = ev.comments?.trim()
             ? ` — "${ev.comments.trim()}"`
             : '';
-          return `    • ${ev.evaluator.name}: ${scores} | Total ${ev.total}/${rubricMax}${comment}`;
+          return `    • ${ev.evaluator.name}: ${scores} | Total ${ev.total}/${TOTAL_MAX}${comment}`;
         });
         const avg =
           r.evaluations.length > 0
@@ -233,7 +181,7 @@ export class AssessmentService {
                   r.evaluations.length,
               )
             : 0;
-        return `${kindLabel} Interview (${r.evaluations.length} panelist${r.evaluations.length > 1 ? 's' : ''}, avg ${avg}/${rubricMax}):\n${evLines.join('\n')}`;
+        return `${kindLabel} Interview (${r.evaluations.length} panelist${r.evaluations.length > 1 ? 's' : ''}, avg ${avg}/${TOTAL_MAX}):\n${evLines.join('\n')}`;
       })
       .join('\n\n');
 
@@ -241,7 +189,7 @@ export class AssessmentService {
 
 Candidate: ${candidate.name}
 Role: ${candidate.requisition.designation} — ${candidate.requisition.department}, ${candidate.requisition.unitFactory}
-Rubric criteria: ${rubricLine}
+Evaluation criteria: ${criteriaLine}
 
 Panel evaluation data:
 ${roundLines}
@@ -256,43 +204,6 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
 
     const summary = await this.ai.complete(prompt, 400);
     return { summary: summary.trim() };
-  }
-
-  /** AI-generate role-specific interview questions and store them. */
-  async generateInterviewQuestions(reqId: string, userId: string) {
-    const req = await this.loadReq(reqId, userId);
-    if (!this.ai.isConfigured()) {
-      throw new ServiceUnavailableException('AI is not configured');
-    }
-    const rp =
-      (req.roleProfile as {
-        responsibilities?: string[];
-        requirements?: string[];
-      } | null) ?? null;
-    const questions = await this.ai.generateInterviewQuestions({
-      designation: req.designation,
-      department: req.department,
-      unitFactory: req.unitFactory,
-      placeOfPosting: req.placeOfPosting,
-      jobDescription: req.jobDescription,
-      education: req.education,
-      experience: req.experience,
-      others: req.others,
-      requiredPosts: req.requiredPosts,
-      responsibilities: Array.isArray(rp?.responsibilities)
-        ? rp?.responsibilities
-        : undefined,
-      requirements: Array.isArray(rp?.requirements)
-        ? rp?.requirements
-        : undefined,
-    });
-    await this.prisma.requisition.update({
-      where: { id: reqId },
-      data: {
-        interviewQuestions: questions as unknown as Prisma.InputJsonValue,
-      },
-    });
-    return this.getSetup(reqId, userId);
   }
 
   async addCommitteeMember(
@@ -334,46 +245,6 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
     return this.getSetup(member.requisitionId, userId);
   }
 
-  async setRubric(reqId: string, userId: string, dto: SetRubricDto) {
-    await this.loadReq(reqId, userId);
-    await this.prisma.$transaction([
-      this.prisma.rubricCriterion.deleteMany({
-        where: { requisitionId: reqId },
-      }),
-      ...dto.criteria.map((c, i) =>
-        this.prisma.rubricCriterion.create({
-          data: {
-            requisitionId: reqId,
-            label: c.label.trim(),
-            maxScore: c.maxScore,
-            orderIndex: i,
-          },
-        }),
-      ),
-    ]);
-    return this.getSetup(reqId, userId);
-  }
-
-  async setPlan(reqId: string, userId: string, dto: SetPlanDto) {
-    await this.loadReq(reqId, userId);
-    await this.prisma.$transaction([
-      this.prisma.assessmentComponent.deleteMany({
-        where: { requisitionId: reqId },
-      }),
-      ...dto.components.map((c, i) =>
-        this.prisma.assessmentComponent.create({
-          data: {
-            requisitionId: reqId,
-            type: c.type.toUpperCase() as AssessmentType,
-            maxScore: c.maxScore ?? 100,
-            orderIndex: i,
-          },
-        }),
-      ),
-    ]);
-    return this.getSetup(reqId, userId);
-  }
-
   // --- internals ----------------------------------------------------------
 
   private async loadReq(reqId: string, userId: string) {
@@ -398,4 +269,9 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
       );
     }
   }
+}
+
+/** Round to 1 decimal place — scores keep fractional precision instead of collapsing to a whole number. */
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }
