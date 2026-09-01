@@ -347,15 +347,16 @@ export class SalaryFixationService {
       screening.aiTestPassPct,
     );
     const failed = written.status === 'fail' || ai.status === 'fail';
-    const cleared =
-      (written.status === 'not_conducted' || written.status === 'pass') &&
-      (ai.status === 'not_conducted' || ai.status === 'pass');
 
     let averageScore: number | null = null;
     let computedBand: number | null = null;
     let autoProposedSalary: number | null = null;
 
-    if (cleared && committee.length > 0) {
+    // Compute from committee scores regardless of pass/fail — HR still needs
+    // to see where a failed candidate would land (e.g. to weigh an override).
+    // Finalizing is blocked separately below and in finalize() itself, so
+    // this doesn't let a failed candidate slip through.
+    if (committee.length > 0) {
       averageScore = committee.reduce((sum, c) => sum + c.total, 0) / committee.length;
       computedBand = bandFromScore(Math.round(averageScore));
       const effectiveBand = base.bandOverride ?? computedBand;

@@ -141,7 +141,7 @@ export class CreateRequisitionDto {
 
   @IsOptional()
   @IsArray()
-  @IsIn(['job_advertisement', 'headhunting', 'referral', 'cv_bank'], {
+  @IsIn(['job_advertisement', 'headhunting', 'cv_bank'], {
     each: true,
   })
   preferredSources?: string[];

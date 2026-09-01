@@ -206,7 +206,6 @@ export interface DraftRequisitionResult {
   preferredSources: (
     | 'job_advertisement'
     | 'headhunting'
-    | 'referral'
     | 'cv_bank'
   )[];
   /** Short note on what the AI assumed / could not determine. */
@@ -745,7 +744,7 @@ RULES
 - "jobDescription": 3-6 concrete responsibilities for THIS role at THIS department, written as sentences separated by newlines. Be specific to manufacturing, not generic.
 - "education": the realistic academic requirement (e.g. "Bachelor of Science (BSc) in Textile Engineering").
 - "experience": e.g. "3-5 years in a similar role in a large textile/apparel manufacturing setup".
-- "preferredSources": sensible subset of ["job_advertisement","headhunting","referral","cv_bank"].
+- "preferredSources": sensible subset of ["job_advertisement","headhunting","cv_bank"].
 - "notes": one short sentence listing anything you assumed or could not determine, so the human can check it.
 - NEVER invent a unit or department that is not listed above.
 
@@ -816,7 +815,7 @@ Respond with ONLY a compact JSON object and nothing else:
       ['permanent', 'temporary', 'contractual'] as const,
       'permanent',
     );
-    const sources = ['job_advertisement', 'headhunting', 'referral', 'cv_bank'];
+    const sources = ['job_advertisement', 'headhunting', 'cv_bank'];
     const preferredSources = Array.isArray(obj.preferredSources)
       ? (obj.preferredSources as unknown[])
           .map((s) => String(s).trim())
