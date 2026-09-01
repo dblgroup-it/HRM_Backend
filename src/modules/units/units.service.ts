@@ -1,11 +1,13 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Unit } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionsService } from '../rbac/permissions.service';
 import {
   CreateDepartmentDto,
   CreateUnitDto,
@@ -14,9 +16,64 @@ import {
   UpsertPositionDto,
 } from './dto/unit.dto';
 
+/** Dynamic RBAC roles allowed to manage a unit's own configuration
+ * (departments/seats) — corporate_hr and chro are global, factory_hr and
+ * sbu_head are scoped to the unit(s) they're actually assigned to. */
+const UNIT_CONFIG_ROLE_KEYS = ['corporate_hr', 'chro', 'factory_hr', 'sbu_head'];
+
 @Injectable()
 export class UnitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionsService,
+  ) {}
+
+  /** Can this user configure the named unit's departments/seats? Super users
+   * always can; otherwise they need one of UNIT_CONFIG_ROLE_KEYS for it
+   * (global roles match any unit, unit-scoped roles only their own). */
+  private async requireUnitAccess(unitName: string, userId: string): Promise<void> {
+    for (const key of UNIT_CONFIG_ROLE_KEYS) {
+      if (await this.permissions.hasRoleForUnitName(userId, key, unitName)) return;
+    }
+    throw new ForbiddenException(
+      'Only Corporate HR, CHRO, Factory HR or SBU Head for this unit can manage its configuration.',
+    );
+  }
+
+  /** Creating a brand-new unit isn't scoped to any existing unit, so only the
+   * global roles (or a super user) can do it — Factory HR/SBU Head manage the
+   * unit(s) they're already assigned to, not spin up new ones. */
+  private async requireGlobalAccess(userId: string): Promise<void> {
+    const isSuper = await this.permissions.isSuperUser(userId);
+    if (isSuper) return;
+    const perms = await this.permissions.getUserPermissions(userId);
+    const allowed = perms.roles.some(
+      (r) => r.key === 'corporate_hr' || r.key === 'chro',
+    );
+    if (!allowed) {
+      throw new ForbiddenException(
+        'Only Corporate HR or CHRO can create a new unit.',
+      );
+    }
+  }
+
+  private async unitNameOfDepartment(departmentId: string): Promise<string> {
+    const dept = await this.prisma.department.findUnique({
+      where: { id: departmentId },
+      include: { unit: { select: { name: true } } },
+    });
+    if (!dept) throw new NotFoundException('Department not found');
+    return dept.unit.name;
+  }
+
+  private async unitNameOfPosition(positionId: string): Promise<string> {
+    const pos = await this.prisma.position.findUnique({
+      where: { id: positionId },
+      include: { unit: { select: { name: true } } },
+    });
+    if (!pos) throw new NotFoundException('Position not found');
+    return pos.unit.name;
+  }
 
   findAll() {
     return this.prisma.unit.findMany({
@@ -38,6 +95,7 @@ export class UnitsService {
   }
 
   async create(dto: CreateUnitDto, userId: string): Promise<Unit> {
+    await this.requireGlobalAccess(userId);
     try {
       return await this.prisma.unit.create({
         data: { ...dto, createdById: userId, updatedById: userId },
@@ -48,7 +106,8 @@ export class UnitsService {
   }
 
   async update(id: string, dto: UpdateUnitDto, userId: string): Promise<Unit> {
-    await this.ensureExists(id);
+    const unit = await this.ensureExists(id);
+    await this.requireUnitAccess(unit.name, userId);
     try {
       return await this.prisma.unit.update({
         where: { id },
@@ -66,7 +125,8 @@ export class UnitsService {
   }
 
   async addDepartment(unitId: string, dto: CreateDepartmentDto, userId: string) {
-    await this.ensureExists(unitId);
+    const unit = await this.ensureExists(unitId);
+    await this.requireUnitAccess(unit.name, userId);
     try {
       return await this.prisma.department.create({
         data: { unitId, name: dto.name, createdById: userId, updatedById: userId },
@@ -77,6 +137,7 @@ export class UnitsService {
   }
 
   async updateDepartment(departmentId: string, name: string, userId: string) {
+    await this.requireUnitAccess(await this.unitNameOfDepartment(departmentId), userId);
     try {
       return await this.prisma.department.update({
         where: { id: departmentId },
@@ -87,7 +148,8 @@ export class UnitsService {
     }
   }
 
-  async removeDepartment(departmentId: string): Promise<{ id: string }> {
+  async removeDepartment(departmentId: string, userId: string): Promise<{ id: string }> {
+    await this.requireUnitAccess(await this.unitNameOfDepartment(departmentId), userId);
     await this.prisma.department.delete({ where: { id: departmentId } });
     return { id: departmentId };
   }
@@ -96,8 +158,10 @@ export class UnitsService {
   async upsertPosition(departmentId: string, dto: UpsertPositionDto, userId: string) {
     const department = await this.prisma.department.findUnique({
       where: { id: departmentId },
+      include: { unit: { select: { name: true } } },
     });
     if (!department) throw new NotFoundException('Department not found');
+    await this.requireUnitAccess(department.unit.name, userId);
 
     return this.prisma.position.upsert({
       where: {
@@ -134,6 +198,7 @@ export class UnitsService {
 
   /** Edit an existing seat (designation, category and/or sanctioned) by id. */
   async updatePosition(positionId: string, dto: UpdatePositionDto, userId: string) {
+    await this.requireUnitAccess(await this.unitNameOfPosition(positionId), userId);
     try {
       return await this.prisma.position.update({
         where: { id: positionId },
@@ -161,7 +226,8 @@ export class UnitsService {
     }
   }
 
-  async removePosition(positionId: string): Promise<{ id: string }> {
+  async removePosition(positionId: string, userId: string): Promise<{ id: string }> {
+    await this.requireUnitAccess(await this.unitNameOfPosition(positionId), userId);
     await this.prisma.position.delete({ where: { id: positionId } });
     return { id: positionId };
   }
@@ -178,9 +244,10 @@ export class UnitsService {
     return tx.unit.create({ data: { name } });
   }
 
-  private async ensureExists(id: string): Promise<void> {
+  private async ensureExists(id: string): Promise<Unit> {
     const found = await this.prisma.unit.findUnique({ where: { id } });
     if (!found) throw new NotFoundException('Unit not found');
+    return found;
   }
 
   private handleUnique(e: unknown, message: string): Error {

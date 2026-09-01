@@ -35,13 +35,15 @@ export class UnitsController {
     return this.unitsService.findOne(id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
+  // Write access below is enforced in UnitsService (dynamic RBAC — Corporate
+  // HR / CHRO / Factory HR / SBU Head for the unit in question, per unit
+  // config access rules), not by a static @Roles() gate here. Creating a
+  // brand-new unit is the one exception still requiring a global role.
   @Post()
   create(@Body() dto: CreateUnitDto, @CurrentUser() user: AuthUser) {
     return this.unitsService.create(dto, user.id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateUnitDto, @CurrentUser() user: AuthUser) {
     return this.unitsService.update(id, dto, user.id);
@@ -53,13 +55,11 @@ export class UnitsController {
     return this.unitsService.remove(id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Post(':id/departments')
   addDepartment(@Param('id') id: string, @Body() dto: CreateDepartmentDto, @CurrentUser() user: AuthUser) {
     return this.unitsService.addDepartment(id, dto, user.id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Patch('departments/:departmentId')
   updateDepartment(
     @Param('departmentId') departmentId: string,
@@ -69,13 +69,11 @@ export class UnitsController {
     return this.unitsService.updateDepartment(departmentId, dto.name, user.id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Delete('departments/:departmentId')
-  removeDepartment(@Param('departmentId') departmentId: string) {
-    return this.unitsService.removeDepartment(departmentId);
+  removeDepartment(@Param('departmentId') departmentId: string, @CurrentUser() user: AuthUser) {
+    return this.unitsService.removeDepartment(departmentId, user.id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Post('departments/:departmentId/positions')
   upsertPosition(
     @Param('departmentId') departmentId: string,
@@ -85,7 +83,6 @@ export class UnitsController {
     return this.unitsService.upsertPosition(departmentId, dto, user.id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Patch('positions/:positionId')
   updatePosition(
     @Param('positionId') positionId: string,
@@ -95,9 +92,8 @@ export class UnitsController {
     return this.unitsService.updatePosition(positionId, dto, user.id);
   }
 
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
   @Delete('positions/:positionId')
-  removePosition(@Param('positionId') positionId: string) {
-    return this.unitsService.removePosition(positionId);
+  removePosition(@Param('positionId') positionId: string, @CurrentUser() user: AuthUser) {
+    return this.unitsService.removePosition(positionId, user.id);
   }
 }

@@ -65,15 +65,13 @@ export class SettingsController {
     return this.settings.getAiConfigView();
   }
 
-  /** Only super users may change it. */
+  /** Super users, and Corporate HR / CHRO (both global roles), may change it. */
   @Patch('ai')
   async updateAi(
     @Body() dto: UpdateAiSettingsDto,
     @CurrentUser() user: AuthUser,
   ) {
-    if (!(await this.permissions.isSuperUser(user.id))) {
-      throw new ForbiddenException('Only a super user can change AI settings');
-    }
+    await this.requireAiSettingsAccess(user.id);
     return this.settings.setAiConfig(dto);
   }
 
@@ -114,17 +112,29 @@ export class SettingsController {
     return this.settings.getScreeningConfig();
   }
 
-  /** Only super users may change the pass marks. */
+  /** Super users, and Corporate HR / CHRO, may change the pass marks — this
+   * card lives on the same "AI Settings" page as /settings/ai. */
   @Patch('screening')
   async updateScreening(
     @Body() dto: UpdateScreeningSettingsDto,
     @CurrentUser() user: AuthUser,
   ) {
-    if (!(await this.permissions.isSuperUser(user.id))) {
+    await this.requireAiSettingsAccess(user.id);
+    return this.settings.setScreeningConfig(dto);
+  }
+
+  /** Corporate HR and CHRO are both GLOBAL roles, so no unit to scope
+   * against — a plain role-key check is enough, no hasRoleForUnitName needed. */
+  private async requireAiSettingsAccess(userId: string): Promise<void> {
+    if (await this.permissions.isSuperUser(userId)) return;
+    const perms = await this.permissions.getUserPermissions(userId);
+    const allowed = perms.roles.some(
+      (r) => r.key === 'corporate_hr' || r.key === 'chro',
+    );
+    if (!allowed) {
       throw new ForbiddenException(
-        'Only a super user can change screening pass marks',
+        'Only Corporate HR, CHRO or a super user can change AI settings',
       );
     }
-    return this.settings.setScreeningConfig(dto);
   }
 }
