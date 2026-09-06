@@ -22,6 +22,7 @@ import { RequisitionService } from './requisition.service';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
+  AssignRecruiterDto,
   DraftRequisitionDto,
   PostRequisitionDto,
   QueryRequisitionsDto,
@@ -101,6 +102,23 @@ export class RequisitionController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.requisitionService.act(id, dto, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  @Get(':id/recruiters')
+  listRecruiters(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.requisitionService.listRecruiters(id, user.id);
+  }
+
+  @Patch(':id/recruiter')
+  assignRecruiter(
+    @Param('id') id: string,
+    @Body() dto: AssignRecruiterDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.assignRecruiter(id, dto.recruiterId, {
       id: user.id,
       name: user.name,
     });

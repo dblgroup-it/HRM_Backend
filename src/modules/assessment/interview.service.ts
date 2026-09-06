@@ -170,12 +170,14 @@ export class InterviewService {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
       include: {
-        requisition: { select: { unitFactory: true, designation: true } },
+        requisition: {
+          select: { unitFactory: true, designation: true, recruiterId: true },
+        },
         panelists: { select: { userId: true } },
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
-    await this.requireRecruitmentAccess(round.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(round.requisition, userId);
 
     const newPanelistIds = dto.panelistUserIds
       ? [...new Set(dto.panelistUserIds)]
@@ -252,10 +254,12 @@ export class InterviewService {
   async remove(roundId: string, userId: string) {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
-      include: { requisition: { select: { unitFactory: true } } },
+      include: {
+        requisition: { select: { unitFactory: true, recruiterId: true } },
+      },
     });
     if (!round) throw new NotFoundException('Interview not found');
-    await this.requireRecruitmentAccess(round.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(round.requisition, userId);
     if (round.calendarEventId) {
       await this.calendar.cancelEvent(round.calendarEventId);
     }
@@ -526,12 +530,12 @@ export class InterviewService {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
       include: {
-        requisition: { select: { unitFactory: true } },
+        requisition: { select: { unitFactory: true, recruiterId: true } },
         panelists: { select: { userId: true } },
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
-    await this.requireRecruitmentAccess(round.requisition.unitFactory, actorId);
+    await this.requireRecruitmentAccess(round.requisition, actorId);
 
     if (!round.panelists.some((p) => p.userId === panelistUserId)) {
       throw new BadRequestException('User is not on this panel');
@@ -696,35 +700,40 @@ export class InterviewService {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
       include: {
-        requisition: { select: { unitFactory: true, designation: true } },
+        requisition: {
+          select: { unitFactory: true, designation: true, recruiterId: true },
+        },
       },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
     return cand;
   }
 
   private async requireReq(reqId: string, userId: string) {
     const req = await this.prisma.requisition.findUnique({
       where: { id: reqId },
-      select: { unitFactory: true },
+      select: { unitFactory: true, recruiterId: true },
     });
     if (!req) throw new NotFoundException('Requisition not found');
-    await this.requireRecruitmentAccess(req.unitFactory, userId);
+    await this.requireRecruitmentAccess(req, userId);
   }
 
-  private async requireRecruitmentAccess(unit: string, userId: string) {
-    const ok =
-      (await this.permissions.hasRoleForUnitName(
-        userId,
-        'corporate_hr',
-        unit,
-      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
-    if (!ok) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can manage interviews',
-      );
-    }
+  /**
+   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Recruiter assigned to this requisition. Takes the requisition (not just
+   * its unit) so the assigned recruiter is always considered.
+   */
+  private async requireRecruitmentAccess(
+    req: { unitFactory: string; recruiterId: string | null },
+    userId: string,
+  ) {
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      'manage interviews',
+    );
   }
 }
 

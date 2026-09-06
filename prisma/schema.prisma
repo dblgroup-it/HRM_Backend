@@ -231,6 +231,12 @@ model User {
   boardApprovalVotes       BoardApprovalVote[]
   facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
   facilityNotificationsReceived FacilityNotification[] @relation("FacilityNotificationRecipient")
+  approvalPathsUpdated     ApprovalPath[]      @relation("ApprovalPathUpdatedBy")
+  approvalPathsAsRaiser    ApprovalPath[]      @relation("ApprovalPathRaiser")
+  approvalPathLevels       ApprovalPathLevel[] @relation("ApprovalPathLevelUser")
+  approvalStepsAssigned    ApprovalStep[]      @relation("ApprovalStepApprover")
+  requisitionsRecruiting   Requisition[]       @relation("RequisitionRecruiter")
+  requisitionRecruitersSet Requisition[]       @relation("RequisitionRecruiterAssignedBy")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
@@ -337,6 +343,7 @@ model Unit {
   positions       Position[]
   employees       Employee[]
   roleAssignments RoleAssignment[]
+  approvalPaths   ApprovalPath[]
   createdById     String?          @map("created_by_id")
   createdBy       User?            @relation("UnitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedById     String?          @map("updated_by_id")
@@ -433,6 +440,14 @@ model Requisition {
   deliberationNotes  String?               @map("deliberation_notes")
   raisedBy           String?               @map("raised_by") @db.VarChar(150)
   raisedById         String?               @map("raised_by_id")
+  /// Corporate Recruiter who owns this requisition's post-approval lifecycle
+  /// (candidates → assessment → salary → onboarding). Nominated by Corporate
+  /// HR once approved. Additive: Corporate HR / CHRO keep their access.
+  recruiterId           String?            @map("recruiter_id")
+  recruiter             User?              @relation("RequisitionRecruiter", fields: [recruiterId], references: [id], onDelete: SetNull)
+  recruiterAssignedAt   DateTime?          @map("recruiter_assigned_at")
+  recruiterAssignedById String?            @map("recruiter_assigned_by_id")
+  recruiterAssignedBy   User?              @relation("RequisitionRecruiterAssignedBy", fields: [recruiterAssignedById], references: [id], onDelete: SetNull)
   /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.
   drive              Json?
   /// Optional supporting files (JD, approvals, etc.) — array of { name, fileId, url, size, uploadedAt }.
@@ -453,6 +468,7 @@ model Requisition {
   @@index([unitFactory])
   @@index([createdAt])
   @@index([deletedAt])
+  @@index([recruiterId])
   @@map("requisitions")
 }
 
@@ -894,20 +910,76 @@ model CommitteeMember {
 
 /// Phase 3 — a component of a requisition's assessment plan (written/excel/skill/viva).
 model ApprovalStep {
-  id            String       @id @default(cuid())
-  requisitionId String       @map("requisition_id")
-  requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  orderIndex    Int          @map("order_index")
-  role          ApprovalRole
-  title         String       @db.VarChar(150)
-  subtitle      String       @db.VarChar(200)
-  assignee      String       @default("") @db.VarChar(150)
-  status        StepStatus   @default(PENDING)
-  note          String       @default("")
-  actedAt       DateTime?    @map("acted_at")
+  id            String        @id @default(cuid())
+  requisitionId String        @map("requisition_id")
+  requisition   Requisition   @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  orderIndex    Int           @map("order_index")
+  /// Set only on role-routed steps — legacy chains raised before configurable
+  /// approval paths, and the CHRO step appended on escalation. Person-routed
+  /// steps (the norm now) carry `approverUserId` instead.
+  role          ApprovalRole?
+  /// The named approver, snapshotted from the unit's ApprovalPath at creation
+  /// time so editing a unit's path never reroutes an in-flight requisition.
+  approverUserId String?      @map("approver_user_id")
+  approverUser   User?        @relation("ApprovalStepApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
+  title         String        @db.VarChar(150)
+  subtitle      String        @db.VarChar(200)
+  assignee      String        @default("") @db.VarChar(150)
+  status        StepStatus    @default(PENDING)
+  note          String        @default("")
+  actedAt       DateTime?     @map("acted_at")
 
   @@unique([requisitionId, orderIndex])
+  @@index([approverUserId])
   @@map("approval_steps")
+}
+
+// ---------------------------------------------------------------------------
+// Configurable approval paths — per-unit, level-wise, named approvers.
+// Configured by Corporate HR / CHRO / super users.
+// ---------------------------------------------------------------------------
+
+/// A configurable sign-off path, one per (unit, requisition raiser).
+///
+/// Corporate HR nominates the raisers for a unit — there can be several — and
+/// gives each their own chain, so two people raising in the same unit can route
+/// to different approvers. `levels` holds only the *intermediate* approvers:
+/// a Corporate HR step is always appended automatically at raise time, so a
+/// path with zero levels legitimately means "straight to Corporate HR".
+model ApprovalPath {
+  id          String              @id @default(cuid())
+  unitId      String              @map("unit_id")
+  unit        Unit                @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  /// The Requisition Raiser whose requisitions follow this chain.
+  raiserId    String              @map("raiser_id")
+  raiser      User                @relation("ApprovalPathRaiser", fields: [raiserId], references: [id], onDelete: Cascade)
+  levels      ApprovalPathLevel[]
+  updatedById String?             @map("updated_by_id")
+  updatedBy   User?               @relation("ApprovalPathUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  @@unique([unitId, raiserId])
+  @@index([unitId])
+  @@index([raiserId])
+  @@map("approval_paths")
+}
+
+/// A single level in a unit's approval path — an ordered, named approver.
+model ApprovalPathLevel {
+  id         String       @id @default(cuid())
+  pathId     String       @map("path_id")
+  path       ApprovalPath @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  orderIndex Int          @map("order_index")
+  userId     String       @map("user_id")
+  user       User         @relation("ApprovalPathLevelUser", fields: [userId], references: [id], onDelete: Restrict)
+  /// Display label for the level, e.g. "Factory HR" / "Unit Head".
+  title      String       @db.VarChar(150)
+  subtitle   String       @default("") @db.VarChar(200)
+
+  @@unique([pathId, orderIndex])
+  @@index([userId])
+  @@map("approval_path_levels")
 }
 
 model RequisitionActivity {

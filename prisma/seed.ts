@@ -109,15 +109,24 @@ async function main() {
     { key: 'super_user', name: 'Super User', scope: 'GLOBAL', description: 'Full system access.' },
     { key: 'chro', name: 'CHRO', scope: 'GLOBAL', description: 'Chief Human Resources Officer.' },
     { key: 'corporate_hr', name: 'Corporate HR', scope: 'GLOBAL', description: 'Corporate HR — final approver.' },
-    { key: 'factory_hr', name: 'Factory HR', scope: 'UNIT', description: 'Unit / factory HR.' },
-    { key: 'department_head', name: 'Department / Division Head', scope: 'UNIT', description: 'Raises and signs requisitions.' },
+    { key: 'requisition_raiser', name: 'Requisition Raiser', scope: 'UNIT', description: 'Opens requisitions for their unit. Not an approval step — the sign-off chain is configured per unit in Approval Paths.' },
+    { key: 'unit_approver', name: 'Unit Approver', scope: 'UNIT', description: 'Can be named as an approval level for their unit. Grants sign-in and visibility of that unit’s requisitions — nothing else.' },
     { key: 'sbu_head', name: 'SBU Head', scope: 'UNIT', description: 'Strategic Business Unit head.' },
     { key: 'medical_officer', name: 'Medical Officer', scope: 'GLOBAL', description: 'Records onboarding medical clearance (all units).' },
+    { key: 'corporate_recruiter', name: 'Corporate Recruiter', scope: 'GLOBAL', description: 'Runs a requisition’s hiring lifecycle once Corporate HR assigns it to them.' },
   ] as const;
   for (const r of ROLES) {
     await prisma.role.upsert({
       where: { key: r.key },
-      update: { name: r.name, scope: r.scope, description: r.description },
+      // `isSystem` is set on update too: a role first created by hand in
+      // Access Control (and only later added here) would otherwise stay
+      // deletable, even though the workflow now depends on it existing.
+      update: {
+        name: r.name,
+        scope: r.scope,
+        description: r.description,
+        isSystem: true,
+      },
       create: { ...r, isSystem: true },
     });
   }

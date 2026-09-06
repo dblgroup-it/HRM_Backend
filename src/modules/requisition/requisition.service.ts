@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import {
   ApprovalDecision,
+  ApprovalRole,
   EmploymentNature,
   Prisma,
   Priority,
@@ -24,6 +25,7 @@ import { CandidatesService } from '../candidates/candidates.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
+import { ApprovalPathsService } from '../approval-paths/approval-paths.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import {
   CreateRequisitionDto,
@@ -36,10 +38,11 @@ import {
   UpdateFacilitiesDto,
   UpdateRequisitionDto,
 } from './dto/requisition-actions.dto';
-import { buildChainSteps, synthesizeRoleProfile } from './requisition.workflow';
+import { synthesizeRoleProfile } from './requisition.workflow';
 
 const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
+  recruiter: { select: { id: true, name: true, employeeCode: true } },
   activities: { orderBy: { createdAt: 'asc' } },
   candidates: {
     select: { stage: true, onboarding: { select: { status: true } } },
@@ -62,6 +65,7 @@ export class RequisitionService {
     private readonly drive: DriveService,
     private readonly ai: AiGraderService,
     private readonly settings: SettingsService,
+    private readonly approvalPaths: ApprovalPathsService,
   ) {}
 
   private readonly logger = new Logger(RequisitionService.name);
@@ -70,7 +74,7 @@ export class RequisitionService {
     dto: CreateRequisitionDto,
     raiser: { id: string; name: string },
   ) {
-    await this.ensureUnitAccess(raiser.id, dto.unitFactory);
+    await this.ensureCanRaise(raiser.id, dto.unitFactory);
 
     // Authoritative New vs Replacement decision from the organogram.
     // NEW (needs SBU for factory) when the requested posts exceed the vacant
@@ -86,29 +90,18 @@ export class RequisitionService {
       dto.requiredPosts > lookup.vacant ? 'NEW' : 'EXISTING';
     const source = dto.source.toUpperCase() as RequisitionSource;
 
-    const steps = buildChainSteps(requirementType, source, {
-      departmentHeadName: dto.signatories.departmentHeadName,
-      factoryHRName: dto.signatories.factoryHRName,
-    });
+    // This raiser's own chain for this unit — an ordered list of named
+    // approvers with a Corporate HR step appended — snapshotted here so later
+    // edits to the path never reroute a requisition already in flight.
+    // Throws a clear error when this raiser has no path configured here.
+    const steps = await this.approvalPaths.buildStepsForRaiser(
+      dto.unitFactory,
+      raiser.id,
+    );
 
-    // Auto-assign each step to the configured role-holder(s) for this unit.
-    for (const step of steps) {
-      const holders = await this.permissions.roleHolderNames(
-        step.role.toLowerCase(),
-        dto.unitFactory,
-      );
-      if (holders.length > 0) step.assignee = holders.join(', ');
-    }
-
-    // The raiser IS the Department Head — their own step is signed on submit,
-    // so the chain starts at the next approver (Factory HR / Corporate HR).
+    // The raiser signs on submit, but that signature is an activity-log entry
+    // (and prints on the form) rather than a step in the chain.
     const raisedBy = dto.signatories.departmentHeadName || raiser.name;
-    const deptHeadStep = steps.find((s) => s.role === 'DEPARTMENT_HEAD');
-    if (deptHeadStep) {
-      deptHeadStep.status = 'APPROVED';
-      deptHeadStep.assignee = raisedBy;
-      deptHeadStep.actedAt = new Date();
-    }
 
     const created = await this.prisma.requisition.create({
       data: {
@@ -145,7 +138,7 @@ export class RequisitionService {
             {
               actor: raisedBy,
               action: 'APPROVED',
-              note: 'Raised & signed by Department Head',
+              note: 'Raised & signed by the Requisition Raiser',
             },
           ],
         },
@@ -163,14 +156,40 @@ export class RequisitionService {
     return serialized;
   }
 
+  /**
+   * Who may act on a given step: the named approver on a configured step, or
+   * — for legacy chains and the CHRO step appended on escalation — whoever
+   * holds that step's role for the unit. Super users always pass.
+   */
+  private async canActOnStep(
+    step: { role: ApprovalRole | null; approverUserId: string | null },
+    unitName: string,
+    userId: string,
+  ): Promise<boolean> {
+    if (step.approverUserId) {
+      if (step.approverUserId === userId) return true;
+      return this.permissions.isSuperUser(userId);
+    }
+    if (!step.role) return this.permissions.isSuperUser(userId);
+    return this.permissions.hasRoleForUnitName(
+      userId,
+      step.role.toLowerCase(),
+      unitName,
+    );
+  }
+
   /** Notify whoever currently needs to act on a requisition. */
   private async notifyPendingApprover(req: RequisitionFull): Promise<void> {
     const pending = req.approvalSteps.find((s) => s.status === 'PENDING');
     if (!pending) return;
-    const userIds = await this.permissions.roleHolderUserIds(
-      pending.role.toLowerCase(),
-      req.unitFactory,
-    );
+    const userIds = pending.approverUserId
+      ? [pending.approverUserId]
+      : pending.role
+        ? await this.permissions.roleHolderUserIds(
+            pending.role.toLowerCase(),
+            req.unitFactory,
+          )
+        : [];
     await this.notifications.notifyMany(userIds, {
       type: 'requisition_pending',
       title: `${pending.title} approval needed`,
@@ -179,44 +198,64 @@ export class RequisitionService {
     });
   }
 
+
+  /**
+   * What this user is allowed to see in the requisition list.
+   *
+   * Corporate HR / CHRO / super see everything. Everyone else sees only their
+   * own business — requisitions they raised, ones they're named on the chain
+   * of, or ones they've been assigned to recruit. Holding a unit-scoped role
+   * does NOT expose the whole unit's requisitions: a raiser shouldn't see a
+   * colleague's requisition just because they share a unit.
+   *
+   * Shared by findAll and stats so the tiles can never count something the
+   * list won't show.
+   */
+  private async visibilityClause(
+    userId: string,
+    unitFactory?: string,
+  ): Promise<Prisma.RequisitionWhereInput | undefined> {
+    // The permission rule itself lives in PermissionsService so the list, the
+    // stat tiles and the dashboard all count the same set.
+    const allowed = await this.permissions.requisitionVisibility(userId);
+    const unitFilter =
+      unitFactory && unitFactory !== 'all'
+        ? { unitFactory: { equals: unitFactory, mode: 'insensitive' as const } }
+        : undefined;
+
+    if (!allowed) return unitFilter;
+    return unitFilter ? { AND: [unitFilter, allowed] } : allowed;
+  }
+
   async findAll(
     query: QueryRequisitionsDto,
     userId: string,
   ): Promise<Paginated<unknown>> {
     const { page, pageSize, search, status, unitFactory } = query;
-    const scope = await this.permissions.getUnitAccessScope(userId);
+    const scopeClause = await this.visibilityClause(userId, unitFactory);
 
-    const visibleUnitFilter = scope.all
-      ? unitFactory && unitFactory !== 'all'
-        ? { equals: unitFactory, mode: 'insensitive' as const }
-        : undefined
-      : this.buildVisibleUnitFilter(scope.unitNames, unitFactory);
-
-    if (!scope.all && visibleUnitFilter === null) {
-      return {
-        items: [],
-        meta: buildMeta(page, pageSize, 0),
-      };
-    }
-
+    // Scope and search are combined under AND: both are OR-shaped, and a plain
+    // object spread would silently drop one of them.
     const where: Prisma.RequisitionWhereInput = {
       deletedAt: null,
       ...(status && status !== 'all'
         ? { status: status.toUpperCase() as Prisma.EnumRequisitionStatusFilter }
         : {}),
-      ...(visibleUnitFilter && visibleUnitFilter !== undefined
-        ? { unitFactory: visibleUnitFilter }
-        : {}),
-      ...(search
-        ? {
-            OR: [
-              { designation: { contains: search, mode: 'insensitive' } },
-              { code: { contains: search, mode: 'insensitive' } },
-              { department: { contains: search, mode: 'insensitive' } },
-              { unitFactory: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      AND: [
+        ...(scopeClause ? [scopeClause] : []),
+        ...(search
+          ? [
+              {
+                OR: [
+                  { designation: { contains: search, mode: 'insensitive' as const } },
+                  { code: { contains: search, mode: 'insensitive' as const } },
+                  { department: { contains: search, mode: 'insensitive' as const } },
+                  { unitFactory: { contains: search, mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+      ],
     };
 
     const [rows, total] = await Promise.all([
@@ -341,31 +380,25 @@ export class RequisitionService {
    */
   async stats(query: QueryRequisitionsDto, userId: string) {
     const { search, unitFactory } = query;
-    const scope = await this.permissions.getUnitAccessScope(userId);
-    const visibleUnitFilter = scope.all
-      ? unitFactory && unitFactory !== 'all'
-        ? { equals: unitFactory, mode: 'insensitive' as const }
-        : undefined
-      : this.buildVisibleUnitFilter(scope.unitNames, unitFactory);
-
-    if (!scope.all && visibleUnitFilter === null) {
-      return { total: 0, byStatus: {} };
-    }
+    const scopeClause = await this.visibilityClause(userId, unitFactory);
 
     const where: Prisma.RequisitionWhereInput = {
-      ...(visibleUnitFilter && visibleUnitFilter !== undefined
-        ? { unitFactory: visibleUnitFilter }
-        : {}),
-      ...(search
-        ? {
-            OR: [
-              { designation: { contains: search, mode: 'insensitive' } },
-              { code: { contains: search, mode: 'insensitive' } },
-              { department: { contains: search, mode: 'insensitive' } },
-              { unitFactory: { contains: search, mode: 'insensitive' } },
-            ],
-          }
-        : {}),
+      deletedAt: null,
+      AND: [
+        ...(scopeClause ? [scopeClause] : []),
+        ...(search
+          ? [
+              {
+                OR: [
+                  { designation: { contains: search, mode: 'insensitive' as const } },
+                  { code: { contains: search, mode: 'insensitive' as const } },
+                  { department: { contains: search, mode: 'insensitive' as const } },
+                  { unitFactory: { contains: search, mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+      ],
     };
 
     const groups = await this.prisma.requisition.groupBy({
@@ -404,22 +437,22 @@ export class RequisitionService {
 
     const current = steps[idx];
 
-    // Enforce: only a holder of this step's role for this unit (or a super
-    // user) may act.
-    const allowed = await this.permissions.hasRoleForUnitName(
-      actor.id,
-      current.role.toLowerCase(),
-      req.unitFactory,
-    );
+    // Enforce: only this step's named approver (or, on legacy/CHRO steps, a
+    // holder of its role for this unit) may act. Super users always may.
+    const allowed = await this.canActOnStep(current, req.unitFactory, actor.id);
     if (!allowed) {
       throw new ForbiddenException(
-        `You don't hold the "${current.title}" role for ${req.unitFactory}`,
+        current.approverUserId
+          ? `Only ${current.assignee} can action the "${current.title}" step`
+          : `You don't hold the "${current.title}" role for ${req.unitFactory}`,
       );
     }
 
-    // Escalation is only valid from the Corporate HR step.
-    if (dto.decision === 'escalate' && current.role !== 'CORPORATE_HR') {
-      throw new BadRequestException('Only Corporate HR can escalate to CHRO');
+    // Escalation is offered on the final step of the chain.
+    if (dto.decision === 'escalate' && idx !== steps.length - 1) {
+      throw new BadRequestException(
+        'Only the final approver can escalate to the CHRO',
+      );
     }
 
     const actorName = actor.name;
@@ -764,11 +797,7 @@ export class RequisitionService {
     const current = req.approvalSteps.find((s) => s.status === 'PENDING');
     if (!current) throw new BadRequestException('No pending step to edit on');
 
-    const allowed = await this.permissions.hasRoleForUnitName(
-      actorId,
-      current.role.toLowerCase(),
-      req.unitFactory,
-    );
+    const allowed = await this.canActOnStep(current, req.unitFactory, actorId);
     if (!allowed) {
       throw new ForbiddenException(
         'Only the current approver can edit this requisition',
@@ -785,14 +814,12 @@ export class RequisitionService {
       await this.requireCurrentApprover(req, actorId);
       return;
     }
-    const allowed =
-      (await this.permissions.hasRoleForUnitName(actorId, 'corporate_hr', req.unitFactory)) ||
-      (await this.permissions.hasRoleForUnitName(actorId, 'chro', req.unitFactory));
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can change facility decisions after approval',
-      );
-    }
+    await this.permissions.requireRecruitmentAccess(
+      actorId,
+      req.unitFactory,
+      req.recruiterId,
+      'change facility decisions after approval',
+    );
   }
 
   /** Step 3 — generate the AI role profile. Corporate HR owns this step. */
@@ -1110,7 +1137,24 @@ export class RequisitionService {
       include: reqWithRelations,
     });
     if (!req) throw new NotFoundException('Requisition not found');
-    if (userId) await this.ensureUnitAccess(userId, req.unitFactory);
+    // Mirrors `visibilityClause`: you reach a requisition if it's your own
+    // business — you raised it, you're named on its chain, or you're its
+    // recruiter — otherwise only Corporate HR / CHRO / super (all-unit scope).
+    // Holding a unit-scoped role is deliberately not enough.
+    if (userId) {
+      const isOwnBusiness =
+        req.raisedById === userId ||
+        req.recruiterId === userId ||
+        req.approvalSteps.some((s) => s.approverUserId === userId);
+      if (!isOwnBusiness) {
+        const scope = await this.permissions.getUnitAccessScope(userId);
+        if (!scope.all) {
+          throw new ForbiddenException(
+            'You can only open requisitions you raised, need to approve, or are recruiting for',
+          );
+        }
+      }
+    }
     return req;
   }
 
@@ -1124,35 +1168,142 @@ export class RequisitionService {
     }
   }
 
-  private buildVisibleUnitFilter(
-    unitNames: string[],
-    unitFactory?: string,
-  ): Prisma.RequisitionWhereInput['unitFactory'] | null {
-    if (unitFactory && unitFactory !== 'all') {
-      const allowed = unitNames.some(
-        (name) => name.toLowerCase() === unitFactory.toLowerCase(),
+  /**
+   * Raising a requisition needs the Requisition Raiser role for that unit
+   * (super users excepted). Deliberately narrower than plain unit access:
+   * Factory HR, SBU Head and Unit Approvers can see and sign off on a unit's
+   * requisitions without being able to open new ones.
+   */
+  private async ensureCanRaise(
+    userId: string,
+    unitName: string,
+  ): Promise<void> {
+    const allowed = await this.permissions.hasRoleForUnitName(
+      userId,
+      'requisition_raiser',
+      unitName,
+    );
+    if (!allowed) {
+      throw new ForbiddenException(
+        `You need the Requisition Raiser role for ${unitName} to raise a requisition there`,
       );
-      return allowed ? { equals: unitFactory, mode: 'insensitive' } : null;
     }
-
-    if (unitNames.length === 0) return null;
-    return { in: unitNames };
   }
 
   private async ensureCorporateHrContinuation(
     req: RequisitionFull,
     userId: string,
   ): Promise<void> {
-    const allowed = await this.permissions.hasRoleForUnitName(
+    await this.permissions.requireRecruitmentAccess(
       userId,
-      'corporate_hr',
       req.unitFactory,
+      req.recruiterId,
+      'continue this requisition after approval',
     );
+  }
+
+  /** The Corporate Recruiter pool for a requisition's unit. */
+  async listRecruiters(id: string, userId: string) {
+    const req = await this.load(id, userId);
+    return this.permissions.roleHolders('corporate_recruiter', req.unitFactory);
+  }
+
+  /**
+   * Nominate the Corporate Recruiter who owns this requisition's post-approval
+   * lifecycle. Additive — Corporate HR and CHRO keep their access; this just
+   * gives the requisition an owner (and someone to notify).
+   */
+  async assignRecruiter(
+    id: string,
+    recruiterId: string | null,
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.load(id, actor.id);
+
+    // Only Corporate HR / CHRO / super may nominate — deliberately NOT the
+    // current recruiter, so a recruiter can't hand the requisition on unasked.
+    const allowed =
+      (await this.permissions.hasRoleForUnitName(
+        actor.id,
+        'corporate_hr',
+        req.unitFactory,
+      )) ||
+      (await this.permissions.hasRoleForUnitName(
+        actor.id,
+        'chro',
+        req.unitFactory,
+      ));
     if (!allowed) {
       throw new ForbiddenException(
-        'Only Corporate HR can continue after approval',
+        'Only Corporate HR, CHRO or a super user can assign a recruiter',
       );
     }
+
+    if (req.status === 'PENDING_APPROVAL' || req.status === 'REJECTED') {
+      throw new BadRequestException(
+        'A recruiter can only be assigned once the requisition is approved',
+      );
+    }
+
+    let recruiterName = '';
+    if (recruiterId) {
+      const recruiter = await this.prisma.user.findUnique({
+        where: { id: recruiterId },
+        select: { id: true, name: true, status: true },
+      });
+      if (!recruiter) throw new NotFoundException('Recruiter not found');
+      if (recruiter.status !== 'ACTIVE') {
+        throw new BadRequestException(`${recruiter.name} is not an active user`);
+      }
+      const holds = await this.permissions.hasRoleForUnitName(
+        recruiterId,
+        'corporate_recruiter',
+        req.unitFactory,
+      );
+      if (!holds) {
+        throw new BadRequestException(
+          `${recruiter.name} does not hold the Corporate Recruiter role — grant it in Access Control first`,
+        );
+      }
+      recruiterName = recruiter.name;
+    }
+
+    await this.prisma.requisition.update({
+      where: { id },
+      data: {
+        recruiterId,
+        recruiterAssignedAt: recruiterId ? new Date() : null,
+        recruiterAssignedById: recruiterId ? actor.id : null,
+      },
+    });
+
+    await this.prisma.requisitionActivity.create({
+      data: {
+        requisitionId: id,
+        actor: actor.name,
+        action: 'EDITED',
+        note: recruiterId
+          ? `Assigned ${recruiterName} as Corporate Recruiter`
+          : 'Cleared the assigned Corporate Recruiter',
+      },
+    });
+
+    if (recruiterId) {
+      await this.notifications.notifyMany([recruiterId], {
+        type: 'requisition_recruiter_assigned',
+        title: 'You are the recruiter for a requisition',
+        message: `${req.code} · ${req.designation} (${req.unitFactory}) is now yours to run.`,
+        link: `/requisitions/${id}`,
+      });
+    }
+
+    const updated = await this.load(id, actor.id);
+    const serialized = serialize(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'updated',
+      record: serialized,
+    });
+    return serialized;
   }
 
   private async nextCode(): Promise<string> {
@@ -1229,7 +1380,11 @@ function serialize(req: RequisitionFull) {
     preferredSources: req.preferredSources,
     status: low(req.status),
     approvalChain: req.approvalSteps.map((s) => ({
-      role: low(s.role),
+      id: s.id,
+      // null on person-routed steps; set on legacy chains and the CHRO step
+      // appended on escalation, which still route by role.
+      role: s.role ? low(s.role) : null,
+      approverUserId: s.approverUserId,
       title: s.title,
       subtitle: s.subtitle,
       assignee: s.assignee,
@@ -1250,6 +1405,14 @@ function serialize(req: RequisitionFull) {
     candidateStats: candidateStats(req.candidates),
     pipeline: pipelineProgress(req.candidates),
     raisedBy: req.raisedBy ?? '',
+    recruiter: req.recruiter
+      ? {
+          id: req.recruiter.id,
+          name: req.recruiter.name,
+          employeeCode: req.recruiter.employeeCode,
+        }
+      : null,
+    recruiterAssignedAt: req.recruiterAssignedAt?.toISOString() ?? null,
     createdAt: req.createdAt.toISOString(),
     updatedAt: req.updatedAt.toISOString(),
   };

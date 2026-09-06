@@ -410,7 +410,7 @@ export class CandidatesService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
 
     if (!cand.email)
       return { name: cand.name, email: null, total: 1, applications: [] };
@@ -447,7 +447,7 @@ export class CandidatesService {
     });
     if (!cand) return { ok: true };
     if (cand.viewedAt) return { ok: true }; // already viewed, skip write
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
     await this.prisma.candidate.update({
       where: { id },
       data: { viewedAt: new Date() },
@@ -712,7 +712,7 @@ export class CandidatesService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
 
     const data: Prisma.CandidateUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
@@ -787,7 +787,7 @@ export class CandidatesService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
 
     const ws = await this.recruitment.ensureWorkspace(cand.requisition);
     if (!ws)
@@ -826,7 +826,7 @@ export class CandidatesService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
 
     // Remove the CV from Drive too — otherwise it leaks and re-imports on sync.
     if (cand.cvFileId && this.drive.isConfigured()) {
@@ -860,7 +860,7 @@ export class CandidatesService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
     if (!cand.email) {
       throw new BadRequestException(
         'This candidate has no email address on file',
@@ -900,7 +900,7 @@ export class CandidatesService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
     if (!this.ai.isConfigured()) {
       throw new ServiceUnavailableException('AI screening is not configured');
     }
@@ -1355,7 +1355,7 @@ export class CandidatesService {
       where: { id: reqId },
     });
     if (!req) throw new NotFoundException('Requisition not found');
-    await this.requireRecruitmentAccess(req.unitFactory, userId);
+    await this.requireRecruitmentAccess(req, userId);
     return req;
   }
 
@@ -1364,18 +1364,21 @@ export class CandidatesService {
    * users — both viewing and managing. Department Head / Factory HR / SBU Head /
    * Medical never see it.
    */
-  private async requireRecruitmentAccess(unit: string, userId: string) {
-    const allowed =
-      (await this.permissions.hasRoleForUnitName(
-        userId,
-        'corporate_hr',
-        unit,
-      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can access recruitment for this requisition',
-      );
-    }
+  /**
+   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Recruiter assigned to this requisition. Takes the requisition (not just
+   * its unit) so the assigned recruiter is always considered.
+   */
+  private async requireRecruitmentAccess(
+    req: { unitFactory: string; recruiterId: string | null },
+    userId: string,
+  ) {
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      'access recruitment for this requisition',
+    );
   }
 
   /**
@@ -1636,7 +1639,10 @@ export class CandidatesService {
 
     const newlyMatched = result.results.filter((r) => !existingIds.has(r.id));
     if (newlyMatched.length > 0) {
-      const hrIds = await this.permissions.roleHolderUserIds('corporate_hr', req.unitFactory);
+      const hrIds = await this.permissions.recruitmentRecipients(
+        req.unitFactory,
+        req.recruiterId,
+      );
       await this.notifications.notifyMany(hrIds, {
         type: 'talent_bank_match',
         title: 'New Talent Bank matches',
@@ -1651,9 +1657,14 @@ export class CandidatesService {
 
   /** Corp HR or CHRO flags a candidate. Adds email + phone to registry so future applications auto-flag. */
   async flagCandidate(id: string, userId: string, reason: string) {
-    const candidate = await this.prisma.candidate.findUnique({ where: { id } });
+    const candidate = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: {
+        requisition: { select: { unitFactory: true, recruiterId: true } },
+      },
+    });
     if (!candidate) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(candidate.requisitionId, userId);
+    await this.requireRecruitmentAccess(candidate.requisition, userId);
 
     const normPhone = normalizePhone(candidate.phone);
     const normEmail = candidate.email?.toLowerCase() ?? null;
@@ -1690,9 +1701,14 @@ export class CandidatesService {
 
   /** Remove red flag from a candidate (does NOT remove registry entry — other candidates may share it). */
   async unflagCandidate(id: string, userId: string) {
-    const candidate = await this.prisma.candidate.findUnique({ where: { id } });
+    const candidate = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: {
+        requisition: { select: { unitFactory: true, recruiterId: true } },
+      },
+    });
     if (!candidate) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(candidate.requisitionId, userId);
+    await this.requireRecruitmentAccess(candidate.requisition, userId);
 
     await this.prisma.candidate.update({
       where: { id },

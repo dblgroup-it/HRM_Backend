@@ -9,6 +9,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -114,6 +115,14 @@ export class ApprovalActionDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+/** Nominate (or clear, with null) the Corporate Recruiter for a requisition. */
+export class AssignRecruiterDto {
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  recruiterId!: string | null;
 }
 
 /** Corporate HR's manual edits to the (AI-)generated role profile. */

@@ -173,7 +173,9 @@ ${JSON.stringify(ctx.requisitions)}`;
         daysOpen: Math.round((now - +r.createdAt) / DAY),
         currentStep: pending
           ? {
-              role: pending.role.toLowerCase(),
+              // Person-routed steps carry no role — their level label is the
+              // meaningful descriptor instead.
+              role: pending.role?.toLowerCase() ?? pending.title,
               assignee: pending.assignee || '(unassigned)',
               daysWaiting: Math.round((now - +since2) / DAY),
             }

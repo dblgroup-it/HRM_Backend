@@ -49,25 +49,21 @@ export class BdJobsService {
   private async requireAccess(requisitionId: string, userId: string) {
     const req = await this.prisma.requisition.findUnique({
       where: { id: requisitionId },
-      select: { id: true, code: true, unitFactory: true, posting: true },
+      select: {
+        id: true,
+        code: true,
+        unitFactory: true,
+        posting: true,
+        recruiterId: true,
+      },
     });
     if (!req) throw new NotFoundException('Requisition not found');
-    const allowed =
-      (await this.permissions.hasRoleForUnitName(
-        userId,
-        'corporate_hr',
-        req.unitFactory,
-      )) ||
-      (await this.permissions.hasRoleForUnitName(
-        userId,
-        'chro',
-        req.unitFactory,
-      ));
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can post to BDJobs',
-      );
-    }
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      'post this requisition to BDJobs',
+    );
     return req;
   }
 

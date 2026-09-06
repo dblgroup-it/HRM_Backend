@@ -402,9 +402,9 @@ export class OnboardingService {
     });
     if (!alreadyAccepted) {
       const unit = cand.requisition.unitFactory;
-      const hrIds = await this.permissions.roleHolderUserIds(
-        'corporate_hr',
+      const hrIds = await this.permissions.recruitmentRecipients(
         unit,
+        cand.requisition.recruiterId,
       );
       const medIds = (
         await Promise.all(
@@ -673,9 +673,9 @@ export class OnboardingService {
     });
 
     // Tell Corporate HR the candidate cleared (or didn't).
-    const hrIds = await this.permissions.roleHolderUserIds(
-      'corporate_hr',
+    const hrIds = await this.permissions.recruitmentRecipients(
       ob.candidate.requisition.unitFactory,
+      ob.candidate.requisition.recruiterId,
     );
     await this.notifications.notifyMany(hrIds, {
       type: 'onboarding',
@@ -710,10 +710,7 @@ export class OnboardingService {
         }),
       );
     if (!isMedical) {
-      await this.requireRecruitmentAccess(
-        ob.candidate.requisition.unitFactory,
-        userId,
-      );
+      await this.requireRecruitmentAccess(ob.candidate.requisition, userId);
     }
 
     const exam = await this.prisma.medicalExam.findUnique({
@@ -935,9 +932,9 @@ export class OnboardingService {
       });
     }
     // Nudge Corporate HR that a document came in.
-    const hrIds = await this.permissions.roleHolderUserIds(
-      'corporate_hr',
+    const hrIds = await this.permissions.recruitmentRecipients(
       ob.candidate.requisition.unitFactory,
+      ob.candidate.requisition.recruiterId,
     );
     await this.notifications.notifyMany(hrIds, {
       type: 'onboarding',
@@ -970,9 +967,9 @@ export class OnboardingService {
       });
       // Offer accepted → notify Corporate HR + medical officers (triggers medical).
       const unit = ob.candidate.requisition.unitFactory;
-      const hrIds = await this.permissions.roleHolderUserIds(
-        'corporate_hr',
+      const hrIds = await this.permissions.recruitmentRecipients(
         unit,
+        ob.candidate.requisition.recruiterId,
       );
       const medIds = (
         await Promise.all(
@@ -1017,7 +1014,7 @@ export class OnboardingService {
       include: { requisition: true, salaryFixation: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
     return cand;
   }
 
@@ -1140,18 +1137,21 @@ export class OnboardingService {
     return doc;
   }
 
-  private async requireRecruitmentAccess(unit: string, userId: string) {
-    const allowed =
-      (await this.permissions.hasRoleForUnitName(
-        userId,
-        'corporate_hr',
-        unit,
-      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can manage onboarding',
-      );
-    }
+  /**
+   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Recruiter assigned to this requisition. Takes the requisition (not just
+   * its unit) so the assigned recruiter is always considered.
+   */
+  private async requireRecruitmentAccess(
+    req: { unitFactory: string; recruiterId: string | null },
+    userId: string,
+  ) {
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      'manage onboarding',
+    );
   }
 
   /** Is the user a medical officer / team member anywhere (or a super user)? */

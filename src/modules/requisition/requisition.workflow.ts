@@ -1,79 +1,14 @@
-import {
-  ApprovalRole,
-  Prisma,
-  RequirementType,
-  RequisitionSource,
-} from '@prisma/client';
-
-/** Metadata for every possible approval role. */
-export const APPROVAL_ROLE_META: Record<
-  ApprovalRole,
-  { title: string; subtitle: string }
-> = {
-  DEPARTMENT_HEAD: {
-    title: 'Department / Division Head',
-    subtitle: 'Raises and signs the requisition',
-  },
-  FACTORY_HR: {
-    title: 'Factory HR',
-    subtitle: 'Verifies vacancy & local details',
-  },
-  SBU_HEAD: {
-    title: 'SBU Head',
-    subtitle: 'Approves new headcount beyond organogram',
-  },
-  CORPORATE_HR: {
-    title: 'Corporate HR',
-    subtitle: 'Final approval to commence hiring',
-  },
-  CHRO: {
-    title: 'CHRO',
-    subtitle: 'Escalated final approval',
-  },
-};
-
 /**
- * Routing rules (from the requisition flowchart):
- *  - Department Head always first.
- *  - Factory HR when the source is a factory.
- *  - SBU Head only for NEW headcount raised from a factory.
- *  - Corporate HR is the single final approver.
+ * Approval routing is no longer defined here.
+ *
+ * Chains are configured per unit (Configuration → Approval Paths) as an
+ * ordered list of named approvers, and snapshotted onto each requisition at
+ * creation time by `ApprovalPathsService.buildStepsForUnitName()`. The old
+ * hardcoded rules (Dept Head → Factory HR if factory → SBU Head if new+factory
+ * → Corporate HR) are gone; the `ApprovalRole` enum now only survives on
+ * legacy chains raised before that change and on the CHRO step appended when
+ * a final approver escalates.
  */
-export function buildApprovalRoles(
-  requirement: RequirementType,
-  source: RequisitionSource,
-): ApprovalRole[] {
-  const roles: ApprovalRole[] = ['DEPARTMENT_HEAD'];
-  if (source === 'FACTORY') roles.push('FACTORY_HR');
-  if (requirement === 'NEW' && source === 'FACTORY') roles.push('SBU_HEAD');
-  roles.push('CORPORATE_HR');
-  return roles;
-}
-
-export interface Signatories {
-  departmentHeadName: string;
-  factoryHRName?: string;
-}
-
-/** Build the ApprovalStep create-payloads for a new requisition. */
-export function buildChainSteps(
-  requirement: RequirementType,
-  source: RequisitionSource,
-  signatories: Signatories,
-): Prisma.ApprovalStepCreateWithoutRequisitionInput[] {
-  const assignees: Partial<Record<ApprovalRole, string>> = {
-    DEPARTMENT_HEAD: signatories.departmentHeadName,
-    FACTORY_HR: signatories.factoryHRName,
-  };
-  return buildApprovalRoles(requirement, source).map((role, orderIndex) => ({
-    orderIndex,
-    role,
-    title: APPROVAL_ROLE_META[role].title,
-    subtitle: APPROVAL_ROLE_META[role].subtitle,
-    assignee: assignees[role] ?? '',
-    status: 'PENDING',
-  }));
-}
 
 export interface RoleProfile {
   summary: string;

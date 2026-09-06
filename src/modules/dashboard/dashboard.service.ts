@@ -78,15 +78,23 @@ export class DashboardService {
   }
 
   private async buildDashboard(userId: string): Promise<DashboardResponse> {
-    const scope = await this.permissions.getUnitAccessScope(userId);
+    // Organisational tiles (headcount, seats, departments) follow unit scope,
+    // widened so a GLOBAL role — Corporate Recruiter, Medical Officer — sees
+    // group-wide figures instead of an all-zero dashboard.
+    const scope = await this.permissions.getOrgStatsScope(userId);
+
+    // Requisitions follow the same rule as the requisitions page: your own
+    // business only, unless you're Corporate HR / CHRO / super.
+    const reqVisibility = await this.permissions.requisitionVisibility(userId);
 
     // Scope filters — `in: []` matches nothing (no access).
     const empWhere: Prisma.EmployeeWhereInput = scope.all
       ? {}
       : { unitName: { in: scope.unitNames } };
-    const reqWhere: Prisma.RequisitionWhereInput = scope.all
-      ? { deletedAt: null }
-      : { unitFactory: { in: scope.unitNames }, deletedAt: null };
+    const reqWhere: Prisma.RequisitionWhereInput = {
+      deletedAt: null,
+      ...(reqVisibility ? { AND: [reqVisibility] } : {}),
+    };
     const seatWhere: Prisma.PositionWhereInput = scope.all
       ? {}
       : { unit: { name: { in: scope.unitNames } } };

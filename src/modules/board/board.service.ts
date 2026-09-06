@@ -183,8 +183,6 @@ export class BoardService {
     note: string | undefined,
     file: UploadedAttachment | undefined,
   ) {
-    await this.requireRecruitmentRole(userId);
-
     if (!file) {
       throw new BadRequestException(
         'Attach a document justifying the approval (a note alone is not enough).',
@@ -196,6 +194,15 @@ export class BoardService {
       include: { requisition: true },
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
+
+    // Requisition-scoped, so the assigned recruiter counts too — hence this
+    // runs after the candidate load rather than the global role check.
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      candidate.requisition.unitFactory,
+      candidate.requisition.recruiterId,
+      'approve this board approval',
+    );
     const ob = await this.prisma.onboarding.findUnique({ where: { candidateId } });
     if (!ob) throw new BadRequestException('Candidate is not in the onboarding stage');
 

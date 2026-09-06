@@ -90,10 +90,16 @@ export class NudgeService {
     for (const req of rows) {
       const step = req.approvalSteps[0];
       if (!step) continue;
-      const holderIds = await this.permissions.roleHolderUserIds(
-        step.role.toLowerCase(),
-        req.unitFactory,
-      );
+      // Person-routed steps nudge their named approver; legacy chains and the
+      // escalated CHRO step still fan out to whoever holds that role.
+      const holderIds = step.approverUserId
+        ? [step.approverUserId]
+        : step.role
+          ? await this.permissions.roleHolderUserIds(
+              step.role.toLowerCase(),
+              req.unitFactory,
+            )
+          : [];
       if (!holderIds.length) continue;
       const waitingDays = Math.floor(
         (Date.now() - req.updatedAt.getTime()) / DAY_MS,

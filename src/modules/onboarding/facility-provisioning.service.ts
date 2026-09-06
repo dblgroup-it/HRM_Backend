@@ -269,19 +269,25 @@ export class FacilityProvisioningService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(cand.requisition, userId);
     return cand;
   }
 
-  private async requireRecruitmentAccess(unit: string, userId: string) {
-    const allowed =
-      (await this.permissions.hasRoleForUnitName(userId, 'corporate_hr', unit)) ||
-      (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can manage facility provisioning',
-      );
-    }
+  /**
+   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Recruiter assigned to this requisition. Takes the requisition (not just
+   * its unit) so the assigned recruiter is always considered.
+   */
+  private async requireRecruitmentAccess(
+    req: { unitFactory: string; recruiterId: string | null },
+    userId: string,
+  ) {
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      'manage facility provisioning',
+    );
   }
 
   private emailHtml(bodyHtml: string, cta?: { label: string; url: string }): string {

@@ -402,12 +402,21 @@ export class AiProficiencyService {
     if (violations.length === 1) {
       const cand = await this.prisma.candidate.findUnique({
         where: { id: attempt.candidateId },
-        include: { requisition: { select: { id: true, unitFactory: true, designation: true } } },
+        include: {
+          requisition: {
+            select: {
+              id: true,
+              unitFactory: true,
+              designation: true,
+              recruiterId: true,
+            },
+          },
+        },
       });
       if (cand) {
-        const hrIds = await this.permissions.roleHolderUserIds(
-          'corporate_hr',
+        const hrIds = await this.permissions.recruitmentRecipients(
           cand.requisition.unitFactory,
+          cand.requisition.recruiterId,
         );
         await this.notifications.notifyMany(hrIds, {
           type: 'ai_proficiency_violation',
@@ -432,17 +441,19 @@ export class AiProficiencyService {
   private async requireCandidate(candidateId: string, userId: string) {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
-      include: { requisition: { select: { unitFactory: true, designation: true } } },
+      include: {
+        requisition: {
+          select: { unitFactory: true, designation: true, recruiterId: true },
+        },
+      },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    const allowed =
-      (await this.permissions.hasRoleForUnitName(userId, 'corporate_hr', cand.requisition.unitFactory)) ||
-      (await this.permissions.hasRoleForUnitName(userId, 'chro', cand.requisition.unitFactory));
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can manage the AI Proficiency Test.',
-      );
-    }
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      cand.requisition.unitFactory,
+      cand.requisition.recruiterId,
+      'manage the AI Proficiency Test',
+    );
     return cand;
   }
 

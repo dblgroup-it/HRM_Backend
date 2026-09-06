@@ -133,10 +133,7 @@ export class AssessmentService {
       include: { requisition: true },
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(
-      candidate.requisition.unitFactory,
-      userId,
-    );
+    await this.requireRecruitmentAccess(candidate.requisition, userId);
 
     const rounds = await this.prisma.interviewRound.findMany({
       where: { candidateId },
@@ -240,7 +237,7 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
       include: { requisition: true },
     });
     if (!member) throw new NotFoundException('Committee member not found');
-    await this.requireRecruitmentAccess(member.requisition.unitFactory, userId);
+    await this.requireRecruitmentAccess(member.requisition, userId);
     await this.prisma.committeeMember.delete({ where: { id: memberId } });
     return this.getSetup(member.requisitionId, userId);
   }
@@ -252,22 +249,25 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
       where: { id: reqId },
     });
     if (!req) throw new NotFoundException('Requisition not found');
-    await this.requireRecruitmentAccess(req.unitFactory, userId);
+    await this.requireRecruitmentAccess(req, userId);
     return req;
   }
 
-  private async requireRecruitmentAccess(unit: string, userId: string) {
-    const ok =
-      (await this.permissions.hasRoleForUnitName(
-        userId,
-        'corporate_hr',
-        unit,
-      )) || (await this.permissions.hasRoleForUnitName(userId, 'chro', unit));
-    if (!ok) {
-      throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can manage assessments',
-      );
-    }
+  /**
+   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Recruiter assigned to this requisition. Takes the requisition (not just
+   * its unit) so the assigned recruiter is always considered.
+   */
+  private async requireRecruitmentAccess(
+    req: { unitFactory: string; recruiterId: string | null },
+    userId: string,
+  ) {
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      'manage assessments',
+    );
   }
 }
 

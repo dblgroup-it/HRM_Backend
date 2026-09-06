@@ -6,6 +6,15 @@ import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import { QueryEmployeesDto } from './dto/query-employees.dto';
 import { buildAvatarUrl } from '../../common/avatar.util';
 
+/**
+ * Employee rows carry their login plus a count of role assignments, so callers
+ * can tell whether the person can actually sign in — `auth.service.ts` refuses
+ * login to any non-ADMIN user with zero roles.
+ */
+const employeeInclude = {
+  user: { include: { _count: { select: { roleAssignments: true } } } },
+} satisfies Prisma.EmployeeInclude;
+
 export interface EmployeeView {
   id: string;
   /** Login/user id — used when assigning roles to this employee. */
@@ -32,6 +41,8 @@ export interface EmployeeView {
   lineManagerId: string | null;
   source: string;
   status: string;
+  /** False when this person has no login yet (no roles, not an admin). */
+  hasSystemAccess: boolean;
 }
 
 @Injectable()
@@ -61,7 +72,7 @@ export class EmployeesService {
     const [rows, total] = await Promise.all([
       this.prisma.employee.findMany({
         where,
-        include: { user: true },
+        include: employeeInclude,
         // Latest employees first (most recent joiner, then most recently added).
         orderBy: [
           { joiningDate: { sort: 'desc', nulls: 'last' } },
@@ -150,7 +161,7 @@ export class EmployeesService {
   async findOne(id: string): Promise<EmployeeView> {
     const row = await this.prisma.employee.findUnique({
       where: { id },
-      include: { user: true },
+      include: employeeInclude,
     });
     if (!row) throw new NotFoundException('Employee not found');
 
@@ -169,7 +180,10 @@ export class EmployeesService {
   }
 
   async update(id: string, dto: { name?: string; phone?: string; email?: string; gender?: string; dateOfBirth?: string }) {
-    const emp = await this.prisma.employee.findUnique({ where: { id }, include: { user: true } });
+    const emp = await this.prisma.employee.findUnique({
+      where: { id },
+      include: employeeInclude,
+    });
     if (!emp) throw new NotFoundException('Employee not found');
 
     await this.prisma.$transaction([
@@ -200,7 +214,7 @@ export class EmployeesService {
   }
 
   private toView(
-    row: Prisma.EmployeeGetPayload<{ include: { user: true } }>,
+    row: Prisma.EmployeeGetPayload<{ include: typeof employeeInclude }>,
   ): EmployeeView {
     return {
       id: row.id,
@@ -226,6 +240,8 @@ export class EmployeesService {
       lineManagerId: null,
       source: row.source,
       status: row.user.status,
+      hasSystemAccess:
+        row.user.role === 'ADMIN' || row.user._count.roleAssignments > 0,
     };
   }
 }
