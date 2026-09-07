@@ -88,14 +88,46 @@ log "Using pg_dump: $PG_DUMP"
 PSQL="$(dirname "$PG_DUMP")/psql.exe"
 [ -x "$PSQL" ] || PSQL="psql"
 
-DATABASE_URL="$(grep -m1 '^DATABASE_URL=' "$BACKEND_DIR/.env" | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//')"
+# `tr -d '\r'` is load-bearing: .env on this server has CRLF line endings, so
+# without it DATABASE_URL carries a trailing carriage return and pg_dump fails
+# with an opaque "invalid URI" error.
+DATABASE_URL="$(grep -m1 '^DATABASE_URL=' "$BACKEND_DIR/.env" | tr -d '\r' | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//')"
 [ -n "$DATABASE_URL" ] || die "DATABASE_URL not found in $BACKEND_DIR/.env"
+
+# Prisma's DATABASE_URL carries query params that libpq does NOT understand
+# (schema, connection_limit, pool_timeout, pgbouncer). Passing the raw URL to
+# pg_dump fails with: `invalid URI query parameter: "schema"`. Strip them for
+# pg_dump/psql only — Prisma itself still needs the full URL.
+PG_URL="$(printf '%s' "$DATABASE_URL" \
+  | sed -E 's/[?&]schema=[^&]*//; s/[?&]connection_limit=[^&]*//; s/[?&]pool_timeout=[^&]*//; s/[?&]pgbouncer=[^&]*//; s/[?&]connect_timeout=[^&]*//; s/\?$//')"
+
+# ── locate pm2 — it is NOT on PATH inside Git Bash on this server ────────
+# Bare `pm2` calls would fail: the `pm2 stop` below is failure-tolerant, so
+# npm ci would then delete node_modules out from under the RUNNING app
+# (EBUSY/EPERM on Windows), and the later `pm2 start` would abort the deploy
+# with the site down. Resolve it explicitly instead.
+locate_pm2() {
+  if command -v pm2 >/dev/null 2>&1; then command -v pm2; return 0; fi
+  local npm_prefix c
+  npm_prefix="$(npm config get prefix 2>/dev/null | tr -d '\r')"
+  local candidates=(
+    "$npm_prefix/pm2.cmd"
+    "/c/Users/Administrator/AppData/Roaming/npm/pm2.cmd"
+  )
+  for c in "${candidates[@]}"; do
+    if [ -x "$c" ] || [ -f "$c" ]; then printf '%s' "$c"; return 0; fi
+  done
+  return 1
+}
+PM2="$(locate_pm2)" || die "pm2 not found on PATH or in the npm global prefix.
+  Install it (npm i -g pm2) or add the npm global bin folder to PATH."
+log "Using pm2: $PM2"
 
 # ── 1. backup — and PROVE it's real before doing anything else ─────────
 log "[1/6] Backing up database"
 mkdir -p "$BACKUP_DIR"
 step "pg_dump -> $BACKUP_FILE"
-"$PG_DUMP" "$DATABASE_URL" > "$BACKUP_FILE"
+"$PG_DUMP" "$PG_URL" > "$BACKUP_FILE"
 
 if [ ! -s "$BACKUP_FILE" ]; then
   rm -f "$BACKUP_FILE"
@@ -110,7 +142,7 @@ step "verified: non-empty and complete ($(du -h "$BACKUP_FILE" | cut -f1))"
 
 # ── 2. stop PM2 before npm ci ────────────────────────────────────────────
 log "[2/6] Stopping $PM2_APP (required before npm ci — see header comment)"
-pm2 stop "$PM2_APP" 2>/dev/null || step "$PM2_APP was not running — continuing"
+"$PM2" stop "$PM2_APP" 2>/dev/null || step "$PM2_APP was not running — continuing"
 
 # From here on, if anything fails, the site is down. Make that loud.
 on_error() {
@@ -140,14 +172,14 @@ npm run build
 
 # ── 4. restart PM2 ───────────────────────────────────────────────────────
 log "[4/6] Starting $PM2_APP"
-if pm2 describe "$PM2_APP" >/dev/null 2>&1; then
-  pm2 restart "$PM2_APP"
+if "$PM2" describe "$PM2_APP" >/dev/null 2>&1; then
+  "$PM2" restart "$PM2_APP"
 else
-  pm2 start "$BACKEND_DIR/ecosystem.config.js"
+  "$PM2" start "$BACKEND_DIR/ecosystem.config.js"
 fi
-pm2 save
+"$PM2" save
 step "last 30 log lines:"
-pm2 logs "$PM2_APP" --lines 30 --nostream || true
+"$PM2" logs "$PM2_APP" --lines 30 --nostream || true
 
 # ── 5. frontend: build to scratch dir, atomic swap ──────────────────────
 log "[5/6] Frontend: build + atomic swap into dist/"
@@ -167,7 +199,10 @@ fi
 
 step "swapping dist/ (previous build kept as dist.old for one deploy cycle)"
 rm -rf dist.old
-[ -d dist ] && mv dist dist.old
+# Written as an if, not `[ -d dist ] && mv ...`: under `set -e` that AND-list
+# returns non-zero when dist/ is absent, which would abort the deploy and fire
+# the "SITE IS DOWN" trap even though nothing had gone wrong.
+if [ -d dist ]; then mv dist dist.old; fi
 mv "$TMP_DIST" dist
 step "frontend swapped in"
 
@@ -193,7 +228,7 @@ cat <<SUMMARY
  in the target database with the backup's contents; take a fresh backup
  of the current state first if you might need it):
    dropdb --if-exists <db_name> && createdb <db_name> && \\
-     "$PSQL" "$DATABASE_URL" < "$BACKUP_FILE"
+     "$PSQL" "$PG_URL" < "$BACKUP_FILE"
  (confirm <db_name> matches DATABASE_URL in $BACKEND_DIR/.env before running this)
 
  Backend code (previous commit):
