@@ -18,6 +18,6 @@ export class BoardPublicController {
   @Public()
   @Post('board-vote/:token')
   submitVote(@Param('token') token: string, @Body() dto: SubmitVoteDto) {
-    return this.board.submitVote(token, dto.notes);
+    return this.board.submitVote(token, dto.notes, dto.decision ?? 'approved');
   }
 }

@@ -32,6 +32,12 @@ export class AddRaiserDto {
   @IsString()
   @MinLength(1)
   raiserId!: string;
+
+  /** '' (or omitted) creates the unit-wide default chain. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  department?: string;
 }
 
 /**

@@ -83,7 +83,11 @@ export class ApprovalPathsService {
       select: {
         id: true,
         name: true,
-        approvalPaths: { include: levelInclude, orderBy: { createdAt: 'asc' } },
+        // '' (the unit-wide default) sorts first, then departments A-Z.
+        approvalPaths: {
+          include: levelInclude,
+          orderBy: [{ department: 'asc' }, { createdAt: 'asc' }],
+        },
       },
     });
     return units.map((u) => ({
@@ -100,7 +104,12 @@ export class ApprovalPathsService {
    * approval path. An empty path is valid — it means their requisitions go
    * straight to Corporate HR.
    */
-  async addRaiser(unitId: string, raiserId: string, userId: string) {
+  async addRaiser(
+    unitId: string,
+    raiserId: string,
+    userId: string,
+    department = '',
+  ) {
     await this.requireConfigAccess(userId);
 
     const unit = await this.prisma.unit.findUnique({ where: { id: unitId } });
@@ -115,36 +124,61 @@ export class ApprovalPathsService {
       throw new BadRequestException(`${raiser.name} is not an active user`);
     }
 
+    const dept = department.trim();
     const existing = await this.prisma.approvalPath.findUnique({
-      where: { unitId_raiserId: { unitId, raiserId } },
+      where: {
+        unitId_raiserId_department: { unitId, raiserId, department: dept },
+      },
     });
     if (existing) {
       throw new BadRequestException(
-        `${raiser.name} is already a requisition raiser for ${unit.name}`,
+        dept
+          ? `${raiser.name} already has a ${dept} chain for ${unit.name}`
+          : `${raiser.name} is already a requisition raiser for ${unit.name}`,
       );
     }
 
     await this.prisma.approvalPath.create({
-      data: { unitId, raiserId, updatedById: userId },
+      data: { unitId, raiserId, department: dept, updatedById: userId },
     });
 
     // Being nominated here IS the grant — no separate Access Control step.
     await this.grantRole('requisition_raiser', raiserId, unitId, unit.name, userId);
 
-    return this.findOne(unitId, raiserId, userId);
+    return this.findOne(unitId, raiserId, userId, dept);
   }
 
-  /** Stop someone raising for a unit, and drop their chain. */
-  async removeRaiser(unitId: string, raiserId: string, userId: string) {
+  /**
+   * Drop one chain. With no department it removes the unit-wide default;
+   * pass `all` to stop the person raising in the unit entirely.
+   */
+  async removeRaiser(
+    unitId: string,
+    raiserId: string,
+    userId: string,
+    department?: string,
+    all = false,
+  ) {
     await this.requireConfigAccess(userId);
-    await this.prisma.approvalPath.deleteMany({ where: { unitId, raiserId } });
+    await this.prisma.approvalPath.deleteMany({
+      where: {
+        unitId,
+        raiserId,
+        ...(all ? {} : { department: department?.trim() ?? '' }),
+      },
+    });
     // The requisition_raiser role assignment is deliberately left in place —
     // same rule as approvers: revoking access is a manual Access Control call,
     // since they may still appear on in-flight requisitions.
     return { success: true };
   }
 
-  async findOne(unitId: string, raiserId: string, userId: string) {
+  async findOne(
+    unitId: string,
+    raiserId: string,
+    userId: string,
+    department = '',
+  ) {
     await this.requireConfigAccess(userId);
     const unit = await this.prisma.unit.findUnique({
       where: { id: unitId },
@@ -152,7 +186,13 @@ export class ApprovalPathsService {
     });
     if (!unit) throw new NotFoundException('Unit not found');
     const path = await this.prisma.approvalPath.findUnique({
-      where: { unitId_raiserId: { unitId, raiserId } },
+      where: {
+        unitId_raiserId_department: {
+          unitId,
+          raiserId,
+          department: department.trim(),
+        },
+      },
       include: levelInclude,
     });
     if (!path) throw new NotFoundException('Approval path not found');
@@ -165,6 +205,7 @@ export class ApprovalPathsService {
     raiserId: string,
     dto: ReplaceApprovalPathDto,
     userId: string,
+    department = '',
   ) {
     await this.requireConfigAccess(userId);
 
@@ -172,7 +213,13 @@ export class ApprovalPathsService {
     if (!unit) throw new NotFoundException('Unit not found');
 
     const path = await this.prisma.approvalPath.findUnique({
-      where: { unitId_raiserId: { unitId, raiserId } },
+      where: {
+        unitId_raiserId_department: {
+          unitId,
+          raiserId,
+          department: department.trim(),
+        },
+      },
     });
     if (!path) {
       throw new NotFoundException(
@@ -211,7 +258,7 @@ export class ApprovalPathsService {
       );
     }
 
-    return this.findOne(unitId, raiserId, userId);
+    return this.findOne(unitId, raiserId, userId, department.trim());
   }
 
   /**
@@ -311,9 +358,17 @@ export class ApprovalPathsService {
    * guess. Snapshotting the rest means editing a path never reroutes a
    * requisition already in flight.
    */
+  /**
+   * The chain a requisition should follow.
+   *
+   * Resolution is exact department first, then the unit-wide default ('').
+   * That lets a unit run one chain for everything and override only the
+   * departments whose routing genuinely differs.
+   */
   async buildStepsForRaiser(
     unitName: string,
     raiserId: string,
+    department = '',
   ): Promise<Prisma.ApprovalStepCreateWithoutRequisitionInput[]> {
     const units = await this.prisma.unit.findMany({
       select: { id: true, name: true },
@@ -327,8 +382,13 @@ export class ApprovalPathsService {
       );
     }
 
-    const path = await this.prisma.approvalPath.findUnique({
-      where: { unitId_raiserId: { unitId: unit.id, raiserId } },
+    const dept = department.trim();
+    const candidates = await this.prisma.approvalPath.findMany({
+      where: {
+        unitId: unit.id,
+        raiserId,
+        department: dept ? { in: [dept, ''] } : '',
+      },
       include: {
         levels: {
           orderBy: { orderIndex: 'asc' },
@@ -337,9 +397,16 @@ export class ApprovalPathsService {
       },
     });
 
+    // A department-specific chain wins over the unit-wide default.
+    const path =
+      candidates.find((c) => dept && c.department === dept) ??
+      candidates.find((c) => c.department === '');
+
     if (!path) {
       throw new BadRequestException(
-        `No approval path is configured for you in "${unit.name}" — ask Corporate HR to set one up before raising a requisition here.`,
+        `No approval path is configured for you in "${unit.name}"${
+          dept ? ` for ${dept}` : ''
+        } — ask Corporate HR to set one up before raising a requisition here.`,
       );
     }
 
@@ -381,6 +448,8 @@ function serializePath(
   return {
     unitId,
     unitName,
+    /** '' means this chain covers any department in the unit. */
+    department: path.department,
     raiser: {
       id: path.raiser.id,
       name: path.raiser.name,

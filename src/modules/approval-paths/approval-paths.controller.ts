@@ -1,4 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 
 import {
   CurrentUser,
@@ -28,16 +37,22 @@ export class ApprovalPathsController {
     @Body() dto: AddRaiserDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.approvalPaths.addRaiser(unitId, dto.raiserId, user.id);
+    return this.approvalPaths.addRaiser(
+      unitId,
+      dto.raiserId,
+      user.id,
+      dto.department ?? '',
+    );
   }
 
   @Get(':unitId/raisers/:raiserId')
   findOne(
     @Param('unitId') unitId: string,
     @Param('raiserId') raiserId: string,
+    @Query('department') department: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.approvalPaths.findOne(unitId, raiserId, user.id);
+    return this.approvalPaths.findOne(unitId, raiserId, user.id, department ?? '');
   }
 
   /** Replace one raiser's intermediate approvers. */
@@ -46,17 +61,32 @@ export class ApprovalPathsController {
     @Param('unitId') unitId: string,
     @Param('raiserId') raiserId: string,
     @Body() dto: ReplaceApprovalPathDto,
+    @Query('department') department: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.approvalPaths.replace(unitId, raiserId, dto, user.id);
+    return this.approvalPaths.replace(
+      unitId,
+      raiserId,
+      dto,
+      user.id,
+      department ?? '',
+    );
   }
 
   @Delete(':unitId/raisers/:raiserId')
   removeRaiser(
     @Param('unitId') unitId: string,
     @Param('raiserId') raiserId: string,
+    @Query('department') department: string | undefined,
+    @Query('all') all: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.approvalPaths.removeRaiser(unitId, raiserId, user.id);
+    return this.approvalPaths.removeRaiser(
+      unitId,
+      raiserId,
+      user.id,
+      department ?? '',
+      all === 'true',
+    );
   }
 }

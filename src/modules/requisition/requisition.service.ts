@@ -77,18 +77,34 @@ export class RequisitionService {
   ) {
     await this.ensureCanRaise(raiser.id, dto.unitFactory);
 
-    // Authoritative New vs Replacement decision from the organogram.
-    // NEW when the requested posts exceed the vacant
-    // sanctioned seats — i.e. you're asking for headcount beyond what's vacant.
-    // Replacement only when required ≤ vacant.
-    const lookup = await this.organogram.lookup(
+    // New vs Replacement is the requisitioner's declaration, not the
+    // organogram's. The seat lookup still runs — it fills totalVacantPosts and
+    // shows the requisitioner what's sanctioned — but it is advisory now, so a
+    // replacement can be raised for a seat the organogram doesn't yet show.
+    await this.organogram.lookup(
       dto.unitFactory,
       dto.department,
       dto.designation,
       raiser.id,
     );
-    const requirementType =
-      dto.requiredPosts > lookup.vacant ? 'NEW' : 'EXISTING';
+    const requirementType = dto.requirementType === 'new' ? 'NEW' : 'EXISTING';
+
+    // A replacement has to say who left and why — otherwise "Replacement" is
+    // an unauditable label. Trimmed here so whitespace can't satisfy it.
+    const replaceOfName = dto.replaceOfName?.trim() || null;
+    const separationReason = dto.separationReason?.trim() || null;
+    if (requirementType === 'EXISTING') {
+      if (!replaceOfName) {
+        throw new BadRequestException(
+          'Name the employee being replaced — a replacement requisition must say who left.',
+        );
+      }
+      if (!separationReason) {
+        throw new BadRequestException(
+          'Give the reason the employee being replaced left.',
+        );
+      }
+    }
 
     // This raiser's own chain for this unit — an ordered list of named
     // approvers with a Corporate HR step appended — snapshotted here so later
@@ -97,6 +113,7 @@ export class RequisitionService {
     const steps = await this.approvalPaths.buildStepsForRaiser(
       dto.unitFactory,
       raiser.id,
+      dto.department,
     );
 
     // The raiser signs on submit, but that signature is an activity-log entry
@@ -111,9 +128,23 @@ export class RequisitionService {
         requiredPosts: dto.requiredPosts,
         totalVacantPosts: dto.totalVacantPosts,
         unitFactory: dto.unitFactory,
+        lineOfBusiness: dto.lineOfBusiness,
         department: dto.department,
         section: dto.section ?? null,
         subSection: dto.subSection ?? null,
+        // Only meaningful on a replacement; cleared on a NEW headcount so a
+        // later edit from Replace to New can't leave a stale name behind.
+        replaceOfName: requirementType === 'EXISTING' ? replaceOfName : null,
+        replaceOfEmployeeCode:
+          requirementType === 'EXISTING'
+            ? dto.replaceOfEmployeeCode?.trim() || null
+            : null,
+        separationReason:
+          requirementType === 'EXISTING' ? separationReason : null,
+        replacementRemarks:
+          requirementType === 'EXISTING'
+            ? dto.replacementRemarks?.trim() || null
+            : null,
         placeOfPosting: dto.placeOfPosting,
         vacantDate: toDate(dto.vacantDate),
         neededDate: toDate(dto.neededDate),
@@ -768,17 +799,24 @@ export class RequisitionService {
       if (existing.status === d.status && (existing.hrNote ?? '') === (d.hrNote ?? '')) {
         continue; // no-op — don't log or touch decidedBy/decidedAt for an unchanged decision
       }
+      // HR can grant a facility the requisitioner never asked for. Marking it
+      // requested is what makes it visible to Facility Provisioning, which
+      // lists only requested + confirmed facilities.
+      const added = d.status === 'confirmed' && !existing.requested;
       const verb = d.status === 'confirmed' ? 'Confirmed' : 'Skipped';
       const label = FACILITY_LABEL[d.key] ?? d.key;
       changes.push({
         key: d.key,
         note:
-          existing.status === 'pending'
+          added
+            ? `Added and confirmed ${label} (not requested by the requisitioner)${d.hrNote ? ` — "${d.hrNote}"` : ''}`
+            : existing.status === 'pending'
             ? `${verb} ${label}${d.hrNote ? ` — "${d.hrNote}"` : ''}`
             : `Changed ${label} from ${existing.status} to ${d.status}${d.hrNote ? ` — "${d.hrNote}"` : ''}`,
       });
       next[d.key] = {
         ...existing,
+        requested: existing.requested || d.status === 'confirmed',
         status: d.status,
         hrNote: d.hrNote ?? existing.hrNote ?? '',
         decidedBy: actor.name,
@@ -1400,6 +1438,11 @@ function serialize(req: RequisitionFull) {
     designation: req.designation,
     grade: req.grade ?? null,
     requirementType: low(req.requirementType),
+    lineOfBusiness: req.lineOfBusiness ?? null,
+    replaceOfName: req.replaceOfName ?? null,
+    replaceOfEmployeeCode: req.replaceOfEmployeeCode ?? null,
+    separationReason: req.separationReason ?? null,
+    replacementRemarks: req.replacementRemarks ?? null,
     requiredPosts: req.requiredPosts,
     totalVacantPosts: req.totalVacantPosts,
     unitFactory: req.unitFactory,

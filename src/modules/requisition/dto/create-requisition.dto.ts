@@ -85,6 +85,11 @@ export class CreateRequisitionDto {
   @IsNotEmpty()
   unitFactory!: string;
 
+  /** DBL business vertical — one of master_options kind='line_of_business'. */
+  @IsString()
+  @IsNotEmpty()
+  lineOfBusiness!: string;
+
   @IsString()
   @IsNotEmpty()
   department!: string;
@@ -96,6 +101,31 @@ export class CreateRequisitionDto {
   @IsOptional()
   @IsString()
   subSection?: string;
+
+  /**
+   * The requisitioner's own declaration: a brand-new headcount, or a
+   * replacement for someone who left. Previously derived from the organogram —
+   * the seat lookup is now advisory, so the two can legitimately disagree.
+   */
+  @IsIn(['new', 'existing'])
+  requirementType!: 'new' | 'existing';
+
+  /** Replacement details — required when requirementType is 'existing'. */
+  @IsOptional()
+  @IsString()
+  replaceOfName?: string;
+
+  @IsOptional()
+  @IsString()
+  replaceOfEmployeeCode?: string;
+
+  @IsOptional()
+  @IsString()
+  separationReason?: string;
+
+  @IsOptional()
+  @IsString()
+  replacementRemarks?: string;
 
   @IsString()
   @IsNotEmpty()
