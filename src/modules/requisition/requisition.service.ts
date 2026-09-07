@@ -180,6 +180,8 @@ export class RequisitionService {
 
   /** Notify whoever currently needs to act on a requisition. */
   private async notifyPendingApprover(req: RequisitionFull): Promise<void> {
+    // Parked with the raiser — nobody in the chain is waiting on anything yet.
+    if (req.approvalSteps.some((s) => s.status === 'INFO_REQUESTED')) return;
     const pending = req.approvalSteps.find((s) => s.status === 'PENDING');
     if (!pending) return;
     const userIds = pending.approverUserId
@@ -198,6 +200,56 @@ export class RequisitionService {
     });
   }
 
+
+  /**
+   * Requisitioner sends a clarified requisition back into the chain.
+   *
+   * Approvals given before the bounce are cleared: they were signed against
+   * content that has since changed, so the chain restarts from step 1 rather
+   * than binding an earlier approver to a version they never saw.
+   */
+  async resubmit(id: string, actor: { id: string; name: string }) {
+    const req = await this.load(id, actor.id);
+
+    if (req.status !== 'PENDING_APPROVAL') {
+      throw new BadRequestException(
+        'Only a requisition awaiting approval can be resent',
+      );
+    }
+    if (!req.approvalSteps.some((s) => s.status === 'INFO_REQUESTED')) {
+      throw new BadRequestException(
+        `${req.code} is not waiting on clarification`,
+      );
+    }
+    const isSuper = await this.permissions.isSuperUser(actor.id);
+    if (req.raisedById !== actor.id && !isSuper) {
+      throw new ForbiddenException(
+        `Only ${req.raisedBy || 'the requisitioner'} can resend ${req.code} for approval`,
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.approvalStep.updateMany({
+        where: { requisitionId: id },
+        data: { status: 'PENDING', note: '', actedAt: null },
+      });
+      await tx.requisitionActivity.create({
+        data: {
+          requisitionId: id,
+          actor: actor.name,
+          action: 'EDITED',
+          note: 'Clarified and resent for approval — chain restarted from the first step.',
+        },
+      });
+    });
+
+    const updated = await this.load(id, actor.id);
+    await this.notifyPendingApprover(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'resubmitted',
+    });
+    return serialize(updated);
+  }
 
   /**
    * What this user is allowed to see in the requisition list.
@@ -385,6 +437,16 @@ export class RequisitionService {
     const req = await this.load(id, actor.id);
     const note = dto.note ?? '';
     const steps = req.approvalSteps;
+
+    // Parked with the raiser after "need more info" — later steps are still
+    // PENDING, so without this guard an approver further down the chain could
+    // sign off on a requisition that is currently being rewritten.
+    if (steps.some((s) => s.status === 'INFO_REQUESTED')) {
+      throw new BadRequestException(
+        `${req.code} was sent back to ${req.raisedBy || 'the requisitioner'} for clarification — it returns to the chain once they resend it.`,
+      );
+    }
+
     const idx = steps.findIndex((s) => s.status === 'PENDING');
     if (idx === -1) {
       throw new BadRequestException('No pending sign-off to act on');
@@ -467,13 +529,18 @@ export class RequisitionService {
       }
 
       if (dto.decision === 'need_more_info') {
-        // Roll back to the previous approver, if any.
-        if (idx > 0) {
-          await tx.approvalStep.update({
-            where: { id: steps[idx - 1].id },
-            data: { status: 'PENDING', note, actedAt: null },
-          });
-        }
+        // Straight back to the requisitioner — they wrote it, so they are the
+        // one who can answer. The step is held (not approved, not rejected) so
+        // the chain resumes from the top once they resend.
+        await tx.approvalStep.update({
+          where: { id: current.id },
+          data: {
+            status: 'INFO_REQUESTED',
+            assignee: actorName,
+            note,
+            actedAt: new Date(),
+          },
+        });
         return;
       }
 
@@ -749,6 +816,19 @@ export class RequisitionService {
         'Only requisitions awaiting approval can be edited',
       );
     }
+    // Sent back for clarification: it is the raiser's to fix, not an approver's.
+    if (req.approvalSteps.some((s) => s.status === 'INFO_REQUESTED')) {
+      if (
+        req.raisedById === actorId ||
+        (await this.permissions.isSuperUser(actorId))
+      ) {
+        return;
+      }
+      throw new ForbiddenException(
+        `${req.code} was sent back to ${req.raisedBy || 'the requisitioner'} — only they can edit it now.`,
+      );
+    }
+
     const current = req.approvalSteps.find((s) => s.status === 'PENDING');
     if (!current) throw new BadRequestException('No pending step to edit on');
 
@@ -760,20 +840,25 @@ export class RequisitionService {
     }
   }
 
-  /** Facilities stay editable after approval (Corporate HR/CHRO/super), unlike the rest of the requisition's content. */
+  /**
+   * Facilities are settled by the HR side, not by the sign-off chain.
+   *
+   * Confirming a laptop or a desk is a provisioning commitment, so it belongs
+   * to Corporate HR / CHRO and the assigned Corporate Recruiter — the people
+   * who actually deliver it — rather than to whichever approver happens to
+   * hold the requisition at that moment. The same gate applies before and
+   * after approval, so a decision can't be made by one party and revised by a
+   * different one.
+   */
   private async requireFacilitiesEditAccess(
     req: RequisitionFull,
     actorId: string,
   ): Promise<void> {
-    if (req.status === 'PENDING_APPROVAL') {
-      await this.requireCurrentApprover(req, actorId);
-      return;
-    }
     await this.permissions.requireRecruitmentAccess(
       actorId,
       req.unitFactory,
       req.recruiterId,
-      'change facility decisions after approval',
+      'confirm or skip facility requests',
     );
   }
 
@@ -1360,6 +1445,7 @@ function serialize(req: RequisitionFull) {
     candidateStats: candidateStats(req.candidates),
     pipeline: pipelineProgress(req.candidates),
     raisedBy: req.raisedBy ?? '',
+    raisedById: req.raisedById ?? null,
     recruiter: req.recruiter
       ? {
           id: req.recruiter.id,

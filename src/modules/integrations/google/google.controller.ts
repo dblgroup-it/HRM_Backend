@@ -27,7 +27,7 @@ export class GoogleController {
   ) {}
 
   /** Whether Drive is connected — used by the frontend to gate recruitment UI. */
-  @Roles(UserRole.ADMIN, UserRole.HR_MANAGER)
+  @Roles(UserRole.ADMIN)
   @Get('drive/status')
   status() {
     return {

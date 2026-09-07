@@ -107,6 +107,14 @@ export class RequisitionController {
     });
   }
 
+  @Patch(':id/resubmit')
+  resubmit(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.requisitionService.resubmit(id, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
   @Get(':id/recruiters')
   listRecruiters(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.requisitionService.listRecruiters(id, user.id);
