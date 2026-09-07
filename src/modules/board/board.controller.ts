@@ -66,7 +66,22 @@ export class BoardController {
     @Body() dto: SendBoardApprovalDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.board.sendForApproval(candidateId, dto.memberIds, user.id);
+    return this.board.sendForApproval(
+      candidateId,
+      dto.memberIds,
+      user.id,
+      dto.corporateHrId,
+      dto.chroId,
+    );
+  }
+
+  /** Who the first link of the chain can be sent to. */
+  @Get('candidates/:id/board-approval/approvers')
+  listChainApprovers(
+    @Param('id') candidateId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.board.listChainApprovers(candidateId, user.id);
   }
 
   @Get('candidates/:id/board-approval')

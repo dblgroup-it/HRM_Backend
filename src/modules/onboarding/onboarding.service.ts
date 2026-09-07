@@ -164,6 +164,9 @@ export class OnboardingService {
             ? cand.salaryFixation.jobGrade
             : null,
         facilities: cand.requisition.facilities ?? null,
+        /** Lets the UI gate provisioning on the assigned recruiter, matching
+         *  the access rule the API already enforces. */
+        recruiterId: cand.requisition.recruiterId ?? null,
       },
       onboarding: ob ? this.serialize(ob, cand.name, cand.email) : null,
     };

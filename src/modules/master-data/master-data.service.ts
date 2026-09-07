@@ -15,6 +15,8 @@ export interface MasterData {
   /** designation -> the grades valid for it */
   designationGrades: Record<string, string[]>;
   zones: string[];
+  /** DBL business verticals, picked after the unit. */
+  linesOfBusiness: string[];
 }
 
 /** Key for the sectionSubSections map — mirrors how the rows are seeded. */
@@ -52,6 +54,7 @@ export class MasterDataService {
     const departments: string[] = [];
     const designations: string[] = [];
     const zones: string[] = [];
+    const linesOfBusiness: string[] = [];
     const subSections: string[] = [];
     const departmentSections: Record<string, string[]> = {};
     const sectionSubSections: Record<string, string[]> = {};
@@ -67,6 +70,9 @@ export class MasterDataService {
           break;
         case 'zone':
           zones.push(r.value);
+          break;
+        case 'line_of_business':
+          linesOfBusiness.push(r.value);
           break;
         case 'section':
           (departmentSections[r.parent] ??= []).push(r.value);
@@ -90,6 +96,7 @@ export class MasterDataService {
       designations,
       designationGrades,
       zones,
+      linesOfBusiness,
     };
   }
 }

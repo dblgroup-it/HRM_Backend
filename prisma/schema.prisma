@@ -223,6 +223,8 @@ model User {
   boardGroupMemberships    BoardGroupMember[]
   boardApprovalsRequested  BoardApproval[]     @relation("BoardApprovalRequester")
   boardApprovalsHrApproved BoardApproval[]     @relation("BoardApprovalHrApprover")
+  boardApprovalsAsCorporateHr BoardApproval[]  @relation("BoardApprovalCorporateHr")
+  boardApprovalsAsChro     BoardApproval[]     @relation("BoardApprovalChro")
   boardApprovalVotes       BoardApprovalVote[]
   facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
   facilityNotificationsReceived FacilityNotification[] @relation("FacilityNotificationRecipient")
@@ -411,6 +413,8 @@ model Requisition {
   requiredPosts      Int                   @map("required_posts")
   totalVacantPosts   Int                   @map("total_vacant_posts")
   unitFactory        String                @map("unit_factory") @db.VarChar(200)
+  /// DBL business vertical (Garments, Pharma, Telecom…) — fixed list in master_options.
+  lineOfBusiness     String?               @map("line_of_business") @db.VarChar(150)
   department         String                @db.VarChar(150)
   section            String?               @db.VarChar(150)
   /// Sub-section within the section (ZingHR vocabulary, cascades from department+section).
@@ -421,6 +425,13 @@ model Requisition {
   priority           Priority              @default(MODERATE)
   employmentNature   EmploymentNature      @default(PERMANENT) @map("employment_nature")
   contractualPurpose String?               @map("contractual_purpose")
+  /// Replacement details — required when requirementType is EXISTING (Replace),
+  /// null on a NEW headcount. `replaceOfName` is a snapshot: the person may
+  /// have already left by the time anyone reads it.
+  replaceOfName         String?            @map("replace_of_name") @db.VarChar(150)
+  replaceOfEmployeeCode String?            @map("replace_of_employee_code") @db.VarChar(50)
+  separationReason      String?            @map("separation_reason")
+  replacementRemarks    String?            @map("replacement_remarks")
   jobDescription     String                @map("job_description")
   education          String
   experience         String
@@ -949,15 +960,19 @@ model ApprovalPath {
   /// The Requisition Raiser whose requisitions follow this chain.
   raiserId    String              @map("raiser_id")
   raiser      User                @relation("ApprovalPathRaiser", fields: [raiserId], references: [id], onDelete: Cascade)
+  /// Department this chain covers. '' means "any department in this unit" —
+  /// the fallback used when no department-specific chain exists.
+  department  String              @default("") @db.VarChar(150)
   levels      ApprovalPathLevel[]
   updatedById String?             @map("updated_by_id")
   updatedBy   User?               @relation("ApprovalPathUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   createdAt   DateTime            @default(now()) @map("created_at")
   updatedAt   DateTime            @updatedAt @map("updated_at")
 
-  @@unique([unitId, raiserId])
+  @@unique([unitId, raiserId, department])
   @@index([unitId])
   @@index([raiserId])
+  @@index([unitId, department])
   @@map("approval_paths")
 }
 
@@ -1003,11 +1018,20 @@ model RequisitionActivity {
 enum BoardApprovalStatus {
   pending
   approved
+  rejected
 }
 
 enum BoardVoteStatus {
   pending
   approved
+  rejected
+}
+
+/// Where a board approval currently sits in the sign-off chain.
+enum BoardApprovalStage {
+  corporate_hr
+  chro
+  board
 }
 
 model BoardGroup {
@@ -1039,6 +1063,20 @@ model BoardApproval {
   requestedById    String              @map("requested_by_id")
   requestedBy      User                @relation("BoardApprovalRequester", fields: [requestedById], references: [id])
   status           BoardApprovalStatus @default(pending)
+  /// Which link in the chain is currently being waited on.
+  currentStage     BoardApprovalStage  @default(board) @map("current_stage")
+  /// The Corporate HR the requester chose to sign off. Several people hold the
+  /// role, so the first link names one rather than mailing them all.
+  corporateHrId    String?             @map("corporate_hr_id")
+  corporateHr      User?               @relation("BoardApprovalCorporateHr", fields: [corporateHrId], references: [id], onDelete: SetNull)
+  /// The CHRO chosen to sign the second link.
+  chroId           String?             @map("chro_id")
+  chro             User?               @relation("BoardApprovalChro", fields: [chroId], references: [id], onDelete: SetNull)
+  /// Board members picked when the request was raised. They are only emailed
+  /// once the chain reaches the board stage.
+  boardMemberIds   String[]            @map("board_member_ids")
+  rejectedReason   String?             @map("rejected_reason")
+  rejectedAt       DateTime?           @map("rejected_at")
   votes            BoardApprovalVote[]
   hrApprovedById   String?             @map("hr_approved_by_id")
   hrApprovedBy     User?               @relation("BoardApprovalHrApprover", fields: [hrApprovedById], references: [id], onDelete: SetNull)
@@ -1062,6 +1100,8 @@ model BoardApprovalVote {
   user            User            @relation(fields: [userId], references: [id])
   token           String          @unique @db.VarChar(64)
   tokenExpiresAt  DateTime        @map("token_expires_at")
+  /// Which link in the chain this vote belongs to.
+  stage           BoardApprovalStage @default(board)
   status          BoardVoteStatus @default(pending)
   notes           String?
   respondedAt     DateTime?       @map("responded_at")

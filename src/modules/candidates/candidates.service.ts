@@ -457,7 +457,7 @@ export class CandidatesService {
 
   /** Talent Bank — finalist/selected candidates auto-collected for future recall. */
   async listTalentPool(userId: string) {
-    await this.requireRecruitmentRole(userId);
+    await this.requireTalentBankAccess(userId);
     const rows = await this.prisma.candidate.findMany({
       where: {
         talentPool: true,
@@ -491,7 +491,7 @@ export class CandidatesService {
   }
 
   async aiSearchTalentPool(query: string, userId: string) {
-    await this.requireRecruitmentRole(userId);
+    await this.requireTalentBankAccess(userId);
     if (!query?.trim()) return { results: [], summary: '', query: '' };
 
     const rows = await this.prisma.candidate.findMany({
@@ -1392,7 +1392,7 @@ export class CandidatesService {
     userId: string,
     force = false,
   ) {
-    await this.requireRecruitmentRole(userId);
+    await this.requireTalentBankAccess(userId);
 
     const source = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
@@ -1407,6 +1407,15 @@ export class CandidatesService {
 
     const req = await this.prisma.requisition.findUnique({ where: { id: requisitionId } });
     if (!req) throw new NotFoundException('Requisition not found');
+    // Reading the bank is global, but adding someone to a pipeline is a write
+    // to that requisition — a recruiter may only source into requisitions they
+    // are actually running. Corporate HR / CHRO / super are unaffected.
+    await this.permissions.requireRecruitmentAccess(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      'add a Talent Bank candidate to this requisition',
+    );
     if (!['APPROVED', 'POSTED'].includes(req.status)) {
       throw new BadRequestException('Target requisition must be approved or posted');
     }
@@ -1439,6 +1448,36 @@ export class CandidatesService {
   }
 
   /** Global recruitment role check (for cross-requisition views like talent pool). */
+  /**
+   * Talent Bank access — Corporate HR, CHRO, super users and Corporate
+   * Recruiters.
+   *
+   * The bank is a shared pool by design: a recruiter sourcing for their own
+   * requisition needs to reach candidates who originally applied to someone
+   * else's. Kept separate from `requireRecruitmentRole` so the maintenance
+   * routines below stay restricted.
+   */
+  private async requireTalentBankAccess(userId: string) {
+    const ok =
+      (await this.permissions.isSuperUser(userId)) ||
+      Boolean(
+        await this.prisma.roleAssignment.findFirst({
+          where: {
+            userId,
+            role: {
+              key: { in: ['corporate_hr', 'chro', 'corporate_recruiter'] },
+            },
+          },
+        }),
+      );
+    if (!ok) {
+      throw new ForbiddenException(
+        'Only Corporate HR, CHRO, a Corporate Recruiter or a super user can view the Talent Bank',
+      );
+    }
+  }
+
+  /** Stricter gate for maintenance routines that act across every requisition. */
   private async requireRecruitmentRole(userId: string) {
     const ok =
       (await this.permissions.isSuperUser(userId)) ||
@@ -1449,7 +1488,7 @@ export class CandidatesService {
       );
     if (!ok) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can view the Talent Bank',
+        'Only Corporate HR, CHRO or a super user can perform this action',
       );
     }
   }

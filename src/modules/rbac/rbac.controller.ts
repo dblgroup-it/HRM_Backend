@@ -11,6 +11,7 @@ import {
 import { UserRole } from '@prisma/client';
 
 import { Roles } from '../../common/decorators/roles.decorator';
+import { AllowSuperUser } from '../../common/decorators/allow-super-user.decorator';
 import {
   AuthUser,
   CurrentUser,
@@ -23,6 +24,7 @@ import {
   UpdateRoleDto,
 } from './dto/rbac.dto';
 
+@AllowSuperUser()
 @Controller()
 export class RbacController {
   constructor(
