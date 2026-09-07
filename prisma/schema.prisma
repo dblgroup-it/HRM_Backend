@@ -50,11 +50,6 @@ enum RequirementType {
   NEW
 }
 
-enum RequisitionSource {
-  FACTORY
-  HO
-}
-
 enum Priority {
   TOP
   MODERATE
@@ -413,12 +408,13 @@ model Requisition {
   /// informed by the organogram seat's grade + the ZingHR grade reference.
   grade              String?               @db.VarChar(20)
   requirementType    RequirementType       @map("requirement_type")
-  source             RequisitionSource
   requiredPosts      Int                   @map("required_posts")
   totalVacantPosts   Int                   @map("total_vacant_posts")
   unitFactory        String                @map("unit_factory") @db.VarChar(200)
   department         String                @db.VarChar(150)
   section            String?               @db.VarChar(150)
+  /// Sub-section within the section (ZingHR vocabulary, cascades from department+section).
+  subSection         String?               @map("sub_section") @db.VarChar(150)
   placeOfPosting     String                @map("place_of_posting") @db.VarChar(200)
   vacantDate         DateTime?             @map("vacant_date") @db.Date
   neededDate         DateTime?             @map("needed_date") @db.Date
@@ -1117,4 +1113,29 @@ model SyncLog {
   finishedAt DateTime? @map("finished_at")
 
   @@map("sync_logs")
+}
+
+/// Fixed dropdown vocabulary for the requisition form (departments, their
+/// sections, designations, each designation's valid grades, and posting zones).
+///
+/// Originates from ZingHR; seeded by migration so every environment matches and
+/// a correction needs no deploy. One table rather than five: the lists are the
+/// same shape, and `parent` carries the only relationship that matters —
+/// section -> department, subsection -> "department||section", grade -> designation.
+model MasterOption {
+  id        String   @id @default(cuid())
+  /// department | section | subsection | designation | grade | zone
+  kind      String   @db.VarChar(20)
+  value     String   @db.VarChar(200)
+  /// Owning value for cascading lists; "" when the list is flat. Empty string
+  /// rather than NULL so the unique constraint actually bites.
+  parent    String   @default("") @db.VarChar(200)
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([kind, value, parent])
+  @@index([kind, parent])
+  @@map("master_options")
 }

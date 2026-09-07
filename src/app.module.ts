@@ -16,6 +16,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { UnitsModule } from './modules/units/units.module';
 import { OrganogramModule } from './modules/organogram/organogram.module';
 import { ApprovalPathsModule } from './modules/approval-paths/approval-paths.module';
+import { MasterDataModule } from './modules/master-data/master-data.module';
 import { RequisitionModule } from './modules/requisition/requisition.module';
 import { CandidatesModule } from './modules/candidates/candidates.module';
 import { AssessmentModule } from './modules/assessment/assessment.module';
@@ -49,6 +50,7 @@ import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.mod
     UnitsModule,
     OrganogramModule,
     ApprovalPathsModule,
+    MasterDataModule,
     RequisitionModule,
     CandidatesModule,
     AssessmentModule,

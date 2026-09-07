@@ -70,8 +70,6 @@ export class CreateRequisitionDto {
   @MinLength(2)
   designation!: string;
 
-  @IsIn(['factory', 'ho'])
-  source!: 'factory' | 'ho';
 
   @Type(() => Number)
   @IsInt()
@@ -94,6 +92,10 @@ export class CreateRequisitionDto {
   @IsOptional()
   @IsString()
   section?: string;
+
+  @IsOptional()
+  @IsString()
+  subSection?: string;
 
   @IsString()
   @IsNotEmpty()

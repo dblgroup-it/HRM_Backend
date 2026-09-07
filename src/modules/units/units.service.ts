@@ -17,8 +17,8 @@ import {
 } from './dto/unit.dto';
 
 /** Dynamic RBAC roles allowed to manage a unit's own configuration
- * (departments/seats) — corporate_hr and chro are global, sbu_head is
- * sbu_head are scoped to the unit(s) they're actually assigned to. */
+ * (departments/seats) — corporate_hr and chro are global; sbu_head is scoped
+ * to the unit(s) it is actually assigned to. */
 const UNIT_CONFIG_ROLE_KEYS = ['corporate_hr', 'chro', 'sbu_head'];
 
 @Injectable()
@@ -36,7 +36,7 @@ export class UnitsService {
       if (await this.permissions.hasRoleForUnitName(userId, key, unitName)) return;
     }
     throw new ForbiddenException(
-      'Only Corporate HR, CHRO, Factory HR or SBU Head for this unit can manage its configuration.',
+      'Only Corporate HR, CHRO or SBU Head for this unit can manage its configuration.',
     );
   }
 

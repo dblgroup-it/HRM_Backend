@@ -177,11 +177,20 @@ export interface DraftRequisitionInput {
   prompt: string;
   /** Units the requester may raise for — the AI must pick one of these. */
   units: string[];
-  /** Real departments (and their designations) for those units. */
-  structure: {
-    unit: string;
-    departments: { department: string; designations: string[] }[];
-  }[];
+  /**
+   * The form's fixed vocabulary. Departments, designations and zones go into
+   * the prompt so the model copies rather than invents. The section and
+   * sub-section maps are NOT prompted — together they are ~31k characters and
+   * a job description rarely names them — they are used to snap the model's
+   * free-text guess once the department is known, which costs no tokens.
+   */
+  vocabulary: {
+    departments: string[];
+    designations: string[];
+    zones: string[];
+    departmentSections: Record<string, string[]>;
+    sectionSubSections: Record<string, string[]>;
+  };
   today: string;
 }
 
@@ -191,7 +200,7 @@ export interface DraftRequisitionResult {
   unitFactory: string;
   department: string;
   section: string;
-  source: 'factory' | 'ho';
+  subSection: string;
   requiredPosts: number;
   placeOfPosting: string;
   vacantDate: string;
@@ -701,23 +710,7 @@ Respond with ONLY a compact JSON object and nothing else:
   }
 
   private buildDraftPrompt(i: DraftRequisitionInput): string {
-    const structure = i.structure
-      .map((u) => {
-        const depts = u.departments
-          .map(
-            (d) =>
-              `    - ${d.department}${
-                d.designations.length
-                  ? ` (existing roles: ${d.designations.slice(0, 12).join(', ')})`
-                  : ''
-              }`,
-          )
-          .join('\n');
-        return `  UNIT: ${u.unit}\n${depts || '    (no departments on record)'}`;
-      })
-      .join('\n');
-
-    return `You are an HR officer at DBL Group, a large Bangladeshi manufacturing conglomerate (textiles, apparel, ceramics, pharma). Convert the hiring manager's short request into a complete Employee Requisition draft.
+    return `You are an HR officer at DBL Group, a large Bangladeshi conglomerate spanning textiles, apparel, ceramics, pharmaceuticals, telecom, dredging, healthcare and corporate services. Convert the hiring manager's short request into a complete Employee Requisition draft.
 
 REQUEST FROM THE HIRING MANAGER:
 """${i.prompt}"""
@@ -727,29 +720,34 @@ TODAY: ${i.today}
 THE ONLY UNITS THIS PERSON MAY RAISE FOR (copy one EXACTLY, character for character):
 ${i.units.map((u) => `  - ${u}`).join('\n')}
 
-REAL ORGANISATION STRUCTURE (copy the department name EXACTLY as written):
-${structure}
+ALLOWED DEPARTMENTS — "department" MUST be copied EXACTLY from this list:
+${i.vocabulary.departments.join(', ')}
+
+ALLOWED DESIGNATIONS — "designation" MUST be copied EXACTLY from this list:
+${i.vocabulary.designations.join(', ')}
+
+ALLOWED PLACES OF POSTING — "placeOfPosting" MUST be copied EXACTLY from this list:
+${i.vocabulary.zones.join(', ')}
 
 RULES
 - "unitFactory" MUST be one of the allowed units above, copied exactly. If the request names a unit/abbreviation (e.g. "JTML" = Jinnat Textile Mills), match it to the closest allowed unit. If it names none, use the first allowed unit.
-- "department" MUST be an existing department of the chosen unit, copied exactly. Pick the one the request implies (e.g. "production" → the production department).
-- "section" only if clearly implied, else "".
-- "designation" is the job title (e.g. "Executive", "Senior Executive — Production", "Assistant Manager"). Keep DBL's conventional titles.
+- "department" MUST be copied EXACTLY from the ALLOWED DEPARTMENTS list. Pick the closest match to what the request implies (e.g. "production" → "Production", "HR" → "Corporate HR" or "Plant HR"). Never invent one.
+- "designation" MUST be copied EXACTLY from the ALLOWED DESIGNATIONS list. Map the request to the closest real title (e.g. "production officer" → "Officer", "asst manager" → "Assistant Manager").
+- "section" and "subSection": a short free-text guess if the request clearly implies one, else "". They are matched against the chosen department's own lists afterwards, so an inexact guess is fine — do NOT invent something elaborate.
 - "requiredPosts": the number of people requested (default 1).
-- "source": "factory" for a manufacturing unit/mill, "ho" for a head-office/corporate function.
-- "placeOfPosting": the unit's usual location if not stated (DBL units are in Gazipur, Kashimpur, Savar, Dhaka etc.). Never leave blank.
+- "placeOfPosting" MUST be copied EXACTLY from the ALLOWED PLACES OF POSTING list — pick the zone the unit sits in (Gazipur/Kashimpur → "Kashimpur Zone", Dhaka/head office → "Dhaka Zone", Sylhet/Moulvibazar → "Sylhet Zone", Mawna → "Mawna Zone", pharma sites → "Pharma Zone"). Never leave blank.
 - Dates are "YYYY-MM-DD". "neededDate": if not stated, about 30 days from today. "vacantDate": if not stated, "".
 - "priority": "top" only if the request says urgent/immediately; else "moderate".
 - "employmentNature": "permanent" unless the request says temporary/contract/seasonal. If not permanent, "contractualPurpose" MUST explain why (required by the form).
-- "jobDescription": 3-6 concrete responsibilities for THIS role at THIS department, written as sentences separated by newlines. Be specific to manufacturing, not generic.
-- "education": the realistic academic requirement (e.g. "Bachelor of Science (BSc) in Textile Engineering").
-- "experience": e.g. "3-5 years in a similar role in a large textile/apparel manufacturing setup".
+- "jobDescription": 3-6 concrete responsibilities for THIS role in THIS department, written as sentences separated by newlines. Match the department's actual work — a factory floor role reads nothing like Corporate HR or Internal Audit. Never generic.
+- "education": the realistic academic requirement for THIS department (e.g. "B.Sc. in Textile Engineering" for a mill role, "MBA / Masters in HRM" for Corporate HR, "B.Pharm" for pharmaceuticals).
+- "experience": realistic years plus the setting, matched to the department (e.g. "3-5 years in a similar role in a large textile manufacturing setup", or "5+ years in group-level HR operations").
 - "preferredSources": sensible subset of ["job_advertisement","headhunting","cv_bank"].
 - "notes": one short sentence listing anything you assumed or could not determine, so the human can check it.
-- NEVER invent a unit or department that is not listed above.
+- NEVER invent a unit, department, designation or place of posting that is not listed above. Anything not copied exactly is discarded and the human has to pick it by hand.
 
 Respond with ONLY a compact JSON object and nothing else:
-{"designation":"","unitFactory":"","department":"","section":"","source":"factory|ho","requiredPosts":1,"placeOfPosting":"","vacantDate":"","neededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","preferredSources":[],"notes":""}`;
+{"designation":"","unitFactory":"","department":"","section":"","subSection":"","requiredPosts":1,"placeOfPosting":"","vacantDate":"","neededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","preferredSources":[],"notes":""}`;
   }
 
   /** Parse + hard-clamp every value to something the form will accept. */
@@ -789,26 +787,61 @@ Respond with ONLY a compact JSON object and nothing else:
       input.units[0] ??
       '';
 
-    // The department must exist in that unit.
-    const depts =
-      input.structure.find((s) => s.unit === unitFactory)?.departments ?? [];
+    // Every vocabulary field is snapped to a real option. The model is told to
+    // copy exactly, but "R & D" vs "R and D" and stray punctuation are common,
+    // so compare on a normalised key before giving up. Anything that still has
+    // no match is dropped and called out in `notes` — a value the form can't
+    // offer would otherwise sit in a dropdown that has no such option.
+    const norm = (v: string) =>
+      v.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+    const snap = (value: string, options: string[]): string => {
+      const target = norm(value);
+      if (!target) return '';
+      return (
+        options.find((o) => norm(o) === target) ??
+        options.find(
+          (o) => norm(o).includes(target) || target.includes(norm(o)),
+        ) ??
+        ''
+      );
+    };
+
+    const v = input.vocabulary;
+    const misses: string[] = [];
+    const snapOrNote = (label: string, value: string, options: string[]) => {
+      const hit = snap(value, options);
+      if (!hit && value.trim()) misses.push(`${label} "${value.trim()}"`);
+      return hit;
+    };
+
     const rawDept = str(obj.department);
-    const wantedDept = rawDept.toLowerCase();
-    const department =
-      depts.find((d) => d.department.toLowerCase() === wantedDept)
-        ?.department ??
-      depts.find(
-        (d) =>
-          d.department.toLowerCase().includes(wantedDept) ||
-          (wantedDept && wantedDept.includes(d.department.toLowerCase())),
-      )?.department ??
-      '';
-    // The model's guess didn't match anything real for this unit — say so,
-    // rather than silently leaving Department/Section blank with no clue why.
-    const departmentNote =
-      !department && rawDept
-        ? `Couldn't match a department for "${rawDept}" — please pick one manually.`
+    const department = snapOrNote('department', rawDept, v.departments);
+    // Sections and sub-sections are not in the prompt — resolve the model's
+    // free-text guess against the chosen parent's own list.
+    const section = department
+      ? snap(str(obj.section), v.departmentSections[department] ?? [])
+      : '';
+    const subSection =
+      department && section
+        ? snap(
+            str(obj.subSection),
+            v.sectionSubSections[`${department}||${section}`] ?? [],
+          )
         : '';
+    const designation = snapOrNote(
+      'designation',
+      str(obj.designation),
+      v.designations,
+    );
+    const placeOfPosting = snapOrNote(
+      'place of posting',
+      str(obj.placeOfPosting),
+      v.zones,
+    );
+
+    const departmentNote = misses.length
+      ? `Couldn't match ${misses.join(', ')} to the fixed list — please pick ${misses.length > 1 ? 'them' : 'it'} manually.`
+      : '';
 
     const employmentNature = pick(
       obj.employmentNature,
@@ -829,13 +862,13 @@ Respond with ONLY a compact JSON object and nothing else:
         : '';
 
     return {
-      designation: str(obj.designation, 150),
+      designation,
       unitFactory,
       department,
-      section: str(obj.section, 120),
-      source: pick(obj.source, ['factory', 'ho'] as const, 'factory'),
+      section,
+      subSection,
       requiredPosts: posts,
-      placeOfPosting: str(obj.placeOfPosting, 150),
+      placeOfPosting,
       vacantDate: date(obj.vacantDate),
       neededDate: date(obj.neededDate),
       priority: pick(

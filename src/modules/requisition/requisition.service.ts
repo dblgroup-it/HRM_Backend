@@ -12,7 +12,6 @@ import {
   EmploymentNature,
   Prisma,
   Priority,
-  RequisitionSource,
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -26,6 +25,7 @@ import { DriveService } from '../integrations/google/drive.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
 import { ApprovalPathsService } from '../approval-paths/approval-paths.service';
+import { MasterDataService } from '../master-data/master-data.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import {
   CreateRequisitionDto,
@@ -66,6 +66,7 @@ export class RequisitionService {
     private readonly ai: AiGraderService,
     private readonly settings: SettingsService,
     private readonly approvalPaths: ApprovalPathsService,
+    private readonly masterData: MasterDataService,
   ) {}
 
   private readonly logger = new Logger(RequisitionService.name);
@@ -77,7 +78,7 @@ export class RequisitionService {
     await this.ensureCanRaise(raiser.id, dto.unitFactory);
 
     // Authoritative New vs Replacement decision from the organogram.
-    // NEW (needs SBU for factory) when the requested posts exceed the vacant
+    // NEW when the requested posts exceed the vacant
     // sanctioned seats — i.e. you're asking for headcount beyond what's vacant.
     // Replacement only when required ≤ vacant.
     const lookup = await this.organogram.lookup(
@@ -88,7 +89,6 @@ export class RequisitionService {
     );
     const requirementType =
       dto.requiredPosts > lookup.vacant ? 'NEW' : 'EXISTING';
-    const source = dto.source.toUpperCase() as RequisitionSource;
 
     // This raiser's own chain for this unit — an ordered list of named
     // approvers with a Corporate HR step appended — snapshotted here so later
@@ -108,12 +108,12 @@ export class RequisitionService {
         code: await this.nextCode(),
         designation: dto.designation,
         requirementType,
-        source,
         requiredPosts: dto.requiredPosts,
         totalVacantPosts: dto.totalVacantPosts,
         unitFactory: dto.unitFactory,
         department: dto.department,
         section: dto.section ?? null,
+        subSection: dto.subSection ?? null,
         placeOfPosting: dto.placeOfPosting,
         vacantDate: toDate(dto.vacantDate),
         neededDate: toDate(dto.neededDate),
@@ -310,69 +310,24 @@ export class RequisitionService {
       );
     }
 
-    // Real departments + designations per unit, so the AI copies rather than invents.
-    const structure = await Promise.all(
-      units.map(async (unit) => {
-        const tree = await this.employeeStructure(unit);
-        return { unit, departments: tree };
-      }),
-    );
+    // The form's fixed vocabulary, so the AI picks real options rather than
+    // free text that the form would only discard.
+    const master = await this.masterData.getAll();
 
-    const result = await this.ai.draftRequisition({
+    return this.ai.draftRequisition({
       prompt: clean,
       units,
-      structure,
+      vocabulary: {
+        departments: master.departments,
+        designations: master.designations,
+        zones: master.zones,
+        departmentSections: master.departmentSections,
+        sectionSubSections: master.sectionSubSections,
+      },
       today: new Date().toISOString().slice(0, 10),
     });
-    return result;
   }
 
-  /** Department → designations for one unit (from synced employees + organogram). */
-  private async employeeStructure(unit: string) {
-    const [rows, orgUnits] = await Promise.all([
-      this.prisma.employee.findMany({
-        where: {
-          unitName: { equals: unit, mode: 'insensitive' },
-          department: { not: null },
-        },
-        select: { department: true, designation: true },
-        take: 4000,
-      }),
-      this.prisma.unit.findMany({
-        where: { name: { equals: unit, mode: 'insensitive' } },
-        select: {
-          departments: {
-            select: {
-              name: true,
-              positions: { select: { designation: true } },
-            },
-          },
-        },
-      }),
-    ]);
-
-    const map = new Map<string, Set<string>>();
-    const add = (dept: string, designation: string) => {
-      const d = dept.trim();
-      if (!d) return;
-      const set = map.get(d) ?? new Set<string>();
-      map.set(d, set);
-      if (designation.trim()) set.add(designation.trim());
-    };
-    for (const r of rows) add(r.department ?? '', r.designation ?? '');
-    for (const u of orgUnits) {
-      for (const d of u.departments) {
-        for (const p of d.positions) add(d.name, p.designation);
-        add(d.name, '');
-      }
-    }
-    return [...map.entries()]
-      .map(([department, designations]) => ({
-        department,
-        designations: [...designations].slice(0, 15),
-      }))
-      .sort((a, b) => a.department.localeCompare(b.department));
-  }
 
   /**
    * Counts per status for the tiles/chips — computed in the database so the
@@ -1360,12 +1315,12 @@ function serialize(req: RequisitionFull) {
     designation: req.designation,
     grade: req.grade ?? null,
     requirementType: low(req.requirementType),
-    source: low(req.source),
     requiredPosts: req.requiredPosts,
     totalVacantPosts: req.totalVacantPosts,
     unitFactory: req.unitFactory,
     department: req.department,
     section: req.section ?? '',
+    subSection: req.subSection ?? '',
     placeOfPosting: req.placeOfPosting,
     vacantDate: req.vacantDate?.toISOString() ?? null,
     neededDate: req.neededDate?.toISOString() ?? null,
