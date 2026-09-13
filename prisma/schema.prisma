@@ -523,6 +523,8 @@ model Candidate {
   /// when the source sent one instead of — or as well as — a document.
   cvProfile     Json?           @map("cv_profile")
   cvProfileAt   DateTime?       @map("cv_profile_at")
+  /// Postal address the AI read off the CV — prefills the offer letter.
+  cvAddress     String?         @map("cv_address") @db.VarChar(300)
   notes         String?
   salaryExpectation Float?      @map("salary_expectation")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.

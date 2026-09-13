@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import * as ExcelJS from 'exceljs';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
@@ -1491,6 +1492,311 @@ export class BoardService {
   }
 
   /** Sheets this user prepared, newest first. */
+  /**
+   * One sent sheet with its full rows — what HR needs to print it or hand it
+   * to someone as a spreadsheet.
+   *
+   * The list endpoint carries only summaries, and the rows otherwise exist
+   * solely inside the email and the approver's token page; neither is
+   * reachable once a sheet has gone out.
+   */
+  async sheetDetail(batchId: string, userId: string) {
+    await this.requireRecruitmentRole(userId);
+    const isSuper = await this.permissions.isSuperUser(userId);
+    const batch = await this.prisma.boardApprovalBatch.findFirst({
+      where: { id: batchId, ...(isSuper ? {} : { createdById: userId }) },
+      include: {
+        createdBy: { select: { name: true } },
+        chro: { select: { name: true } },
+        approvals: {
+          include: {
+            requestedBy: { select: { id: true, name: true } },
+            candidate: {
+              include: {
+                requisition: {
+                  select: {
+                    id: true,
+                    code: true,
+                    designation: true,
+                    department: true,
+                    unitFactory: true,
+                    requirementType: true,
+                    replaceOfName: true,
+                    replaceOfEmployeeCode: true,
+                    raisedBy: true,
+                    approvalSteps: {
+                      select: {
+                        orderIndex: true,
+                        title: true,
+                        assignee: true,
+                        status: true,
+                        actedAt: true,
+                      },
+                      orderBy: { orderIndex: 'asc' },
+                    },
+                  },
+                },
+                salaryFixation: {
+                  select: { proposedSalary: true, status: true },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        votes: {
+          include: { user: { select: { name: true } } },
+          orderBy: { respondedAt: { sort: 'asc', nulls: 'last' } },
+        },
+      },
+    });
+    if (!batch) throw new NotFoundException('Sheet not found');
+
+    return {
+      id: batch.id,
+      reference: batch.reference,
+      status: batch.status,
+      currentStage: batch.currentStage,
+      preparedBy: batch.createdBy.name,
+      chroName: batch.chro?.name ?? null,
+      createdAt: batch.createdAt.toISOString(),
+      rows: batch.approvals.map((a) => this.sheetRow(a)),
+      votes: batch.votes.map((v) => ({
+        name: v.user.name,
+        stage: v.stage,
+        status: v.status,
+        notes: v.notes,
+        respondedAt: v.respondedAt?.toISOString() ?? null,
+      })),
+    };
+  }
+
+  /**
+   * One approval sheet as a working Excel file.
+   *
+   * Not a CSV dump: a sheet gets circulated, annotated and filed, so it opens
+   * with the header frozen and filterable, salaries as real numbers, the CV as
+   * a live link, the sign-off trail on its own tab, and print settings already
+   * set to one landscape page wide — the things that make the difference
+   * between data and a document somebody can work in.
+   *
+   * Deliberately no totals row: DBL's paper form has none, and a sum of
+   * salaries across unrelated vacancies would not mean anything.
+   */
+  async exportSheet(batchId: string, userId: string) {
+    const sheet = await this.sheetDetail(batchId, userId);
+
+    const BRAND = 'FF1877C0';
+    const INK = 'FF12202F';
+    const MUTED = 'FF5A6B7F';
+    const RULE = 'FFDCE4EE';
+    const ZEBRA = 'FFF7FAFD';
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'DBL HRM';
+    wb.created = new Date();
+    wb.title = `Hiring Approval Sheet ${sheet.reference}`;
+
+    const ws = wb.addWorksheet('Approval Sheet', {
+      views: [{ state: 'frozen', ySplit: 5 }],
+      pageSetup: {
+        orientation: 'landscape',
+        paperSize: 9, // A4
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        margins: {
+          left: 0.4,
+          right: 0.4,
+          top: 0.5,
+          bottom: 0.5,
+          header: 0.2,
+          footer: 0.2,
+        },
+        printTitlesRow: '5:5',
+      },
+    });
+
+    ws.columns = [
+      { header: 'SL', key: 'sl', width: 5 },
+      { header: 'Name', key: 'name', width: 26 },
+      { header: 'Position', key: 'position', width: 22 },
+      { header: 'Department', key: 'department', width: 20 },
+      { header: 'Unit', key: 'unit', width: 24 },
+      { header: 'Education', key: 'education', width: 32 },
+      { header: 'Req.', key: 'requirement', width: 12 },
+      { header: 'Team', key: 'team', width: 20 },
+      { header: 'Total Exp.', key: 'experience', width: 14 },
+      { header: 'Last Organization', key: 'lastOrg', width: 24 },
+      { header: 'Salary', key: 'salary', width: 13 },
+      { header: 'Remark', key: 'remark', width: 22 },
+      { header: 'Requisition', key: 'code', width: 15 },
+      { header: 'Vacancy approved by', key: 'chain', width: 46 },
+      { header: 'CV', key: 'cv', width: 10 },
+    ];
+    const LAST_COL = 'O';
+
+    // ── Title block ────────────────────────────────────────────────────
+    ws.mergeCells(`A1:${LAST_COL}1`);
+    const title = ws.getCell('A1');
+    title.value = 'DBL Group — Hiring Approval Sheet';
+    title.font = { bold: true, size: 15, color: { argb: BRAND } };
+    title.alignment = { vertical: 'middle' };
+    ws.getRow(1).height = 24;
+
+    ws.mergeCells(`A2:${LAST_COL}2`);
+    const sub = ws.getCell('A2');
+    sub.value = `Ref ${sheet.reference}   ·   Prepared by ${sheet.preparedBy}   ·   ${new Date(
+      sheet.createdAt,
+    ).toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })}   ·   Status: ${sheet.status}`;
+    sub.font = { size: 10, color: { argb: MUTED } };
+    ws.getRow(3).height = 6;
+
+    // ── Header ─────────────────────────────────────────────────────────
+    const header = ws.getRow(5);
+    ws.columns.forEach((c, i) => {
+      header.getCell(i + 1).value = c.header as string;
+    });
+    header.height = 26;
+    header.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: BRAND },
+      };
+      cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = {
+        vertical: 'middle',
+        horizontal: 'center',
+        wrapText: true,
+      };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FF0F5999' } } };
+    });
+
+    // ── Rows ───────────────────────────────────────────────────────────
+    sheet.rows.forEach((r, i) => {
+      const row = ws.addRow({
+        sl: i + 1,
+        name: r.name,
+        position: r.position,
+        department: r.department,
+        unit: r.unit,
+        education: r.education ?? '',
+        requirement: r.requirement,
+        team: r.team,
+        experience: r.totalExperience ?? '',
+        lastOrg: r.lastOrganization ?? '',
+        salary: r.salary ?? null,
+        remark: r.remark,
+        code: r.requisitionCode,
+        chain: r.approvalChain,
+        cv: r.cvUrl ? 'Open CV' : '',
+      });
+      const bg = i % 2 === 0 ? 'FFFFFFFF' : ZEBRA;
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
+        cell.font = { size: 10, color: { argb: INK } };
+        cell.alignment = { vertical: 'top', wrapText: col >= 6 };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: bg },
+        };
+        cell.border = {
+          top: { style: 'hair', color: { argb: RULE } },
+          bottom: { style: 'hair', color: { argb: RULE } },
+          left: { style: 'hair', color: { argb: RULE } },
+          right: { style: 'hair', color: { argb: RULE } },
+        };
+      });
+      row.getCell('sl').alignment = { vertical: 'top', horizontal: 'center' };
+      row.getCell('name').font = { size: 10, bold: true, color: { argb: INK } };
+      row.getCell('requirement').alignment = {
+        vertical: 'top',
+        horizontal: 'center',
+      };
+      // A real number, so it can be sorted, filtered and added up by whoever
+      // needs to — rather than text that merely looks like money.
+      const salary = row.getCell('salary');
+      salary.numFmt = '#,##0';
+      salary.alignment = { vertical: 'top', horizontal: 'right' };
+      salary.font = { size: 10, bold: true, color: { argb: INK } };
+      if (r.cvUrl) {
+        const cv = row.getCell('cv');
+        cv.value = { text: 'Open CV', hyperlink: r.cvUrl };
+        cv.font = { size: 10, color: { argb: BRAND }, underline: true };
+      }
+      row.getCell('chain').font = { size: 9, color: { argb: MUTED } };
+    });
+
+    ws.autoFilter = { from: 'A5', to: `${LAST_COL}5` };
+
+    // ── The sign-off trail, on its own tab ─────────────────────────────
+    const votes = wb.addWorksheet('Approvals', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+    votes.columns = [
+      { header: 'Approver', key: 'name', width: 28 },
+      { header: 'Stage', key: 'stage', width: 12 },
+      { header: 'Decision', key: 'status', width: 14 },
+      { header: 'Responded', key: 'at', width: 16 },
+      { header: 'Note', key: 'notes', width: 60 },
+    ];
+    const vh = votes.getRow(1);
+    vh.height = 22;
+    vh.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: BRAND },
+      };
+      cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    sheet.votes.forEach((v) => {
+      const row = votes.addRow({
+        name: v.name,
+        stage: v.stage,
+        status: v.status,
+        at: v.respondedAt
+          ? new Date(v.respondedAt).toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })
+          : '',
+        notes: v.notes ?? '',
+      });
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.font = { size: 10 };
+        cell.alignment = { vertical: 'top', wrapText: true };
+      });
+      const decision = row.getCell('status');
+      const fill =
+        v.status === 'approved'
+          ? 'FFD1FAE5'
+          : v.status === 'rejected'
+            ? 'FFFEE2E2'
+            : 'FFFEF4D3';
+      decision.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: fill },
+      };
+      decision.font = { size: 10, bold: true };
+      decision.alignment = { vertical: 'top', horizontal: 'center' };
+    });
+
+    const buffer = await wb.xlsx.writeBuffer();
+    return {
+      buffer: Buffer.from(buffer),
+      filename: `${sheet.reference.replace(/[^\w-]+/g, '_')}.xlsx`,
+    };
+  }
+
   async listSheets(userId: string) {
     await this.requireRecruitmentRole(userId);
     const isSuper = await this.permissions.isSuperUser(userId);

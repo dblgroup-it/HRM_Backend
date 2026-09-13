@@ -585,9 +585,36 @@ export class OnboardingService {
    * The signatory is whoever holds CHRO — the letters go out over their
    * signature, so it is read from the role rather than hard-coded.
    */
+  /**
+   * Where a candidate's address comes from, most trustworthy first.
+   *
+   * What HR typed wins. Then a structured CV the applicant filled in
+   * themselves (Bdjobs). Then what the AI read off an uploaded CV — a
+   * reading, which is why it comes last and why HR sees it in an editable
+   * field before the letter goes anywhere.
+   */
+  private resolveAddress(
+    typed: string | null | undefined,
+    saved: string | null,
+    cand: { cvProfile?: unknown; cvAddress?: string | null },
+  ): string | null {
+    if (typed?.trim()) return typed.trim();
+    if (saved?.trim()) return saved.trim();
+    const profile = cand.cvProfile as
+      | { contact?: { currentAddress?: string; permanentAddress?: string } }
+      | null
+      | undefined;
+    const fromProfile =
+      profile?.contact?.currentAddress ?? profile?.contact?.permanentAddress;
+    if (fromProfile?.trim()) return fromProfile.trim();
+    return cand.cvAddress?.trim() || null;
+  }
+
   private async letterInput(
     cand: {
       name: string;
+      cvProfile?: unknown;
+      cvAddress?: string | null;
       requisition: { designation: string; unitFactory: string };
     },
     ob: {
@@ -608,7 +635,7 @@ export class OnboardingService {
     return {
       candidateName: cand.name,
       salutation: dto.salutation ?? null,
-      address: dto.address ?? ob.candidateAddress,
+      address: this.resolveAddress(dto.address, ob.candidateAddress, cand),
       designation: cand.requisition.designation,
       unitFactory: cand.requisition.unitFactory,
       reference: dto.reference ?? ob.offerRef,

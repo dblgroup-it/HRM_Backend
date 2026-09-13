@@ -24,7 +24,7 @@ export const LETTER_FORMATS: {
   {
     value: 'junior',
     label: 'Junior / Mid',
-    hint: 'Probation period and notice. Points to a Service Agreement after joining.',
+    hint: 'Job location, probation and notice. Points to a Service Agreement after joining.',
   },
   {
     value: 'senior',
@@ -187,6 +187,25 @@ function signatures(input: LetterInput): string {
 }
 
 /** The prose format — probation, notice, Service Agreement to follow. */
+/**
+ * The job-location sentence, or nothing.
+ *
+ * Never falls back to the unit. The unit is who employs the person; the job
+ * location is where they work, and at DBL those are routinely different
+ * addresses — printing the unit name here would state something untrue on a
+ * letter the candidate signs. If HR has not chosen a location, the sentence
+ * is simply left out.
+ */
+function jobLocationLine(input: LetterInput): string {
+  const where = input.jobLocation?.trim();
+  if (!where) return '';
+  // Several of the stored addresses already end in a full stop; the sentence
+  // supplies its own, and "Bangladesh.." on a signed letter looks careless.
+  return `<p style="${P}">
+    Your job location will be at <strong>${esc(where.replace(/\.+$/, ''))}</strong>.
+  </p>`;
+}
+
 function juniorOffer(input: LetterInput): string {
   const months = input.probationMonths ?? 6;
   const notice = input.noticeDays ?? 15;
@@ -204,6 +223,8 @@ ${head(input, true)}
     Your service starting date in the organization shall be effective on or before
     <strong>${fmtJoining(input.joiningDate)}.</strong>
   </p>
+
+  ${jobLocationLine(input)}
 
   <p style="${P}">
     This offer is valid subject to satisfactory pre-employment medical fitness and shall be
@@ -265,9 +286,13 @@ ${head(input, true)}
   </p>
 
   <ol style="margin:0 0 12px;padding-left:22px">
-    <li style="${num}">
-      Your job location will be at <strong>${esc(input.jobLocation || input.unitFactory)}</strong>.
-    </li>
+    ${
+      input.jobLocation?.trim()
+        ? `<li style="${num}">
+      Your job location will be at <strong>${esc(input.jobLocation.trim().replace(/\.+$/, ''))}</strong>.
+    </li>`
+        : ''
+    }
     <li style="${num}">
       Your appointment in the organization shall be effective on or before
       <strong>${fmtJoining(input.joiningDate)}</strong>.

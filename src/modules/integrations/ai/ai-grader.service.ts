@@ -111,6 +111,8 @@ export interface ScreenResult {
   /** Contact details detected in the CV (null if not found / not valid). */
   email: string | null;
   phone: string | null;
+  /** Postal address as written in the CV — prefills the offer letter. */
+  address: string | null;
 }
 
 export interface CrossCheckInput {
@@ -588,6 +590,7 @@ Respond with ONLY a compact JSON array and nothing else, in this exact shape:
         criteria: [],
         email: null,
         phone: null,
+        address: null,
       };
     }
     const prompt = this.buildScreenPrompt(input);
@@ -616,7 +619,7 @@ ${list(i.responsibilities)}
 Key requirements:
 ${list(i.requirements)}
 
-Also extract the candidate's contact email and mobile/phone number if visible anywhere in the CV (else leave empty).
+Also extract the candidate's contact email, mobile/phone number and full postal address if visible anywhere in the CV (else leave empty). The address is copied verbatim onto an offer letter, so reproduce it exactly as written — do not tidy, abbreviate or invent any part of it.
 
 SCORING — evaluate the candidate using ONLY the standard criteria below. Use the EXACT label names shown.
 
@@ -634,7 +637,7 @@ Include these ONLY when the role or CV provides enough information to judge:
 Select 4–6 criteria total. Assign integer weights that sum to exactly 100. Experience + Education together must carry at least 50% of the total weight. Award each criterion a score from 0 up to its weight (partial credit is fine). The overall score is the sum of all criterion scores.
 
 Respond with ONLY a compact JSON object and nothing else:
-{"score":<integer 0-100>,"summary":"<two sentences: key strengths and main gaps>","email":"<email or empty>","phone":"<phone or empty>","criteria":[{"label":"<exact label from the list above>","weight":<integer>,"requirement":"<concise role requirement for this criterion>","applicant":"<what the CV actually shows for this criterion>","score":<integer 0-weight>}]}`;
+{"score":<integer 0-100>,"summary":"<two sentences: key strengths and main gaps>","email":"<email or empty>","phone":"<phone or empty>","address":"<full postal address exactly as written, or empty>","criteria":[{"label":"<exact label from the list above>","weight":<integer>,"requirement":"<concise role requirement for this criterion>","applicant":"<what the CV actually shows for this criterion>","score":<integer 0-weight>}]}`;
   }
 
   private parseScreen(raw: string): ScreenResult {
@@ -645,6 +648,7 @@ Respond with ONLY a compact JSON object and nothing else:
         summary?: unknown;
         email?: unknown;
         phone?: unknown;
+        address?: unknown;
         criteria?: unknown;
       };
       const score = Math.max(
@@ -658,6 +662,15 @@ Respond with ONLY a compact JSON object and nothing else:
       const phoneRaw = String(obj.phone ?? '').trim();
       const phone =
         phoneRaw.replace(/\D/g, '').length >= 7 ? phoneRaw.slice(0, 40) : null;
+      // An address goes onto a letter verbatim, so accept only something that
+      // looks like one rather than a stray word the model volunteered.
+      const addressRaw = String(obj.address ?? '')
+        .trim()
+        .replace(/\s+/g, ' ');
+      const address =
+        addressRaw.length >= 10 && /[,\d]/.test(addressRaw)
+          ? addressRaw.slice(0, 300)
+          : null;
 
       const criteria: MatchCriterion[] = Array.isArray(obj.criteria)
         ? (obj.criteria as unknown[])
@@ -686,12 +699,20 @@ Respond with ONLY a compact JSON object and nothing else:
         criteria,
         email,
         phone,
+        address,
       };
     } catch {
       this.logger.warn(
         `Could not parse AI screening output: ${raw.slice(0, 120)}`,
       );
-      return { score: 0, summary: '', criteria: [], email: null, phone: null };
+      return {
+        score: 0,
+        summary: '',
+        criteria: [],
+        email: null,
+        phone: null,
+        address: null,
+      };
     }
   }
 

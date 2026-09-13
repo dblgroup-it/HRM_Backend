@@ -1446,6 +1446,9 @@ export class CandidatesService {
     // already have them (never overwrite details entered by a person).
     if (!cand.email && result.email) data.email = result.email;
     if (!cand.phone && result.phone) data.phone = result.phone;
+    // The address only prefills a letter, which HR reads before sending, so a
+    // fresh reading is allowed to replace an older one.
+    if (result.address) data.cvAddress = result.address;
     const { shortlistThreshold } = await this.settings.getAiConfig();
     if (cand.stage === 'APPLIED' && result.score >= shortlistThreshold) {
       data.stage = 'AI_SHORTLISTED';

@@ -68,7 +68,15 @@ async function bootstrap(): Promise<void> {
   const corsOrigin = config.get<string>('corsOrigin', '*');
 
   app.setGlobalPrefix(apiPrefix);
-  app.enableCors({ origin: corsOrigin.split(','), credentials: true });
+  app.enableCors({
+    origin: corsOrigin.split(','),
+    credentials: true,
+    // Downloads are served cross-origin (SPA on :3000, API on :4000), and a
+    // browser hides every header from JS unless it is named here — without
+    // this the filename in Content-Disposition is invisible and exports save
+    // under an opaque id.
+    exposedHeaders: ['Content-Disposition'],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

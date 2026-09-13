@@ -6,10 +6,12 @@ import {
   Param,
   Patch,
   Post,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 
 import {
   AuthUser,
@@ -129,6 +131,28 @@ export class BoardController {
   }
 
   /** Send one or many candidates onward as a single sheet. */
+  /** One sheet as a working Excel file. */
+  @Get('board-sheets/:id/export')
+  async exportSheet(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.board.exportSheet(id, user.id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
+  /** One sent sheet with its rows — for printing or exporting. */
+  @Get('board-sheets/:id')
+  sheetDetail(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.board.sheetDetail(id, user.id);
+  }
+
   @Post('board-sheets')
   sendSheet(@Body() dto: SendSheetDto, @CurrentUser() user: AuthUser) {
     return this.board.sendSheet(
