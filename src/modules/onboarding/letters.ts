@@ -1,0 +1,405 @@
+/**
+ * DBL's offer and appointment letters.
+ *
+ * Two house formats, transcribed from the signed originals:
+ *
+ *  - `junior`  — prose. Probation period and notice, and it points forward to
+ *                a Service Agreement letter given after joining.
+ *  - `senior`  — numbered terms. Job location and a benefits list (festival
+ *                bonuses, LFA, car), and it points forward to an Appointment
+ *                letter instead.
+ *
+ * The wording is the client's, not ours: these go out over the CHRO's
+ * signature, so the templates stay literal and the variable parts are the only
+ * thing the system fills in.
+ */
+
+export type LetterFormat = 'junior' | 'senior';
+
+export const LETTER_FORMATS: {
+  value: LetterFormat;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: 'junior',
+    label: 'Junior / Mid',
+    hint: 'Probation period and notice. Points to a Service Agreement after joining.',
+  },
+  {
+    value: 'senior',
+    label: 'Senior',
+    hint: 'Numbered terms with job location and benefits. Points to an Appointment letter.',
+  },
+];
+
+/** Benefits offered on the senior format unless HR edits them. */
+export const DEFAULT_SENIOR_BENEFITS = [
+  'Two Festival Bonuses in a year as per company policy;',
+  'Leave Fair Assistance (LFA) will be entitled as per company policy;',
+  'Full time car as per company policy;',
+  'Other admissible benefits as per company policy;',
+];
+
+/** Documents the candidate brings on joining — the junior letter's longer list. */
+const JUNIOR_DOCUMENTS = [
+  'Four passport size photographs in formals with white background. [A soft copy of Photograph with 600*600 size]',
+  'All relevant education certificate and marks sheet (High School onward)',
+  'Experience certificate (s)',
+  'Relieving letter and last pay slip from the previous employer',
+  'Copy of National ID / Birth Registration / Passport (At least one)',
+  'Copy of residence proof (any govt. bill)',
+  'Copy of TIN/Last Tax return Submission (if any)',
+];
+
+const SENIOR_DOCUMENTS = [
+  'Four passport size photographs in formals with white background',
+  'All educational certificates',
+  'Experience certificate(s)',
+  'Relieving letter and last pay slip from the previous employer (If required)',
+  'Copy of National ID / Birth Registration / Passport',
+  'Copy of TIN/Last Tax return Submission (if any)',
+];
+
+export interface LetterInput {
+  candidateName: string;
+  /** "Mr." / "Ms." — left off when unknown rather than guessed. */
+  salutation?: string | null;
+  address?: string | null;
+  designation: string;
+  unitFactory: string;
+  reference?: string | null;
+  date?: Date | null;
+  joiningDate?: Date | null;
+  jobLocation?: string | null;
+  probationMonths?: number | null;
+  noticeDays?: number | null;
+  benefits?: string[];
+  signatoryName: string;
+  signatoryTitle: string;
+}
+
+/** The letterhead date — "September 5, 2026". */
+const fmtDate = (d?: Date | null) =>
+  d
+    ? d.toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : '';
+
+/**
+ * The joining date inside the body — "15 September 2026".
+ *
+ * Deliberately a different format from the letterhead date above: that is how
+ * the signed originals read, and these go out over the CHRO's signature.
+ */
+const fmtJoining = (d?: Date | null) =>
+  d
+    ? d.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+    : '';
+
+const esc = (v: string) =>
+  v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * A unit name at the end of a sentence.
+ *
+ * Several unit names already end in a period ("DBL Telecom Ltd."), which made
+ * the closing line read "team member of DBL Telecom Ltd..".
+ */
+const unitSentenceEnd = (name: string) => esc(name.replace(/\.+$/, '')) + '.';
+
+/** Surname only, the way the letters address the reader ("Dear Mr. Alam,"). */
+function lastName(full: string): string {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : full;
+}
+
+const P = 'margin:0 0 12px;font-size:11pt;line-height:1.5;text-align:justify';
+const LI = 'margin:0 0 4px;font-size:11pt;line-height:1.45';
+
+function shell(body: string): string {
+  return `
+<div style="font-family:Calibri,'Segoe UI',Arial,sans-serif;color:#000;max-width:760px;margin:0 auto;padding:28px 34px;background:#fff">
+${body}
+</div>`;
+}
+
+function head(input: LetterInput, showDate: boolean): string {
+  const title = input.salutation?.trim() ? `${input.salutation.trim()} ` : '';
+  return `
+  <p style="${P}">
+    Date: ${fmtDate(input.date ?? new Date())}${showDate ? '' : ''}<br>
+    Ref: ${esc(input.reference ?? '')}
+  </p>
+
+  <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:11pt;margin:0 0 14px">
+    <tr>
+      <td style="padding:0 0 2px;font-weight:700;width:110px">Name</td>
+      <td style="padding:0 0 2px;font-weight:700">: ${title}${esc(input.candidateName)}</td>
+    </tr>
+    <tr>
+      <td style="padding:0;font-weight:700">Address</td>
+      <td style="padding:0">: ${esc(input.address ?? '')}</td>
+    </tr>
+  </table>
+
+  <p style="text-align:center;margin:0 0 16px">
+    <span style="font-weight:700;text-decoration:underline;font-size:12pt">Offer Letter</span>
+  </p>
+
+  <p style="${P};font-weight:700">Dear ${title}${esc(lastName(input.candidateName))},</p>`;
+}
+
+function signatures(input: LetterInput): string {
+  return `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;font-size:11pt">
+    <tr>
+      <td style="width:50%;vertical-align:top"></td>
+      <td style="width:50%;vertical-align:top;line-height:1.5">
+        I agree with the terms &amp; conditions and<br>
+        hereby accept the employment offer. My<br>
+        Expected date of join ______________________
+      </td>
+    </tr>
+    <tr>
+      <td style="padding-top:4px">Yours sincerely,</td>
+      <td></td>
+    </tr>
+    <tr>
+      <td style="padding-top:56px">
+        <div style="border-top:1px solid #000;width:230px"></div>
+        <div style="font-weight:700;margin-top:4px">${esc(input.signatoryName)}</div>
+        <div>${esc(input.signatoryTitle)}</div>
+      </td>
+      <td style="padding-top:56px">
+        <div style="border-top:1px solid #000;width:270px"></div>
+        <div style="font-weight:700;margin-top:4px;text-align:center;width:270px">${esc(input.candidateName)}</div>
+      </td>
+    </tr>
+  </table>`;
+}
+
+/** The prose format — probation, notice, Service Agreement to follow. */
+function juniorOffer(input: LetterInput): string {
+  const months = input.probationMonths ?? 6;
+  const notice = input.noticeDays ?? 15;
+  const docs = JUNIOR_DOCUMENTS.map(
+    (d) => `<li style="${LI}">${esc(d)}</li>`,
+  ).join('');
+
+  return shell(`
+${head(input, true)}
+
+  <p style="${P}">
+    This is with reference to your application and the subsequent interviews you had with us.
+    We are pleased to offer you the position of <strong>${esc(input.designation)}</strong> in
+    <strong>${esc(input.unitFactory)}</strong> with the following terms &amp; condition.
+    Your service starting date in the organization shall be effective on or before
+    <strong>${fmtJoining(input.joiningDate)}.</strong>
+  </p>
+
+  <p style="${P}">
+    This offer is valid subject to satisfactory pre-employment medical fitness and shall be
+    nullified in case of any deviation in the information provided by you earlier. If any
+    document provided by you is identified as false afterwards, shall also be nullified your
+    services in the Company.
+  </p>
+
+  <p style="${P}">
+    Please return a copy of this letter duly signed by you as token of your acceptance of the offer.
+  </p>
+
+  <p style="${P}">
+    You should be placed on a probation period of ${String(months).padStart(2, '0')} (${numberWord(months)}) months' as per
+    the company policy from your date of joining the organization. ${notice} days' notice to be
+    given to the employer for separation of the employment during this period, whatsoever reason.
+  </p>
+
+  <p style="${P}">
+    You are requested to submit copies of the following documents and bring along the originals
+    (for verification) on your date of joining:
+  </p>
+
+  <ul style="margin:0 0 12px;padding-left:22px">${docs}</ul>
+
+  <p style="${P}">
+    All other terms and conditions of service will be explained in detail in the Service Agreement
+    letter which will be given to you after joining.
+  </p>
+
+  <p style="${P}">
+    Looking forward to welcome you and seeing yourself as a team member of ${unitSentenceEnd(input.unitFactory)}
+  </p>
+
+${signatures(input)}`);
+}
+
+/** The numbered format — job location, benefits, Appointment letter to follow. */
+function seniorOffer(input: LetterInput): string {
+  const benefits = (
+    input.benefits?.length ? input.benefits : DEFAULT_SENIOR_BENEFITS
+  )
+    .map((b) => `<li style="${LI}">${esc(b)}</li>`)
+    .join('');
+  const docs = SENIOR_DOCUMENTS.map(
+    (d) => `<li style="${LI}">${esc(d)}</li>`,
+  ).join('');
+  const num =
+    'margin:0 0 10px;font-size:11pt;line-height:1.5;text-align:justify';
+
+  return shell(`
+${head(input, true)}
+
+  <p style="${P}">
+    This is with reference to your application and the subsequent interviews you had with us.
+    The management is pleased to offer you for the position of
+    <strong>"${esc(input.designation)}"</strong> of <strong>${esc(input.unitFactory)}</strong>
+    under the following terms &amp; conditions:
+  </p>
+
+  <ol style="margin:0 0 12px;padding-left:22px">
+    <li style="${num}">
+      Your job location will be at <strong>${esc(input.jobLocation || input.unitFactory)}</strong>.
+    </li>
+    <li style="${num}">
+      Your appointment in the organization shall be effective on or before
+      <strong>${fmtJoining(input.joiningDate)}</strong>.
+    </li>
+    <li style="${num}">
+      You will also be entitled for following benefits:
+      <ul style="margin:6px 0 0;padding-left:20px">${benefits}</ul>
+    </li>
+    <li style="${num}">
+      You are requested to submit copies of following documents and bring along the originals
+      (for verification) on your date of joining.
+      <ul style="margin:6px 0 0;padding-left:20px">${docs}</ul>
+    </li>
+    <li style="${num}">
+      This offer is valid subject to satisfactory pre-employment medical fitness and shall be
+      nullified in case of any deviation in the information provided by you earlier. If any
+      document provided by you is identified as false afterwards, shall also be nullified our
+      offer of appointment.
+    </li>
+    <li style="${num}">
+      All other terms and conditions of employment will be explained in detail in the appointment
+      letter which will be given to you after joining.
+    </li>
+  </ol>
+
+  <p style="${P}">
+    Please return a copy of this letter duly signed by you as token of your acceptance of the offer.<br>
+    Looking forward to welcome you and seeing yourself as a team member of ${unitSentenceEnd(input.unitFactory)}
+  </p>
+
+${signatures(input)}`);
+}
+
+export function buildOfferLetter(
+  format: LetterFormat,
+  input: LetterInput,
+): string {
+  return format === 'senior' ? seniorOffer(input) : juniorOffer(input);
+}
+
+/**
+ * The appointment letter — issued after joining, once verification is done.
+ *
+ * Both offer formats promise this (the junior one calls it a Service Agreement
+ * letter), so it is one document rather than two.
+ */
+export function buildAppointmentLetter(input: LetterInput): string {
+  const title = input.salutation?.trim() ? `${input.salutation.trim()} ` : '';
+  return shell(`
+  <p style="${P}">
+    Date: ${fmtDate(input.date ?? new Date())}<br>
+    Ref: ${esc(input.reference ?? '')}
+  </p>
+
+  <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:11pt;margin:0 0 14px">
+    <tr>
+      <td style="padding:0 0 2px;font-weight:700;width:110px">Name</td>
+      <td style="padding:0 0 2px;font-weight:700">: ${title}${esc(input.candidateName)}</td>
+    </tr>
+    <tr>
+      <td style="padding:0;font-weight:700">Address</td>
+      <td style="padding:0">: ${esc(input.address ?? '')}</td>
+    </tr>
+  </table>
+
+  <p style="text-align:center;margin:0 0 16px">
+    <span style="font-weight:700;text-decoration:underline;font-size:12pt">Appointment Letter</span>
+  </p>
+
+  <p style="${P};font-weight:700">Dear ${title}${esc(lastName(input.candidateName))},</p>
+
+  <p style="${P}">
+    With reference to our offer letter${input.reference ? '' : ''} and your subsequent joining, we are pleased to
+    confirm your appointment as <strong>${esc(input.designation)}</strong> in
+    <strong>${esc(input.unitFactory)}</strong> with effect from
+    <strong>${fmtJoining(input.joiningDate)}</strong>.
+  </p>
+
+  <p style="${P}">
+    Your appointment is governed by the terms and conditions of the Company's service rules as
+    amended from time to time. You are required to devote your whole time and attention to the
+    business of the Company and to carry out the duties assigned to you faithfully and diligently.
+  </p>
+
+  <p style="${P}">
+    All other terms and conditions of your service, including remuneration, leave, and separation,
+    are as communicated to you and as set out in the Company's policy in force.
+  </p>
+
+  <p style="${P}">
+    Please sign and return the duplicate copy of this letter as token of your acceptance.
+  </p>
+
+  <p style="${P}">
+    We welcome you to ${esc(input.unitFactory.replace(/\.+$/, ''))} and wish you a long and successful career with us.
+  </p>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;font-size:11pt">
+    <tr>
+      <td style="width:50%">Yours sincerely,</td>
+      <td style="width:50%">Accepted by,</td>
+    </tr>
+    <tr>
+      <td style="padding-top:56px">
+        <div style="border-top:1px solid #000;width:230px"></div>
+        <div style="font-weight:700;margin-top:4px">${esc(input.signatoryName)}</div>
+        <div>${esc(input.signatoryTitle)}</div>
+      </td>
+      <td style="padding-top:56px">
+        <div style="border-top:1px solid #000;width:270px"></div>
+        <div style="font-weight:700;margin-top:4px;text-align:center;width:270px">${esc(input.candidateName)}</div>
+      </td>
+    </tr>
+  </table>`);
+}
+
+/** "06 (six)" — the junior letter spells the probation period out. */
+function numberWord(n: number): string {
+  const words = [
+    'zero',
+    'one',
+    'two',
+    'three',
+    'four',
+    'five',
+    'six',
+    'seven',
+    'eight',
+    'nine',
+    'ten',
+    'eleven',
+    'twelve',
+  ];
+  return words[n] ?? String(n);
+}

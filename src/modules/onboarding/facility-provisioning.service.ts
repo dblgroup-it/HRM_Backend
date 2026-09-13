@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -58,7 +57,8 @@ export class FacilityProvisioningService {
     >;
 
     const items = FACILITY_KEYS.filter(
-      (key) => facilities[key]?.requested && facilities[key]?.status === 'confirmed',
+      (key) =>
+        facilities[key]?.requested && facilities[key]?.status === 'confirmed',
     ).map((key) => {
       const recipients = byKey.get(key) ?? [];
       const confirmed = recipients.find((r) => r.confirmedAt);
@@ -90,11 +90,26 @@ export class FacilityProvisioningService {
 
     const deptFilter =
       kind === 'it'
-        ? { OR: [{ department: { startsWith: 'IT', mode: 'insensitive' as const } }, { department: { contains: 'information technology', mode: 'insensitive' as const } }] }
+        ? {
+            OR: [
+              {
+                department: { startsWith: 'IT', mode: 'insensitive' as const },
+              },
+              {
+                department: {
+                  contains: 'information technology',
+                  mode: 'insensitive' as const,
+                },
+              },
+            ],
+          }
         : { department: { contains: 'admin', mode: 'insensitive' as const } };
 
     const rows = await this.prisma.employee.findMany({
-      where: { unitName: { equals: cand.requisition.unitFactory, mode: 'insensitive' }, ...deptFilter },
+      where: {
+        unitName: { equals: cand.requisition.unitFactory, mode: 'insensitive' },
+        ...deptFilter,
+      },
       include: { user: { select: { id: true, name: true, email: true } } },
       orderBy: [{ grade: 'desc' }, { joiningDate: 'asc' }],
       take: 10,
@@ -136,7 +151,8 @@ export class FacilityProvisioningService {
       throw new BadRequestException('Pick at least one recipient');
     }
 
-    const frontendUrl = this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
+    const frontendUrl =
+      this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
 
     for (const r of dto.recipients) {
       let recipientUserId = r.userId?.trim() || null;
@@ -193,11 +209,16 @@ export class FacilityProvisioningService {
             (${cand.requisition.unitFactory}${cand.requisition.department ? ` — ${cand.requisition.department}` : ''})
             and will need <b>${FACILITY_LABEL[key]}</b> arranged before joining.<br><br>
             Once it's arranged, please confirm using the button below.`,
-            { label: `Confirm ${FACILITY_LABEL[key]} arranged`, url: confirmUrl },
+            {
+              label: `Confirm ${FACILITY_LABEL[key]} arranged`,
+              url: confirmUrl,
+            },
           ),
         });
       } catch (e) {
-        this.logger.error(`Failed to send facility notification email: ${(e as Error).message}`);
+        this.logger.error(
+          `Failed to send facility notification email: ${(e as Error).message}`,
+        );
       }
     }
 
@@ -211,7 +232,8 @@ export class FacilityProvisioningService {
       where: { token },
       include: { candidate: { include: { requisition: true } } },
     });
-    if (!n) throw new NotFoundException('This link is invalid or has been removed.');
+    if (!n)
+      throw new NotFoundException('This link is invalid or has been removed.');
     if (new Date() > n.tokenExpiresAt) {
       throw new BadRequestException('This link has expired.');
     }
@@ -239,7 +261,8 @@ export class FacilityProvisioningService {
       include: { candidate: { include: { requisition: true } } },
     });
     if (!n) throw new NotFoundException('Invalid link.');
-    if (new Date() > n.tokenExpiresAt) throw new BadRequestException('This link has expired.');
+    if (new Date() > n.tokenExpiresAt)
+      throw new BadRequestException('This link has expired.');
     if (n.confirmedAt) return { ok: true, alreadyConfirmed: true };
 
     await this.prisma.facilityNotification.update({
@@ -255,7 +278,9 @@ export class FacilityProvisioningService {
         link: `/onboarding/manage/${n.candidateId}`,
       });
     } catch (e) {
-      this.logger.error(`Failed to notify HR of facility confirmation: ${(e as Error).message}`);
+      this.logger.error(
+        `Failed to notify HR of facility confirmation: ${(e as Error).message}`,
+      );
     }
 
     return { ok: true, alreadyConfirmed: false };
@@ -274,7 +299,7 @@ export class FacilityProvisioningService {
   }
 
   /**
-   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Post-approval work is Head of Talent Acquisition / CHRO / super — plus the Corporate
    * Recruiter assigned to this requisition. Takes the requisition (not just
    * its unit) so the assigned recruiter is always considered.
    */
@@ -290,7 +315,10 @@ export class FacilityProvisioningService {
     );
   }
 
-  private emailHtml(bodyHtml: string, cta?: { label: string; url: string }): string {
+  private emailHtml(
+    bodyHtml: string,
+    cta?: { label: string; url: string },
+  ): string {
     const button = cta
       ? `<tr><td style="padding:8px 28px 28px"><a href="${cta.url}" style="display:inline-block;background:#1877c0;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:bold">${cta.label}</a></td></tr>
          <tr><td style="padding:0 28px 28px;font-size:12px;color:#94a3b8">Or paste this link into your browser:<br><span style="color:#64748b">${cta.url}</span></td></tr>`

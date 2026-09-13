@@ -1,10 +1,14 @@
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
@@ -46,6 +50,18 @@ export class MedicalDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+
+  /**
+   * The check was done on paper, not through the structured form.
+   *
+   * Skips the form-completeness gate — the officer is attesting to an exam
+   * that happened outside the system — so a note is required instead, and the
+   * clearance is stamped as manual rather than passing itself off as a
+   * completed digital report.
+   */
+  @IsOptional()
+  @IsBoolean()
+  manual?: boolean;
 }
 
 /** Draft-friendly — every field optional so the medical officer can save
@@ -215,4 +231,31 @@ export class NotifyItDto {
   @IsString()
   @MaxLength(120)
   assetId?: string;
+}
+
+/** Terms that go on the offer letter, whichever format is chosen. */
+export class OfferLetterDto {
+  @IsIn(['junior', 'senior'])
+  format!: 'junior' | 'senior';
+
+  /** "Mr." / "Ms." — omitted rather than guessed when unknown. */
+  @IsOptional() @IsString() @MaxLength(10) salutation?: string;
+  @IsOptional() @IsString() @MaxLength(300) address?: string;
+  @IsOptional() @IsString() @MaxLength(60) reference?: string;
+  @IsOptional() @IsString() joiningDate?: string;
+
+  /** Senior format only. */
+  @IsOptional() @IsString() @MaxLength(200) jobLocation?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) benefits?: string[];
+
+  /** Junior format only. */
+  @IsOptional() @IsInt() @Min(0) @Max(24) probationMonths?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(180) noticeDays?: number;
+}
+
+/** The appointment letter, issued after joining. */
+export class AppointmentLetterDto {
+  @IsOptional() @IsString() @MaxLength(60) reference?: string;
+  @IsOptional() @IsString() joiningDate?: string;
+  @IsOptional() @IsString() @MaxLength(300) address?: string;
 }

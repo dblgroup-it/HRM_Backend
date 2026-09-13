@@ -23,6 +23,8 @@ import {
   MedicalExamDto,
   NotifyItDto,
   VerifyDocDto,
+  OfferLetterDto,
+  AppointmentLetterDto,
 } from './dto/onboarding.dto';
 
 /** Phase 4 & 5 — document verification, offer & onboarding (authenticated HR). */
@@ -34,6 +36,12 @@ export class OnboardingController {
   @Get('onboarding/medical-queue')
   medicalQueue(@CurrentUser() user: AuthUser) {
     return this.onboarding.medicalQueue(user.id);
+  }
+
+  /** Ask the medical team to look at this candidate (or remind them). */
+  @Post('onboarding/:id/alert-medical')
+  alertMedical(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.alertMedicalTeam(id, user.id);
   }
 
   @Patch('onboarding/:id/medical')
@@ -100,9 +108,42 @@ export class OnboardingController {
     return this.onboarding.sendLink(id, user.id);
   }
 
+  /** Render the offer letter for review, without sending it. */
+  @Post('candidates/:id/onboarding/offer/preview')
+  previewOffer(
+    @Param('id') id: string,
+    @Body() dto: OfferLetterDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.onboarding.previewOfferLetter(id, user.id, dto);
+  }
+
   @Post('candidates/:id/onboarding/offer')
-  sendOffer(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    return this.onboarding.sendOffer(id, user.id);
+  sendOffer(
+    @Param('id') id: string,
+    @Body() dto: OfferLetterDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.onboarding.sendOffer(id, user.id, dto);
+  }
+
+  /** The appointment letter, once final verification is done. */
+  @Post('candidates/:id/onboarding/appointment-letter/preview')
+  previewAppointment(
+    @Param('id') id: string,
+    @Body() dto: AppointmentLetterDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.onboarding.previewAppointmentLetter(id, user.id, dto);
+  }
+
+  @Post('candidates/:id/onboarding/appointment-letter')
+  sendAppointment(
+    @Param('id') id: string,
+    @Body() dto: AppointmentLetterDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.onboarding.sendAppointmentLetter(id, user.id, dto);
   }
 
   /** HR marks the offer accepted by hand (candidate confirmed in person / by phone). */
