@@ -31,12 +31,16 @@ export class UnitsService {
   /** Can this user configure the named unit's departments/seats? Super users
    * always can; otherwise they need one of UNIT_CONFIG_ROLE_KEYS for it
    * (global roles match any unit, unit-scoped roles only their own). */
-  private async requireUnitAccess(unitName: string, userId: string): Promise<void> {
+  private async requireUnitAccess(
+    unitName: string,
+    userId: string,
+  ): Promise<void> {
     for (const key of UNIT_CONFIG_ROLE_KEYS) {
-      if (await this.permissions.hasRoleForUnitName(userId, key, unitName)) return;
+      if (await this.permissions.hasRoleForUnitName(userId, key, unitName))
+        return;
     }
     throw new ForbiddenException(
-      'Only Corporate HR, CHRO or SBU Head for this unit can manage its configuration.',
+      'Only Head of Talent Acquisition, CHRO or SBU Head for this unit can manage its configuration.',
     );
   }
 
@@ -52,7 +56,7 @@ export class UnitsService {
     );
     if (!allowed) {
       throw new ForbiddenException(
-        'Only Corporate HR or CHRO can create a new unit.',
+        'Only Head of Talent Acquisition or CHRO can create a new unit.',
       );
     }
   }
@@ -124,12 +128,21 @@ export class UnitsService {
     return { id };
   }
 
-  async addDepartment(unitId: string, dto: CreateDepartmentDto, userId: string) {
+  async addDepartment(
+    unitId: string,
+    dto: CreateDepartmentDto,
+    userId: string,
+  ) {
     const unit = await this.ensureExists(unitId);
     await this.requireUnitAccess(unit.name, userId);
     try {
       return await this.prisma.department.create({
-        data: { unitId, name: dto.name, createdById: userId, updatedById: userId },
+        data: {
+          unitId,
+          name: dto.name,
+          createdById: userId,
+          updatedById: userId,
+        },
       });
     } catch (e) {
       throw this.handleUnique(e, 'Department already exists in this unit');
@@ -137,7 +150,10 @@ export class UnitsService {
   }
 
   async updateDepartment(departmentId: string, name: string, userId: string) {
-    await this.requireUnitAccess(await this.unitNameOfDepartment(departmentId), userId);
+    await this.requireUnitAccess(
+      await this.unitNameOfDepartment(departmentId),
+      userId,
+    );
     try {
       return await this.prisma.department.update({
         where: { id: departmentId },
@@ -148,14 +164,24 @@ export class UnitsService {
     }
   }
 
-  async removeDepartment(departmentId: string, userId: string): Promise<{ id: string }> {
-    await this.requireUnitAccess(await this.unitNameOfDepartment(departmentId), userId);
+  async removeDepartment(
+    departmentId: string,
+    userId: string,
+  ): Promise<{ id: string }> {
+    await this.requireUnitAccess(
+      await this.unitNameOfDepartment(departmentId),
+      userId,
+    );
     await this.prisma.department.delete({ where: { id: departmentId } });
     return { id: departmentId };
   }
 
   /** Create or update a sanctioned seat for a department. */
-  async upsertPosition(departmentId: string, dto: UpsertPositionDto, userId: string) {
+  async upsertPosition(
+    departmentId: string,
+    dto: UpsertPositionDto,
+    userId: string,
+  ) {
     const department = await this.prisma.department.findUnique({
       where: { id: departmentId },
       include: { unit: { select: { name: true } } },
@@ -197,8 +223,15 @@ export class UnitsService {
   }
 
   /** Edit an existing seat (designation, category and/or sanctioned) by id. */
-  async updatePosition(positionId: string, dto: UpdatePositionDto, userId: string) {
-    await this.requireUnitAccess(await this.unitNameOfPosition(positionId), userId);
+  async updatePosition(
+    positionId: string,
+    dto: UpdatePositionDto,
+    userId: string,
+  ) {
+    await this.requireUnitAccess(
+      await this.unitNameOfPosition(positionId),
+      userId,
+    );
     try {
       return await this.prisma.position.update({
         where: { id: positionId },
@@ -210,7 +243,9 @@ export class UnitsService {
             ? { section: dto.section.trim() || null }
             : {}),
           ...(dto.category !== undefined ? { category: dto.category } : {}),
-          ...(dto.grade !== undefined ? { grade: dto.grade.trim() || null } : {}),
+          ...(dto.grade !== undefined
+            ? { grade: dto.grade.trim() || null }
+            : {}),
           ...(dto.sanctioned !== undefined
             ? { sanctioned: dto.sanctioned }
             : {}),
@@ -226,8 +261,14 @@ export class UnitsService {
     }
   }
 
-  async removePosition(positionId: string, userId: string): Promise<{ id: string }> {
-    await this.requireUnitAccess(await this.unitNameOfPosition(positionId), userId);
+  async removePosition(
+    positionId: string,
+    userId: string,
+  ): Promise<{ id: string }> {
+    await this.requireUnitAccess(
+      await this.unitNameOfPosition(positionId),
+      userId,
+    );
     await this.prisma.position.delete({ where: { id: positionId } });
     return { id: positionId };
   }

@@ -17,7 +17,7 @@ const CONFIG_ROLE_KEYS = ['corporate_hr', 'chro'];
 
 /** The final step appended to every chain — see `buildStepsForRaiser`. */
 const CORPORATE_HR_STEP = {
-  title: 'Corporate HR',
+  title: 'Head of Talent Acquisition',
   subtitle: 'Final approval to commence hiring',
 };
 
@@ -60,14 +60,14 @@ export class ApprovalPathsService {
 
   // --- access -------------------------------------------------------------
 
-  /** Configuring approval paths is Corporate HR / CHRO / super only. */
+  /** Configuring approval paths is Head of Talent Acquisition / CHRO / super only. */
   private async requireConfigAccess(userId: string): Promise<void> {
     if (await this.permissions.isSuperUser(userId)) return;
     const perms = await this.permissions.getUserPermissions(userId);
     const allowed = perms.roles.some((r) => CONFIG_ROLE_KEYS.includes(r.key));
     if (!allowed) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can configure approval paths',
+        'Only Head of Talent Acquisition, CHRO or a super user can configure approval paths',
       );
     }
   }
@@ -102,7 +102,7 @@ export class ApprovalPathsService {
   /**
    * Nominate someone as a Requisition Raiser for a unit, creating their (empty)
    * approval path. An empty path is valid — it means their requisitions go
-   * straight to Corporate HR.
+   * straight to Head of Talent Acquisition.
    */
   async addRaiser(
     unitId: string,
@@ -143,7 +143,13 @@ export class ApprovalPathsService {
     });
 
     // Being nominated here IS the grant — no separate Access Control step.
-    await this.grantRole('requisition_raiser', raiserId, unitId, unit.name, userId);
+    await this.grantRole(
+      'requisition_raiser',
+      raiserId,
+      unitId,
+      unit.name,
+      userId,
+    );
 
     return this.findOne(unitId, raiserId, userId, dept);
   }
@@ -350,14 +356,62 @@ export class ApprovalPathsService {
 
   /**
    * Snapshot this raiser's chain into ApprovalStep create-payloads, with a
-   * Corporate HR step always appended last.
+   * Head of Talent Acquisition step always appended last.
    *
-   * Configured levels are person-routed (a named approver). The Corporate HR
-   * step is left role-routed on purpose — a unit can have several Corporate HR
+   * Configured levels are person-routed (a named approver). The Head of Talent Acquisition
+   * step is left role-routed on purpose — a unit can have several Head of Talent Acquisition
    * holders, and any of them may sign, so naming one at raise time would be a
    * guess. Snapshotting the rest means editing a path never reroutes a
    * requisition already in flight.
    */
+  /**
+   * What the current user may raise for — the unit/department pairs they have
+   * been nominated on.
+   *
+   * The requisition form uses this to offer only the departments that will
+   * actually resolve to a chain. `buildStepsForRaiser` already blocks the
+   * rest, so this is about not presenting a choice that can only end in an
+   * error. A path on the '' department is the unit-wide wildcard and means
+   * every department is open, which is reported as `anyDepartment`.
+   */
+  async myRaiserScope(userId: string) {
+    const paths = await this.prisma.approvalPath.findMany({
+      where: { raiserId: userId },
+      select: {
+        department: true,
+        unit: { select: { id: true, name: true } },
+      },
+    });
+
+    const byUnit = new Map<
+      string,
+      {
+        unitId: string;
+        unitName: string;
+        departments: string[];
+        anyDepartment: boolean;
+      }
+    >();
+    for (const path of paths) {
+      const entry = byUnit.get(path.unit.id) ?? {
+        unitId: path.unit.id,
+        unitName: path.unit.name,
+        departments: [],
+        anyDepartment: false,
+      };
+      if (path.department === '') entry.anyDepartment = true;
+      else if (!entry.departments.includes(path.department)) {
+        entry.departments.push(path.department);
+      }
+      byUnit.set(path.unit.id, entry);
+    }
+
+    return [...byUnit.values()].map((entry) => ({
+      ...entry,
+      departments: entry.departments.sort((a, b) => a.localeCompare(b)),
+    }));
+  }
+
   /**
    * The chain a requisition should follow.
    *
@@ -378,7 +432,7 @@ export class ApprovalPathsService {
     const unit = units.find((u) => sameUnit(u.name, unitName));
     if (!unit) {
       throw new BadRequestException(
-        `No approval path is configured for you in "${unitName}" — ask Corporate HR to set one up.`,
+        `No approval path is configured for you in "${unitName}" — ask Head of Talent Acquisition to set one up.`,
       );
     }
 
@@ -402,24 +456,29 @@ export class ApprovalPathsService {
       candidates.find((c) => dept && c.department === dept) ??
       candidates.find((c) => c.department === '');
 
-    if (!path) {
+    // A super user is never blocked on configuration. With no path of their
+    // own they raise straight to Head of Talent Acquisition — the same shape a configured
+    // path with zero levels produces — rather than being told to ask Corporate
+    // HR to set one up for them.
+    if (!path && !(await this.permissions.isSuperUser(raiserId))) {
       throw new BadRequestException(
         `No approval path is configured for you in "${unit.name}"${
           dept ? ` for ${dept}` : ''
-        } — ask Corporate HR to set one up before raising a requisition here.`,
+        } — ask Head of Talent Acquisition to set one up before raising a requisition here.`,
       );
     }
 
-    const steps: Prisma.ApprovalStepCreateWithoutRequisitionInput[] =
-      path.levels.map((level) => ({
-        orderIndex: level.orderIndex,
-        role: null,
-        approverUserId: level.userId,
-        title: level.title,
-        subtitle: level.subtitle,
-        assignee: level.user.name,
-        status: 'PENDING' as const,
-      }));
+    const steps: Prisma.ApprovalStepCreateWithoutRequisitionInput[] = (
+      path?.levels ?? []
+    ).map((level) => ({
+      orderIndex: level.orderIndex,
+      role: null,
+      approverUserId: level.userId,
+      title: level.title,
+      subtitle: level.subtitle,
+      assignee: level.user.name,
+      status: 'PENDING' as const,
+    }));
 
     const holders = await this.permissions.roleHolderNames(
       'corporate_hr',
@@ -427,7 +486,7 @@ export class ApprovalPathsService {
     );
     steps.push({
       orderIndex: steps.length,
-      // Left role-routed (no named approver) so any Corporate HR holder for
+      // Left role-routed (no named approver) so any Head of Talent Acquisition holder for
       // the unit may sign — naming one at raise time would be a guess.
       role: 'CORPORATE_HR',
       title: CORPORATE_HR_STEP.title,
@@ -440,11 +499,7 @@ export class ApprovalPathsService {
   }
 }
 
-function serializePath(
-  unitId: string,
-  unitName: string,
-  path: PathWithLevels,
-) {
+function serializePath(unitId: string, unitName: string, path: PathWithLevels) {
   return {
     unitId,
     unitName,

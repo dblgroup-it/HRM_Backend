@@ -219,7 +219,7 @@ export class GmailIngestService {
     return null;
   }
 
-  /** Tell global Corporate HR a CV arrived that we couldn't route. */
+  /** Tell global Head of Talent Acquisition a CV arrived that we couldn't route. */
   private async notifyUnmatched(sender: string, subject: string) {
     const hrIds = await this.permissions.roleHolderUserIds('corporate_hr', '');
     await this.notifications.notifyMany(hrIds, {

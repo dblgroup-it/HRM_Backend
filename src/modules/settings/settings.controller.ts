@@ -43,6 +43,7 @@ class UpdateScreeningSettingsDto {
   @Min(0)
   @Max(100)
   writtenTestPassPct?: number;
+  computerTestPassPct?: number;
 
   @IsOptional()
   @IsInt()
@@ -65,7 +66,7 @@ export class SettingsController {
     return this.settings.getAiConfigView();
   }
 
-  /** Super users, and Corporate HR / CHRO (both global roles), may change it. */
+  /** Super users, and Head of Talent Acquisition / CHRO (both global roles), may change it. */
   @Patch('ai')
   async updateAi(
     @Body() dto: UpdateAiSettingsDto,
@@ -112,7 +113,7 @@ export class SettingsController {
     return this.settings.getScreeningConfig();
   }
 
-  /** Super users, and Corporate HR / CHRO, may change the pass marks — this
+  /** Super users, and Head of Talent Acquisition / CHRO, may change the pass marks — this
    * card lives on the same "AI Settings" page as /settings/ai. */
   @Patch('screening')
   async updateScreening(
@@ -123,7 +124,7 @@ export class SettingsController {
     return this.settings.setScreeningConfig(dto);
   }
 
-  /** Corporate HR and CHRO are both GLOBAL roles, so no unit to scope
+  /** Head of Talent Acquisition and CHRO are both GLOBAL roles, so no unit to scope
    * against — a plain role-key check is enough, no hasRoleForUnitName needed. */
   private async requireAiSettingsAccess(userId: string): Promise<void> {
     if (await this.permissions.isSuperUser(userId)) return;
@@ -133,7 +134,7 @@ export class SettingsController {
     );
     if (!allowed) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can change AI settings',
+        'Only Head of Talent Acquisition, CHRO or a super user can change AI settings',
       );
     }
   }

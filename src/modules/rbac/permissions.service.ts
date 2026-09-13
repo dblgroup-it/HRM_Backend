@@ -138,7 +138,7 @@ export class PermissionsService {
   /**
    * Which requisitions this user may see, as a Prisma filter.
    *
-   * `undefined` means "no restriction" (Corporate HR / CHRO / super). Everyone
+   * `undefined` means "no restriction" (Head of Talent Acquisition / CHRO / super). Everyone
    * else sees only their own business: what they raised, what they're named on
    * the chain of, and what they're recruiting for. Holding a unit-scoped role
    * is deliberately NOT enough — a raiser shouldn't see a colleague's
@@ -223,7 +223,7 @@ export class PermissionsService {
   }
 
   /**
-   * Post-approval recruitment access: Corporate HR / CHRO / super users, plus
+   * Post-approval recruitment access: Head of Talent Acquisition / CHRO / super users, plus
    * the Corporate Recruiter assigned to this specific requisition.
    *
    * Pass the requisition's `recruiterId` so the assigned recruiter is let
@@ -242,6 +242,37 @@ export class PermissionsService {
     );
   }
 
+  /**
+   * Has this user been handed interview work here?
+   *
+   * Head of Talent Acquisition / the recruiter can delegate shortlisted candidates to
+   * someone (typically factory-side) to run the first interview. That person
+   * holds no recruitment role, so every gate below the delegation has to
+   * consult this or they are locked out of the job they were given.
+   *
+   * Pass `candidateId` for candidate-scoped work, or `requisitionId` for work
+   * that hangs off the requisition rather than one candidate — forming the
+   * interview committee, most of all. A delegation on any candidate in a
+   * requisition qualifies them for that requisition's committee, because the
+   * committee is what they were asked to arrange.
+   */
+  async hasInterviewDelegation(
+    userId: string,
+    where: { candidateId?: string; requisitionId?: string },
+  ): Promise<boolean> {
+    if (!where.candidateId && !where.requisitionId) return false;
+    const row = await this.prisma.interviewDelegation.findFirst({
+      where: {
+        delegatedToId: userId,
+        revokedAt: null,
+        ...(where.candidateId ? { candidateId: where.candidateId } : {}),
+        ...(where.requisitionId ? { requisitionId: where.requisitionId } : {}),
+      },
+      select: { id: true },
+    });
+    return Boolean(row);
+  }
+
   /** `canRunRecruitment`, but throws instead of returning false. */
   async requireRecruitmentAccess(
     userId: string,
@@ -251,12 +282,12 @@ export class PermissionsService {
   ): Promise<void> {
     if (await this.canRunRecruitment(userId, unitName, recruiterId)) return;
     throw new ForbiddenException(
-      `Only Corporate HR, CHRO, the assigned recruiter or a super user can ${action}`,
+      `Only Head of Talent Acquisition, CHRO, the assigned recruiter or a super user can ${action}`,
     );
   }
 
   /**
-   * Who to notify about a requisition's post-approval activity: Corporate HR
+   * Who to notify about a requisition's post-approval activity: Head of Talent Acquisition
    * for that unit, plus the assigned recruiter (who owns it day to day).
    */
   async recruitmentRecipients(

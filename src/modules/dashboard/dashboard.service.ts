@@ -84,7 +84,7 @@ export class DashboardService {
     const scope = await this.permissions.getOrgStatsScope(userId);
 
     // Requisitions follow the same rule as the requisitions page: your own
-    // business only, unless you're Corporate HR / CHRO / super.
+    // business only, unless you're Head of Talent Acquisition / CHRO / super.
     const reqVisibility = await this.permissions.requisitionVisibility(userId);
 
     // Scope filters — `in: []` matches nothing (no access).
