@@ -1,10 +1,9 @@
 import {
-  ForbiddenException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
@@ -22,6 +21,9 @@ import type {
 } from './bdjobs.types';
 import { EDU_LEVELS } from './bdjobs.types';
 import { BdJobsInboundCandidateDto } from './dto/bdjobs-inbound.dto';
+import { bdjobsToCvProfile } from '../../candidates/cv/bdjobs-cv.mapper';
+import { BdJobsInboundError } from './bdjobs-inbound.errors';
+import type { CvProfile } from '../../candidates/cv/cv-profile.types';
 import {
   BdJobsSettingsService,
   type BdJobsSettings,
@@ -45,7 +47,7 @@ export class BdJobsService {
     return Boolean(s.enabled && s.authToken && s.decodeId && s.companyId);
   }
 
-  /** BDJobs posting is a recruitment action — Corporate HR / CHRO / super only. */
+  /** BDJobs posting is a recruitment action — Head of Talent Acquisition / CHRO / super only. */
   private async requireAccess(requisitionId: string, userId: string) {
     const req = await this.prisma.requisition.findUnique({
       where: { id: requisitionId },
@@ -499,37 +501,105 @@ export class BdJobsService {
       requisitionCode: string;
       status: string;
       duplicate: boolean;
+      /** What we understood from the payload, so it can be checked at a glance. */
+      received?: {
+        matchedVacancyBy: string;
+        name: string;
+        email: string | null;
+        phone: string | null;
+        cvDocument: boolean;
+        structuredCv: boolean;
+        roles: number;
+        qualifications: number;
+        totalExperience: string | null;
+        lastOrganization: string | null;
+      };
     } | null;
     message: string;
+    /** Accepted, but something was dropped or repaired on the way in. */
+    warnings?: string[];
   }> {
     // 1. Verify SHA-256 signature using the same shared credentials.
     const settings = await this.settings.get();
     if (!settings.authToken || !settings.decodeId) {
-      throw new ServiceUnavailableException(
-        'BDJobs credentials are not configured.',
+      throw new BdJobsInboundError(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        'NOT_CONFIGURED',
+        'BDJobs credentials have not been saved on the DBL side, so the signature cannot be checked.',
+        'Nothing is wrong with your request. Ask your DBL contact to complete Configuration → Integrations → BDJobs, then retry.',
       );
     }
     const expected = createHash('sha256')
       .update(`${settings.authToken}&^^${settings.decodeId}*&*${dto.ts}`)
       .digest('hex');
     if (!incomingSignature || incomingSignature !== expected) {
-      throw new UnauthorizedException('Invalid X-Api-AuthToken signature.');
+      // Never echo the expected hash — that would let anyone forge one. The
+      // template, the length and their own ts are enough to find the mistake,
+      // and none of them are secret.
+      const got = incomingSignature?.trim() ?? '';
+      const shape = !got
+        ? 'the X-Api-AuthToken header was missing'
+        : got.length !== 64
+          ? `the header held ${got.length} characters, not the 64 of a SHA-256 hex digest — a raw token or a base64 digest is the usual cause`
+          : !/^[0-9a-f]{64}$/.test(got)
+            ? 'the header is 64 characters but not lowercase hexadecimal'
+            : 'the digest is well formed but does not match, so the Token or DecodeID differs from the pair saved here';
+      throw new BdJobsInboundError(
+        HttpStatus.UNAUTHORIZED,
+        'INVALID_SIGNATURE',
+        `X-Api-AuthToken did not verify — ${shape}.`,
+        `Expected lowercase SHA-256 hex of "${settings.signatureFormat}", with {ts} being the same ts you sent in the body (${dto.ts}).`,
+      );
     }
 
     // 2. Reject stale/replayed requests (5-minute window).
-    const drift = Math.abs(Math.floor(Date.now() / 1000) - dto.ts);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const drift = Math.abs(nowSeconds - dto.ts);
     if (drift > 300) {
-      throw new UnauthorizedException('Request timestamp is expired.');
+      // Sending milliseconds where seconds are expected is the single most
+      // common version of this, and the drift alone does not make it obvious.
+      const looksLikeMilliseconds = dto.ts > 1e12;
+      throw new BdJobsInboundError(
+        HttpStatus.UNAUTHORIZED,
+        'TIMESTAMP_EXPIRED',
+        looksLikeMilliseconds
+          ? `ts looks like milliseconds (${dto.ts}); it must be Unix seconds.`
+          : `ts is ${drift} seconds from this server's clock, outside the 300-second window.`,
+        looksLikeMilliseconds
+          ? 'Divide by 1000 — and sign the same seconds value you send in the body.'
+          : `Server time is ${new Date(nowSeconds * 1000).toISOString()} (${nowSeconds}). Generate ts at the moment of sending, and retry rather than replaying an old request.`,
+      );
     }
 
-    // 3. Resolve the requisition by jobReferenceId (our code) or bdJobsJobId.
-    let requisition: { id: string; code: string } | null = null;
+    // 3. Normalise the CV up front. A structured CandidateData block carries
+    //    the name, contact details and the vacancy reference, so the rest of
+    //    this method can fall back to it instead of demanding duplicates.
+    const warnings: string[] = [];
+    const cv: CvProfile | null = dto.CandidateData
+      ? bdjobsToCvProfile(dto.CandidateData, new Date(), warnings)
+      : null;
 
-    if (dto.jobReferenceId) {
+    // 4. Resolve the requisition by jobReferenceId (our code), the reference
+    //    inside the CV, or the Bdjobs job id.
+    let requisition: { id: string; code: string } | null = null;
+    /** Which key actually found the vacancy, echoed back on success. */
+    let matchedBy = '';
+    const reference =
+      dto.jobReferenceId ??
+      (typeof cv?.extra?.requisitionId === 'string'
+        ? cv.extra.requisitionId
+        : undefined);
+
+    if (reference) {
       requisition = await this.prisma.requisition.findFirst({
-        where: { code: dto.jobReferenceId },
+        where: { code: reference },
         select: { id: true, code: true },
       });
+      if (requisition)
+        matchedBy =
+          dto.jobReferenceId === reference
+            ? 'jobReferenceId'
+            : 'CandidateData.personalData.requisitionId';
     }
 
     if (!requisition && dto.bdJobsJobId) {
@@ -542,16 +612,27 @@ export class BdJobsService {
           where: { id: post.requisitionId },
           select: { id: true, code: true },
         });
+        if (requisition) matchedBy = 'bdJobsJobId';
       }
     }
 
     if (!requisition) {
-      throw new NotFoundException(
-        `No requisition found for jobReferenceId "${dto.jobReferenceId ?? ''}" or bdJobsJobId "${dto.bdJobsJobId}".`,
+      const tried = [
+        dto.jobReferenceId ? `jobReferenceId "${dto.jobReferenceId}"` : null,
+        typeof cv?.extra?.requisitionId === 'string'
+          ? `CandidateData.personalData.requisitionId "${cv.extra.requisitionId}"`
+          : null,
+        dto.bdJobsJobId ? `bdJobsJobId "${dto.bdJobsJobId}"` : null,
+      ].filter(Boolean);
+      throw new BdJobsInboundError(
+        HttpStatus.NOT_FOUND,
+        'REQUISITION_NOT_FOUND',
+        `No open vacancy here matches ${tried.length ? tried.join(', or ') : 'the request — no vacancy reference was sent at all'}.`,
+        'jobReferenceId must be the DBL requisition code exactly, e.g. "REQ-2026-008". bdJobsJobId only resolves for a vacancy posted to BDJobs from this system.',
       );
     }
 
-    // 4. Deduplicate by Bdjobs applicationId (globally unique per application).
+    // 5. Deduplicate by Bdjobs applicationId (globally unique per application).
     const existing = await this.prisma.candidate.findFirst({
       where: { bdjobsApplicationId: dto.applicationId },
       select: { id: true },
@@ -565,27 +646,45 @@ export class BdJobsService {
           status: 'duplicate',
           duplicate: true,
         },
-        message: 'Candidate has already applied to this job.',
+        message: `This applicationId was already imported as candidate ${existing.id}; nothing was changed.`,
       };
     }
 
-    // 5. Create candidate record — CV is a public URL; no Drive upload here.
+    // 6. Create the candidate. The top-level candidate block wins where it is
+    //    given — Bdjobs may have corrected it — and the CV fills the rest.
+    const name = dto.candidate?.name ?? cv?.personal.fullName;
+    if (!name) {
+      throw new BdJobsInboundError(
+        HttpStatus.BAD_REQUEST,
+        'MISSING_CANDIDATE_NAME',
+        'The applicant has no name in this payload.',
+        'Set candidate.name, or CandidateData.personalData.fullName (firstName / lastName are used if fullName is blank).',
+      );
+    }
+
     const candidate = await this.prisma.candidate.create({
       data: {
         requisitionId: requisition.id,
-        name: dto.candidate.name,
-        email: dto.candidate.email,
-        phone: dto.candidate.phone ?? null,
+        name,
+        email: dto.candidate?.email ?? cv?.contact.email ?? null,
+        phone: dto.candidate?.phone ?? cv?.contact.phone ?? null,
         source: 'bdjobs',
-        cvUrl: dto.resume.url,
+        // A structured profile is a CV in its own right; a file is optional.
+        cvUrl: dto.resume?.url ?? null,
+        cvProfile: cv ? (cv as unknown as Prisma.InputJsonValue) : undefined,
+        cvProfileAt: cv ? new Date() : undefined,
+        salaryExpectation: cv?.compensation.expected ?? null,
         bdjobsApplicationId: dto.applicationId,
-        bdjobsApplicantId: dto.profile.bdjobsApplicantId,
+        bdjobsApplicantId: dto.profile?.bdjobsApplicantId ?? null,
         bdjobsJobId: dto.bdJobsJobId,
       },
     });
 
     this.logger.log(
-      `BDJobs candidate imported: ${candidate.id} (${dto.candidate.name}) → ${requisition.code}`,
+      `BDJobs candidate imported: ${candidate.id} (${name}) → ${requisition.code}` +
+        (cv
+          ? ` with a structured CV (${cv.employment.length} roles, ${cv.education.length} qualifications)`
+          : ''),
     );
 
     return {
@@ -595,8 +694,23 @@ export class BdJobsService {
         requisitionCode: requisition.code,
         status: 'imported',
         duplicate: false,
+        // Echoed back so a mismatch shows up in the reply rather than weeks
+        // later on somebody's shortlist.
+        received: {
+          matchedVacancyBy: matchedBy,
+          name,
+          email: candidate.email,
+          phone: candidate.phone,
+          cvDocument: Boolean(candidate.cvUrl),
+          structuredCv: Boolean(cv),
+          roles: cv?.employment.length ?? 0,
+          qualifications: cv?.education.length ?? 0,
+          totalExperience: cv?.summary.totalExperienceLabel ?? null,
+          lastOrganization: cv?.summary.lastOrganization ?? null,
+        },
       },
-      message: 'Candidate imported successfully',
+      message: `Imported ${name} against ${requisition.code}.`,
+      ...(warnings.length ? { warnings } : {}),
     };
   }
 }

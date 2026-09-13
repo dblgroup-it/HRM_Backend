@@ -17,6 +17,12 @@ export interface MasterData {
   zones: string[];
   /** DBL business verticals, picked after the unit. */
   linesOfBusiness: string[];
+  /** Why the person being replaced left. */
+  separationReasons: string[];
+  /** building -> its bookable interview rooms. */
+  meetingRooms: Record<string, string[]>;
+  /** Fixed terms HR attaches to an appointment (bonus, salary review, tax). */
+  specialNotes: string[];
 }
 
 /** Key for the sectionSubSections map — mirrors how the rows are seeded. */
@@ -55,6 +61,9 @@ export class MasterDataService {
     const designations: string[] = [];
     const zones: string[] = [];
     const linesOfBusiness: string[] = [];
+    const separationReasons: string[] = [];
+    const specialNotes: string[] = [];
+    const meetingRooms: Record<string, string[]> = {};
     const subSections: string[] = [];
     const departmentSections: Record<string, string[]> = {};
     const sectionSubSections: Record<string, string[]> = {};
@@ -74,6 +83,9 @@ export class MasterDataService {
         case 'line_of_business':
           linesOfBusiness.push(r.value);
           break;
+        case 'separation_reason':
+          separationReasons.push(r.value);
+          break;
         case 'section':
           (departmentSections[r.parent] ??= []).push(r.value);
           break;
@@ -84,6 +96,12 @@ export class MasterDataService {
           break;
         case 'grade':
           (designationGrades[r.parent] ??= []).push(r.value);
+          break;
+        case 'special_note':
+          specialNotes.push(r.value);
+          break;
+        case 'meeting_room':
+          (meetingRooms[r.parent] ??= []).push(r.value);
           break;
       }
     }
@@ -97,6 +115,9 @@ export class MasterDataService {
       designationGrades,
       zones,
       linesOfBusiness,
+      separationReasons,
+      meetingRooms,
+      specialNotes,
     };
   }
 }

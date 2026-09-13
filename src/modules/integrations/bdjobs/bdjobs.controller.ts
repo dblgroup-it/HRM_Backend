@@ -4,16 +4,16 @@ import {
   Get,
   Headers,
   HttpCode,
-  HttpException,
-  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
   Res,
+  UseFilters,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { UserRole } from '@prisma/client';
 import {
   IsBoolean,
@@ -23,7 +23,6 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import type { Response } from 'express';
 
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { BdJobsSettingsService } from './bdjobs-settings.service';
@@ -36,6 +35,10 @@ import { Public } from '../../../common/decorators/public.decorator';
 import { BdJobsService } from './bdjobs.service';
 import { PostBdJobsDto } from './dto/bdjobs.dto';
 import { BdJobsInboundCandidateDto } from './dto/bdjobs-inbound.dto';
+import {
+  BdJobsInboundFilter,
+  bdjobsInboundValidation,
+} from './bdjobs-inbound.errors';
 import type { PostBdJobsFormData } from './bdjobs.types';
 
 /** Admin-editable BDJobs configuration (blank secrets = keep current). */
@@ -168,34 +171,28 @@ export class BdJobsController {
   /**
    * Inbound webhook — Bdjobs calls this endpoint to push candidates who applied
    * via the Bdjobs portal. No JWT; authenticated by SHA-256 signature in
-   * X-Api-AuthToken. Bypasses the global ResponseInterceptor/HttpExceptionFilter
-   * entirely — success AND error bodies are shaped to match Bdjobs' documented
-   * contract exactly: { success, data, message }, nothing else.
+   * X-Api-AuthToken.
+   *
+   * Bypasses the global ResponseInterceptor/HttpExceptionFilter: both success
+   * and failure answer in Bdjobs' documented shape, `{ success, data, message }`,
+   * with `message` always a readable string. Failures add a `code` to branch on,
+   * a `hint` saying what to change, and — for a rejected payload — the exact
+   * fields that were wrong, so an integration problem can be diagnosed from the
+   * response instead of from our logs.
    */
   @Public()
   @Throttle({ default: { limit: 120, ttl: 60_000 } })
   @HttpCode(200)
+  @UseFilters(BdJobsInboundFilter)
   @Post('integrations/bdjobs/candidates')
   async receiveCandidate(
-    @Body() dto: BdJobsInboundCandidateDto,
+    @Body(bdjobsInboundValidation) dto: BdJobsInboundCandidateDto,
     @Headers('x-api-authtoken') authToken: string | undefined,
+    // Written directly so the global ResponseInterceptor cannot wrap the body
+    // in a second { success, data } envelope. Failures are shaped by
+    // BdJobsInboundFilter, which also catches the validation pipe above.
     @Res() res: Response,
   ): Promise<void> {
-    try {
-      const result = await this.bdjobs.receiveCandidate(dto, authToken);
-      res.json(result);
-    } catch (err) {
-      const status =
-        err instanceof HttpException
-          ? err.getStatus()
-          : HttpStatus.INTERNAL_SERVER_ERROR;
-      const body = err instanceof HttpException ? err.getResponse() : null;
-      const message =
-        typeof body === 'string'
-          ? body
-          : ((body as { message?: string })?.message ??
-            (err instanceof Error ? err.message : 'Unexpected server error'));
-      res.status(status).json({ success: false, data: null, message });
-    }
+    res.json(await this.bdjobs.receiveCandidate(dto, authToken));
   }
 }

@@ -18,8 +18,10 @@ import {
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import { sameUnit } from '../../common/util/normalize-unit';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
+import { SettingsService } from '../settings/settings.service';
 import {
   CRITERIA as EVALUATION_CRITERIA,
   scoreCriteria,
@@ -30,6 +32,7 @@ import {
 } from '../integrations/google/calendar.service';
 import {
   BulkScheduleInterviewDto,
+  DelegationTestsDto,
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
@@ -58,6 +61,7 @@ export class InterviewService {
     private readonly notifications: NotificationsService,
     private readonly mail: MailService,
     private readonly calendar: CalendarService,
+    private readonly settings: SettingsService,
   ) {}
 
   async listForRequisition(reqId: string, userId: string) {
@@ -86,6 +90,49 @@ export class InterviewService {
     dto: ScheduleInterviewDto,
   ) {
     const cand = await this.loadCandidate(candidateId, actor.id);
+
+    // A delegate is handed the first session only. Second and final rounds go
+    // back to Head of Talent Acquisition / the recruiter, so they cannot schedule those.
+    if (dto.kind.toUpperCase() !== 'FIRST') {
+      const viaDelegation = await this.hasDelegation(cand.id, actor.id);
+      if (viaDelegation) {
+        const owns = await this.permissions
+          .canRunRecruitment(
+            actor.id,
+            cand.requisition.unitFactory,
+            cand.requisition.recruiterId,
+          )
+          .catch(() => false);
+        if (!owns) {
+          throw new ForbiddenException(
+            'You were assigned the first interview for this candidate. Later rounds are arranged by Head of Talent Acquisition.',
+          );
+        }
+      }
+    }
+
+    // Two people handed the same candidate would otherwise each arrange their
+    // own session, and neither would know — the candidate ends up with two
+    // conflicting invitations for the same round.
+    const existingSameKind = await this.prisma.interviewRound.findFirst({
+      where: {
+        candidateId: cand.id,
+        kind: dto.kind.toUpperCase() as InterviewKind,
+        status: { not: 'CANCELLED' },
+      },
+      include: { createdBy: { select: { name: true } } },
+    });
+    if (existingSameKind) {
+      const who = existingSameKind.createdBy?.name;
+      const when = existingSameKind.scheduledAt
+        ? ` for ${existingSameKind.scheduledAt.toISOString().slice(0, 10)}`
+        : '';
+      throw new BadRequestException(
+        `A ${dto.kind.toLowerCase()} interview for ${cand.name} is already arranged${when}${
+          who ? ` by ${who}` : ''
+        }. Open that session to change it, or remove it first.`,
+      );
+    }
 
     let round = await this.prisma.interviewRound.create({
       data: {
@@ -177,7 +224,11 @@ export class InterviewService {
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
-    await this.requireRecruitmentAccess(round.requisition, userId);
+    await this.requireInterviewAccess(
+      round.candidateId,
+      round.requisition,
+      userId,
+    );
 
     const newPanelistIds = dto.panelistUserIds
       ? [...new Set(dto.panelistUserIds)]
@@ -259,7 +310,11 @@ export class InterviewService {
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
-    await this.requireRecruitmentAccess(round.requisition, userId);
+    await this.requireInterviewAccess(
+      round.candidateId,
+      round.requisition,
+      userId,
+    );
     if (round.calendarEventId) {
       await this.calendar.cancelEvent(round.calendarEventId);
     }
@@ -278,7 +333,13 @@ export class InterviewService {
       where: { panelists: { some: { userId } } },
       include: {
         candidate: {
-          select: { id: true, name: true, email: true, phone: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            cvUrl: true,
+          },
         },
         requisition: {
           select: {
@@ -308,6 +369,7 @@ export class InterviewService {
           name: r.candidate.name,
           email: r.candidate.email ?? '',
           phone: r.candidate.phone ?? '',
+          cvUrl: r.candidate.cvUrl,
         },
         requisition: {
           id: r.requisition.id,
@@ -394,7 +456,10 @@ export class InterviewService {
       include: {
         round: {
           include: {
-            candidate: { select: { name: true } },
+            // The CV goes with the marks: a panelist scoring someone needs to
+            // read their background, and on the token path they have no other
+            // way in — there is no login and no candidate page for them.
+            candidate: { select: { name: true, cvUrl: true } },
             requisition: {
               select: {
                 designation: true,
@@ -442,7 +507,10 @@ export class InterviewService {
       status: et.status,
       alreadySubmitted: !!existingEval,
       panelistName: et.panelistUser.name,
-      candidate: { name: et.round.candidate.name },
+      candidate: {
+        name: et.round.candidate.name,
+        cvUrl: et.round.candidate.cvUrl,
+      },
       interview: {
         kind: et.round.kind.toLowerCase(),
         mode: et.round.mode.toLowerCase(),
@@ -535,7 +603,11 @@ export class InterviewService {
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
-    await this.requireRecruitmentAccess(round.requisition, actorId);
+    await this.requireInterviewAccess(
+      round.candidateId,
+      round.requisition,
+      actorId,
+    );
 
     if (!round.panelists.some((p) => p.userId === panelistUserId)) {
       throw new BadRequestException('User is not on this panel');
@@ -560,7 +632,6 @@ export class InterviewService {
 
     return { evalLink: evalLink(newToken) };
   }
-
 
   // --- helpers -------------------------------------------------------------
 
@@ -696,6 +767,499 @@ export class InterviewService {
     }
   }
 
+  // ── Delegation ───────────────────────────────────────────────────────────
+
+  /**
+   * Hand shortlisted candidates to people who will run their first interview.
+   *
+   * Bulk on both axes: several candidates to several people in one call, which
+   * is how a recruiter actually works through a shortlist. Re-sending the same
+   * pair reactivates rather than duplicating, so it is safe to repeat.
+   */
+  async delegate(
+    candidateIds: string[],
+    delegateUserIds: string[],
+    actor: { id: string; name: string },
+    note?: string,
+    tests?: DelegationTestsDto,
+  ) {
+    if (!candidateIds.length) {
+      throw new BadRequestException('Select at least one candidate');
+    }
+    if (!delegateUserIds.length) {
+      throw new BadRequestException('Select at least one person to send to');
+    }
+
+    const candidates = await this.prisma.candidate.findMany({
+      where: { id: { in: candidateIds }, deletedAt: null },
+      include: {
+        requisition: {
+          select: {
+            id: true,
+            code: true,
+            designation: true,
+            unitFactory: true,
+            recruiterId: true,
+          },
+        },
+      },
+    });
+    if (candidates.length !== candidateIds.length) {
+      throw new NotFoundException('One or more candidates were not found');
+    }
+
+    // Delegating is a recruiter/HR act — a delegate cannot re-delegate onward.
+    for (const cand of candidates) {
+      await this.requireRecruitmentAccess(cand.requisition, actor.id);
+    }
+
+    const delegates = await this.prisma.user.findMany({
+      where: { id: { in: delegateUserIds }, status: 'ACTIVE' },
+      select: { id: true, name: true },
+    });
+    if (!delegates.length) {
+      throw new NotFoundException('No valid people to send to');
+    }
+
+    // Being sent candidates IS the grant. A user with zero role assignments
+    // cannot sign in at all (auth.service.ts), so without this HR hands work
+    // to a factory colleague, they get the notification, and then bounce off
+    // the login screen — the job invisible to the only person who can do it.
+    // Same treatment Approval Paths gives a nominated raiser or approver.
+    const unitNames = [
+      ...new Set(candidates.map((c) => c.requisition.unitFactory)),
+    ];
+    for (const d of delegates) {
+      for (const unitName of unitNames) {
+        await this.grantInterviewerRole(d.id, unitName, actor.id);
+      }
+    }
+
+    for (const cand of candidates) {
+      for (const d of delegates) {
+        await this.prisma.interviewDelegation.upsert({
+          where: {
+            candidateId_delegatedToId: {
+              candidateId: cand.id,
+              delegatedToId: d.id,
+            },
+          },
+          create: {
+            candidateId: cand.id,
+            requisitionId: cand.requisitionId,
+            delegatedToId: d.id,
+            delegatedById: actor.id,
+            note: note?.trim() || null,
+          },
+          // Re-sending a previously revoked delegation restores it.
+          update: {
+            revokedAt: null,
+            delegatedById: actor.id,
+            note: note?.trim() || null,
+          },
+        });
+      }
+    }
+
+    // The testing brief travels with the hand-off: HR says which tests apply
+    // and out of how many marks, so the interviewer opens their worklist and
+    // finds the right boxes waiting. Only what was specified is written —
+    // marks already recorded are never disturbed.
+    if (tests && Object.keys(tests).length > 0) {
+      const data = {
+        ...(tests.writtenTestEnabled !== undefined
+          ? { writtenTestEnabled: tests.writtenTestEnabled }
+          : {}),
+        ...(tests.writtenTestTotal !== undefined
+          ? { writtenTestTotal: tests.writtenTestTotal }
+          : {}),
+        ...(tests.computerTestEnabled !== undefined
+          ? { computerTestEnabled: tests.computerTestEnabled }
+          : {}),
+        ...(tests.computerTestTotal !== undefined
+          ? { computerTestTotal: tests.computerTestTotal }
+          : {}),
+        ...(tests.aiTestEnabled !== undefined
+          ? { aiTestEnabled: tests.aiTestEnabled }
+          : {}),
+      };
+      for (const cand of candidates) {
+        await this.prisma.salaryFixation.upsert({
+          where: { candidateId: cand.id },
+          create: { candidateId: cand.id, ...data },
+          update: data,
+        });
+      }
+    }
+
+    for (const d of delegates) {
+      const mine = candidates.length;
+      try {
+        await this.notifications.notify(d.id, {
+          type: 'interview_delegated',
+          title: 'Candidates assigned for interview',
+          message: `${actor.name} assigned you ${mine} candidate${mine > 1 ? 's' : ''} to arrange the first interview for.`,
+          link: '/assigned-candidates',
+        });
+      } catch {
+        this.logger.warn(`Could not notify delegate ${d.name}`);
+      }
+    }
+
+    return { delegated: candidates.length * delegates.length };
+  }
+
+  /**
+   * Give a delegated interviewer the access the job needs.
+   *
+   * Deliberately its own role rather than reusing `unit_approver`: being asked
+   * to run an interview should not quietly make someone eligible to be named
+   * on approval chains. It grants sign-in and nothing else — which candidates
+   * they can touch is decided by the delegation itself, not by this role.
+   *
+   * Additive, like every other auto-grant here: revoking a delegation does not
+   * strip the role, since they may still hold others.
+   */
+  private async grantInterviewerRole(
+    userId: string,
+    unitName: string,
+    grantedById: string,
+  ): Promise<void> {
+    const role = await this.prisma.role.findUnique({
+      where: { key: 'interviewer' },
+    });
+    if (!role) {
+      this.logger.warn(
+        'interviewer role missing — access was not auto-granted',
+      );
+      return;
+    }
+
+    // A requisition carries the unit's name, not its id, and those names drift
+    // on trailing punctuation between ZingHR and hand-configured rows
+    // (CLAUDE.md §10) — so match the way the rest of the codebase does.
+    const units = await this.prisma.unit.findMany({
+      select: { id: true, name: true },
+    });
+    const unit = units.find((u) => sameUnit(u.name, unitName));
+    if (!unit) {
+      this.logger.warn(
+        `No unit matches "${unitName}" — interviewer access was not auto-granted`,
+      );
+      return;
+    }
+
+    const already = await this.prisma.roleAssignment.findFirst({
+      where: { roleId: role.id, userId, unitId: unit.id },
+    });
+    if (already) return;
+
+    await this.prisma.roleAssignment.create({
+      data: {
+        roleId: role.id,
+        userId,
+        unitId: unit.id,
+        assignedById: grantedById,
+      },
+    });
+    this.permissions.invalidate(userId);
+    this.logger.log(`Granted interviewer on ${unit.name} to user ${userId}`);
+  }
+
+  /**
+   * The first-interview verdict: does this candidate go forward or not?
+   *
+   * Open to whoever ran the session — the delegate as well as Head of Talent Acquisition —
+   * but deliberately narrow: it moves the stage and nothing else, so a
+   * delegate cannot edit the candidate's record through it.
+   */
+  async recordFirstInterviewOutcome(
+    candidateId: string,
+    outcome: 'final' | 'rejected',
+    actor: { id: string; name: string },
+    note?: string,
+  ) {
+    const cand = await this.loadCandidate(candidateId, actor.id);
+
+    if (cand.stage !== 'INTERVIEW') {
+      // Most often this is the other person on a shared assignment getting
+      // there first, so say so rather than leaving them guessing.
+      if (cand.stage === 'FINAL' || cand.stage === 'REJECTED') {
+        const already = await this.prisma.candidate.findUnique({
+          where: { id: cand.id },
+          select: { rejectedBy: { select: { name: true } } },
+        });
+        const verdict =
+          cand.stage === 'FINAL' ? 'moved to the final stage' : 'rejected';
+        const who = already?.rejectedBy?.name;
+        throw new BadRequestException(
+          `${cand.name} has already been ${verdict}${who ? ` by ${who}` : ''}. Only one first-interview outcome is recorded per candidate.`,
+        );
+      }
+      throw new BadRequestException(
+        `${cand.name} is not at the interview stage, so a first-interview outcome cannot be recorded.`,
+      );
+    }
+
+    const rejected = outcome === 'rejected';
+    const updated = await this.prisma.candidate.update({
+      where: { id: cand.id },
+      data: {
+        stage: rejected ? 'REJECTED' : 'FINAL',
+        notes: note?.trim()
+          ? `${cand.notes ? cand.notes + '\n' : ''}First interview (${actor.name}): ${note.trim()}`
+          : cand.notes,
+        // Stamp who turned them down and where. 'first_interview' is what
+        // separates a factory interviewer's call from a CV screening
+        // rejection by Head of Talent Acquisition — the two used to be indistinguishable.
+        ...(rejected
+          ? {
+              rejectedAt: new Date(),
+              rejectedById: actor.id,
+              rejectionStage: 'first_interview',
+              rejectionReason: note?.trim() || null,
+            }
+          : {
+              rejectedAt: null,
+              rejectedById: null,
+              rejectionStage: null,
+              rejectionReason: null,
+            }),
+      },
+      select: { id: true, name: true, stage: true },
+    });
+
+    // Tell whoever handed this over what the outcome was.
+    const delegations = await this.prisma.interviewDelegation.findMany({
+      where: { candidateId: cand.id, revokedAt: null },
+      select: { delegatedById: true },
+    });
+    const notifyIds = [
+      ...new Set(
+        delegations
+          .map((d) => d.delegatedById)
+          .filter((id): id is string => Boolean(id) && id !== actor.id),
+      ),
+    ];
+    for (const id of notifyIds) {
+      try {
+        await this.notifications.notify(id, {
+          type: 'interview_outcome',
+          title: `First interview: ${outcome === 'final' ? 'moved to final' : 'rejected'}`,
+          message: `${actor.name} ${outcome === 'final' ? 'advanced' : 'rejected'} ${cand.name} after the first interview.`,
+          link: `/requisitions/${cand.requisitionId}`,
+        });
+      } catch {
+        this.logger.warn('Could not notify the delegating recruiter');
+      }
+    }
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      stage: updated.stage.toLowerCase(),
+    };
+  }
+
+  /** Withdraw a delegation. The audit row survives, marked revoked. */
+  async revokeDelegation(
+    candidateId: string,
+    delegateUserId: string,
+    userId: string,
+  ) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      include: {
+        requisition: { select: { unitFactory: true, recruiterId: true } },
+      },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(cand.requisition, userId);
+
+    await this.prisma.interviewDelegation.updateMany({
+      where: { candidateId, delegatedToId: delegateUserId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return { success: true };
+  }
+
+  /** Who a candidate is currently delegated to. */
+  async listDelegations(candidateId: string, userId: string) {
+    const cand = await this.loadCandidate(candidateId, userId);
+    const rows = await this.prisma.interviewDelegation.findMany({
+      where: { candidateId: cand.id, revokedAt: null },
+      include: {
+        delegatedTo: { select: { id: true, name: true, employeeCode: true } },
+        delegatedBy: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      note: r.note,
+      createdAt: r.createdAt.toISOString(),
+      delegatedTo: r.delegatedTo,
+      delegatedBy: r.delegatedBy,
+    }));
+  }
+
+  /** Candidates handed to me — the delegate's own worklist. */
+  async myDelegatedCandidates(userId: string) {
+    const rows = await this.prisma.interviewDelegation.findMany({
+      where: { delegatedToId: userId, revokedAt: null },
+      include: {
+        candidate: {
+          include: {
+            interviews: {
+              select: {
+                id: true,
+                kind: true,
+                status: true,
+                scheduledAt: true,
+                mode: true,
+                location: true,
+                meetLink: true,
+                _count: { select: { panelists: true } },
+              },
+            },
+            rejectedBy: { select: { name: true } },
+            interviewDelegations: {
+              where: { revokedAt: null },
+              select: {
+                delegatedToId: true,
+                delegatedTo: { select: { name: true } },
+              },
+            },
+          },
+        },
+        requisition: {
+          select: {
+            id: true,
+            code: true,
+            designation: true,
+            unitFactory: true,
+            department: true,
+          },
+        },
+        delegatedBy: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    // One query for the whole board rather than one dialog at a time: an
+    // interviewer needs to know whether the marks are in *before* deciding
+    // which candidate to call first.
+    const fixations = rows.length
+      ? await this.prisma.salaryFixation.findMany({
+          where: { candidateId: { in: rows.map((r) => r.candidate.id) } },
+          select: {
+            candidateId: true,
+            writtenTestEnabled: true,
+            writtenTestTotal: true,
+            writtenTestObtained: true,
+            computerTestEnabled: true,
+            computerTestTotal: true,
+            computerTestObtained: true,
+            aiTestEnabled: true,
+            aiTestTotal: true,
+            aiTestObtained: true,
+          },
+        })
+      : [];
+    const screening = await this.settings.getScreeningConfig();
+    const byCandidate = new Map(fixations.map((f) => [f.candidateId, f]));
+
+    const entry = (
+      key: string,
+      label: string,
+      enabled: boolean,
+      total: number | null,
+      obtained: number | null,
+      passPct: number,
+    ) => {
+      if (!enabled) return null;
+      const scored = total != null && total > 0 && obtained != null;
+      return {
+        key,
+        label,
+        total,
+        obtained,
+        // Null means "not marked yet", which is not the same as failing.
+        passed: scored ? (obtained / total) * 100 >= passPct : null,
+      };
+    };
+
+    /** Enabled tests only, each marked pending / passed / failed. */
+    const testsFor = (candidateId: string) => {
+      const f = byCandidate.get(candidateId);
+      if (!f) return [];
+      return [
+        entry(
+          'written',
+          'Written',
+          f.writtenTestEnabled,
+          f.writtenTestTotal,
+          f.writtenTestObtained,
+          screening.writtenTestPassPct,
+        ),
+        entry(
+          'computer',
+          'Computer literacy',
+          f.computerTestEnabled,
+          f.computerTestTotal,
+          f.computerTestObtained,
+          screening.computerTestPassPct,
+        ),
+        entry(
+          'ai',
+          'AI proficiency',
+          f.aiTestEnabled,
+          f.aiTestTotal,
+          f.aiTestObtained,
+          screening.aiTestPassPct,
+        ),
+      ].filter((t): t is NonNullable<typeof t> => t !== null);
+    };
+
+    return rows.map((r) => ({
+      id: r.id,
+      note: r.note,
+      createdAt: r.createdAt.toISOString(),
+      delegatedBy: r.delegatedBy,
+      requisition: r.requisition,
+      // Everyone else this candidate was handed to, so two interviewers don't
+      // unknowingly arrange competing sessions.
+      alsoAssignedTo: r.candidate.interviewDelegations
+        .filter((d) => d.delegatedToId !== userId)
+        .map((d) => d.delegatedTo.name),
+      candidate: {
+        id: r.candidate.id,
+        name: r.candidate.name,
+        email: r.candidate.email,
+        phone: r.candidate.phone,
+        stage: r.candidate.stage.toLowerCase(),
+        cvUrl: r.candidate.cvUrl,
+        rejectedAt: r.candidate.rejectedAt?.toISOString() ?? null,
+        rejectionStage: r.candidate.rejectionStage,
+        rejectionReason: r.candidate.rejectionReason,
+        rejectedByName: r.candidate.rejectedBy?.name ?? null,
+      },
+      // So the worklist can show "not scheduled yet" versus an existing round.
+      rounds: r.candidate.interviews.map((i) => ({
+        id: i.id,
+        kind: i.kind.toLowerCase(),
+        status: i.status.toLowerCase(),
+        scheduledAt: i.scheduledAt?.toISOString() ?? null,
+        // A date alone does not tell an interviewer whether the session is
+        // actually ready — where it is and who is on the panel does.
+        mode: i.mode.toLowerCase(),
+        location: i.location,
+        online: Boolean(i.meetLink),
+        panelists: i._count.panelists,
+      })),
+      tests: testsFor(r.candidate.id),
+    }));
+  }
+
   private async loadCandidate(candidateId: string, userId: string) {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
@@ -706,7 +1270,7 @@ export class InterviewService {
       },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition, userId);
+    await this.requireInterviewAccess(cand.id, cand.requisition, userId);
     return cand;
   }
 
@@ -720,7 +1284,7 @@ export class InterviewService {
   }
 
   /**
-   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Post-approval work is Head of Talent Acquisition / CHRO / super — plus the Corporate
    * Recruiter assigned to this requisition. Takes the requisition (not just
    * its unit) so the assigned recruiter is always considered.
    */
@@ -734,6 +1298,30 @@ export class InterviewService {
       req.recruiterId,
       'manage interviews',
     );
+  }
+
+  /** True when this candidate was delegated to this user and not revoked. */
+  private async hasDelegation(
+    candidateId: string,
+    userId: string,
+  ): Promise<boolean> {
+    return this.permissions.hasInterviewDelegation(userId, { candidateId });
+  }
+
+  /**
+   * May this user run this candidate's interviews?
+   *
+   * Head of Talent Acquisition / CHRO / super / the assigned recruiter as before, plus
+   * anyone the recruiter delegated this specific candidate to. The delegation
+   * is per candidate on purpose: it must not open the rest of the unit.
+   */
+  private async requireInterviewAccess(
+    candidateId: string,
+    req: { unitFactory: string; recruiterId: string | null },
+    userId: string,
+  ): Promise<void> {
+    if (await this.hasDelegation(candidateId, userId)) return;
+    await this.requireRecruitmentAccess(req, userId);
   }
 }
 

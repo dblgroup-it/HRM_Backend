@@ -220,11 +220,18 @@ model User {
   roleAssignmentsGiven RoleAssignment[]   @relation("RoleAssignedBy")
   interviewRoundsCreated   InterviewRound[]    @relation("InterviewRoundCreatedBy")
   candidatesCreated        Candidate[]         @relation("CandidateCreatedBy")
+  candidatesRejected       Candidate[]         @relation("CandidateRejectedBy")
+  medicalClearances        Onboarding[]        @relation("OnboardingMedicalClearedBy")
+  boardBatchesCreated      BoardApprovalBatch[] @relation("BoardBatchCreatedBy")
+  boardBatchesAsChro       BoardApprovalBatch[] @relation("BoardBatchChro")
+  auditLogs                AuditLog[]           @relation("AuditLogActor")
   boardGroupMemberships    BoardGroupMember[]
   boardApprovalsRequested  BoardApproval[]     @relation("BoardApprovalRequester")
   boardApprovalsHrApproved BoardApproval[]     @relation("BoardApprovalHrApprover")
   boardApprovalsAsCorporateHr BoardApproval[]  @relation("BoardApprovalCorporateHr")
   boardApprovalsAsChro     BoardApproval[]     @relation("BoardApprovalChro")
+  interviewDelegationsHeld     InterviewDelegation[] @relation("InterviewDelegatedTo")
+  interviewDelegationsMade     InterviewDelegation[] @relation("InterviewDelegatedBy")
   boardApprovalVotes       BoardApprovalVote[]
   facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
   facilityNotificationsReceived FacilityNotification[] @relation("FacilityNotificationRecipient")
@@ -464,6 +471,7 @@ model Requisition {
   candidates         Candidate[]
   committeeMembers   CommitteeMember[]
   interviewRounds    InterviewRound[]
+  interviewDelegations InterviewDelegation[]
   bdJobsPost         BdJobsPost?
   talentBankMatches  TalentBankMatch[]
   createdAt          DateTime              @default(now()) @map("created_at")
@@ -511,6 +519,10 @@ model Candidate {
   /// Google Drive file id + view link for the CV document.
   cvFileId      String?         @map("cv_file_id") @db.VarChar(100)
   cvUrl         String?         @map("cv_url")
+  /// The CV as structured data in the system's common format (`CvProfile`),
+  /// when the source sent one instead of — or as well as — a document.
+  cvProfile     Json?           @map("cv_profile")
+  cvProfileAt   DateTime?       @map("cv_profile_at")
   notes         String?
   salaryExpectation Float?      @map("salary_expectation")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
@@ -526,6 +538,14 @@ model Candidate {
   redFlagReason   String?      @map("red_flag_reason")
   redFlaggedAt    DateTime?    @map("red_flagged_at")
   redFlaggedById  String?      @map("red_flagged_by_id")
+  /// Rejection record. `rejectionStage` says where it happened — notably
+  /// 'first_interview', which is a factory-side interviewer's call, as opposed
+  /// to a CV screening rejection by Corporate HR.
+  rejectedAt      DateTime?    @map("rejected_at")
+  rejectedById    String?      @map("rejected_by_id")
+  rejectedBy      User?        @relation("CandidateRejectedBy", fields: [rejectedById], references: [id], onDelete: SetNull)
+  rejectionStage  String?      @map("rejection_stage") @db.VarChar(30)
+  rejectionReason String?      @map("rejection_reason")
   createdById   String?         @map("created_by_id")
   createdBy     User?           @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Bdjobs inbound: unique per Bdjobs application — used for deduplication.
@@ -535,6 +555,7 @@ model Candidate {
   /// Bdjobs inbound: the Bdjobs job listing ID this candidate applied to.
   bdjobsJobId          String?  @map("bdjobs_job_id") @db.VarChar(100)
   interviews      InterviewRound[]
+  interviewDelegations InterviewDelegation[]
   onboarding      Onboarding?
   boardApprovals  BoardApproval[]
   salaryFixation  SalaryFixation?
@@ -548,6 +569,7 @@ model Candidate {
 
   @@index([requisitionId, stage])
   @@index([stage])
+  @@index([rejectionStage])
   @@index([createdAt])
   @@index([deletedAt])
   @@map("candidates")
@@ -593,10 +615,14 @@ model SalaryFixation {
   /// editable by HR after that.
   jobGrade String? @map("job_grade") @db.VarChar(10)
 
-  // Pre-interview screening tests (both gated at 50% pass mark).
+  // Pre-interview screening tests (each gated at its own pass mark, default 50%).
   writtenTestEnabled  Boolean @default(false) @map("written_test_enabled")
   writtenTestTotal    Float?  @map("written_test_total")
   writtenTestObtained Float?  @map("written_test_obtained")
+  /// Computer Literacy — hand-marked like the Written Test, off unless enabled.
+  computerTestEnabled  Boolean @default(false) @map("computer_test_enabled")
+  computerTestTotal    Float?  @map("computer_test_total")
+  computerTestObtained Float?  @map("computer_test_obtained")
   /// HR can skip Step 2 per candidate; defaults on since it was mandatory-only before this field existed.
   aiTestEnabled       Boolean @default(true) @map("ai_test_enabled")
   aiTestTotal         Float?  @map("ai_test_total")
@@ -675,6 +701,33 @@ model InterviewRound {
   @@index([candidateId])
   @@index([requisitionId])
   @@map("interview_rounds")
+}
+
+/// Phase 3 — a shortlisted candidate handed to factory / unit staff so they can
+/// run the first interview themselves.
+///
+/// Scoped deliberately narrowly: holding a delegation grants rights over that
+/// one candidate — schedule the round, form the committee, read the marks —
+/// and nothing else in the unit.
+model InterviewDelegation {
+  id             String      @id @default(cuid())
+  candidateId    String      @map("candidate_id")
+  candidate      Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requisitionId  String      @map("requisition_id")
+  requisition    Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  delegatedToId  String      @map("delegated_to_id")
+  delegatedTo    User        @relation("InterviewDelegatedTo", fields: [delegatedToId], references: [id], onDelete: Cascade)
+  delegatedById  String?     @map("delegated_by_id")
+  delegatedBy    User?       @relation("InterviewDelegatedBy", fields: [delegatedById], references: [id], onDelete: SetNull)
+  note           String?
+  /// Set instead of deleting, so an audit of who could act survives.
+  revokedAt      DateTime?   @map("revoked_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  @@unique([candidateId, delegatedToId])
+  @@index([delegatedToId, revokedAt])
+  @@index([requisitionId])
+  @@map("interview_delegations")
 }
 
 /// Phase 3 — a committee member assigned to an interview round's panel.
@@ -782,6 +835,33 @@ model Onboarding {
   medicalStatus   MedicalStatus   @default(pending) @map("medical_status")
   medicalNote     String?         @map("medical_note")
   medicalClearedAt DateTime?      @map("medical_cleared_at")
+  // --- Offer & appointment letters -------------------------------------
+  /// 'junior' (probation + notice) or 'senior' (job location + benefits) —
+  /// DBL issues two house formats and HR picks one per candidate.
+  offerFormat          String?   @map("offer_format") @db.VarChar(10)
+  offerRef             String?   @map("offer_ref") @db.VarChar(60)
+  /// "effective on or before" — the date printed on the letter.
+  offerJoiningDate     DateTime? @map("offer_joining_date") @db.Date
+  offerJobLocation     String?   @map("offer_job_location") @db.VarChar(200)
+  offerProbationMonths Int?      @map("offer_probation_months")
+  offerNoticeDays      Int?      @map("offer_notice_days")
+  offerBenefits        String[]  @map("offer_benefits")
+  /// The letter exactly as it was sent. A candidate holds a copy, so it must
+  /// not change afterwards because a template or a salary did.
+  offerLetterHtml      String?   @map("offer_letter_html")
+  candidateAddress     String?   @map("candidate_address") @db.VarChar(300)
+  appointmentRef       String?   @map("appointment_ref") @db.VarChar(60)
+  appointmentSentAt    DateTime? @map("appointment_sent_at")
+  appointmentLetterHtml String?  @map("appointment_letter_html")
+
+  /// Recorded from a paper/offline check rather than the structured form, so
+  /// the completeness gate on MedicalExam was deliberately bypassed.
+  medicalManual   Boolean         @default(false) @map("medical_manual")
+  /// When the medical team was told this candidate is waiting on them, so the
+  /// alert fires once rather than on every document verified.
+  medicalNotifiedAt DateTime?     @map("medical_notified_at")
+  medicalClearedById String?      @map("medical_cleared_by_id")
+  medicalClearedBy   User?        @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
   hrVerifiedAt    DateTime?       @map("hr_verified_at")
   /// AI cross-verification of submitted docs vs the candidate's profile:
   /// { verdict, overview, findings: [{doc, severity, detail}] }
@@ -1086,16 +1166,62 @@ model BoardApproval {
   hrApprovalAttachmentUrl    String?   @map("hr_approval_attachment_url")
   hrApprovalAttachmentName   String?   @map("hr_approval_attachment_name")
   hrApprovedAt     DateTime?           @map("hr_approved_at")
+  /// Sheet columns the system holds no structured field for. Seeded from the
+  /// CV screening extract when the row first appears on Corporate HR's desk,
+  /// then correctable by them — an AI reading of a CV is a starting point, not
+  /// something to put before the board unchecked.
+  sheetEducation   String?             @map("sheet_education")
+  sheetExperience  String?             @map("sheet_experience") @db.VarChar(60)
+  sheetLastOrg     String?             @map("sheet_last_org") @db.VarChar(200)
+  /// Set once Corporate HR puts this candidate onto an approval sheet. From
+  /// that point the CHRO and board links are decided for the sheet as a whole,
+  /// not per candidate.
+  batchId          String?             @map("batch_id")
+  batch            BoardApprovalBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
   createdAt        DateTime            @default(now()) @map("created_at")
   updatedAt        DateTime            @updatedAt @map("updated_at")
 
+  @@index([batchId])
   @@map("board_approvals")
+}
+
+/// One hiring approval sheet — several candidates that Corporate HR sends
+/// onward together, mirroring DBL's paper "Hiring Approval Sheet".
+///
+/// The recruiter still forwards candidates one at a time; batching starts at
+/// Corporate HR, who gathers whoever is waiting and sends one sheet to the
+/// CHRO and then to the board. The sheet is decided as a whole, the way the
+/// paper form is signed at the bottom.
+model BoardApprovalBatch {
+  id             String              @id @default(cuid())
+  /// Human-facing reference shown on the sheet, e.g. "HAS-2026-0007".
+  reference      String              @unique @db.VarChar(30)
+  createdById    String              @map("created_by_id")
+  createdBy      User                @relation("BoardBatchCreatedBy", fields: [createdById], references: [id])
+  status         BoardApprovalStatus @default(pending)
+  /// Which link the sheet is waiting on — chro, then board.
+  currentStage   BoardApprovalStage  @default(chro) @map("current_stage")
+  chroId         String?             @map("chro_id")
+  chro           User?               @relation("BoardBatchChro", fields: [chroId], references: [id], onDelete: SetNull)
+  boardMemberIds String[]            @map("board_member_ids")
+  rejectedReason String?             @map("rejected_reason")
+  rejectedAt     DateTime?           @map("rejected_at")
+  approvals      BoardApproval[]
+  votes          BoardApprovalVote[]
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  @@map("board_approval_batches")
 }
 
 model BoardApprovalVote {
   id              String          @id @default(cuid())
-  boardApprovalId String          @map("board_approval_id")
-  boardApproval   BoardApproval   @relation(fields: [boardApprovalId], references: [id], onDelete: Cascade)
+  /// Exactly one of these is set: a vote is cast either on one candidate's
+  /// approval (the recruiter → Corporate HR link) or on a whole sheet.
+  boardApprovalId String?         @map("board_approval_id")
+  boardApproval   BoardApproval?  @relation(fields: [boardApprovalId], references: [id], onDelete: Cascade)
+  batchId         String?         @map("batch_id")
+  batch           BoardApprovalBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
   userId          String          @map("user_id")
   user            User            @relation(fields: [userId], references: [id])
   token           String          @unique @db.VarChar(64)
@@ -1106,6 +1232,7 @@ model BoardApprovalVote {
   notes           String?
   respondedAt     DateTime?       @map("responded_at")
 
+  @@index([batchId])
   @@map("board_approval_votes")
 }
 
@@ -1178,4 +1305,44 @@ model MasterOption {
   @@unique([kind, value, parent])
   @@index([kind, parent])
   @@map("master_options")
+}
+
+/// System-wide audit log — who did what, when, and to what.
+///
+/// Fed from three places: an HTTP interceptor (every mutating request), a
+/// Prisma client extension (field-level before/after on the models that
+/// matter), and scheduled work like the ZingHR sync, which records one summary
+/// row per run rather than one per employee touched.
+model AuditLog {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now()) @map("created_at")
+  /// Null for public token endpoints and for system work — actorName still reads correctly.
+  actorId     String?  @map("actor_id")
+  actor       User?    @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+  /// Snapshot, so the log survives a rename or a deleted account.
+  actorName   String   @default("Unknown") @map("actor_name") @db.VarChar(150)
+  /// user | public | system
+  actorType   String   @default("user") @map("actor_type") @db.VarChar(10)
+  action      String   @db.VarChar(60)
+  entity      String   @db.VarChar(60)
+  entityId    String?  @map("entity_id") @db.VarChar(64)
+  entityLabel String?  @map("entity_label") @db.VarChar(200)
+  summary     String   @default("")
+  /// [{ field, from, to }] — redacted for medical and pay fields.
+  changes     Json?
+  /// http | db | system
+  source      String   @default("http") @db.VarChar(10)
+  method      String?  @db.VarChar(10)
+  path        String?  @db.VarChar(300)
+  statusCode  Int?     @map("status_code")
+  ip          String?  @db.VarChar(64)
+  requestId   String?  @map("request_id") @db.VarChar(40)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([entity, createdAt(sort: Desc)])
+  @@index([entity, entityId])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([requestId])
+  @@map("audit_logs")
 }

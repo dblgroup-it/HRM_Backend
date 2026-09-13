@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 import configuration from './config/configuration';
 import { PrismaModule } from './prisma/prisma.module';
@@ -30,6 +30,8 @@ import { MailModule } from './modules/integrations/mail/mail.module';
 import { AiModule } from './modules/integrations/ai/ai.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { RbacModule } from './modules/rbac/rbac.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { AuditContextInterceptor } from './common/interceptors/audit-context.interceptor';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AutomationModule } from './modules/automation/automation.module';
 import { BoardModule } from './modules/board/board.module';
@@ -64,6 +66,7 @@ import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.mod
     AiModule,
     SettingsModule,
     RbacModule,
+    AuditModule,
     RealtimeModule,
     AutomationModule,
     BoardModule,
@@ -73,6 +76,9 @@ import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.mod
   controllers: [HealthController],
   providers: [
     // Rate limiting runs first — throttles abuse before auth even resolves.
+    // First in the chain: it opens the AsyncLocalStorage context that the
+    // Prisma audit extension reads, so it must wrap every other provider.
+    { provide: APP_INTERCEPTOR, useClass: AuditContextInterceptor },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // JWT auth applies globally; opt out per-route with @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },

@@ -11,6 +11,7 @@ import {
   IsString,
   Min,
   MinLength,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 
@@ -19,10 +20,24 @@ export class FacilityRequestDto {
   @IsBoolean()
   requested!: boolean;
 
-  /** 'laptop'|'desktop' for laptopDesktop; 'existing'|'new' for seating; unused otherwise. */
+  /**
+   * 'laptop'|'desktop' for laptopDesktop; 'existing'|'new' for seating;
+   * 'shared'|'full_time' for transport; unused otherwise.
+   */
   @IsOptional()
-  @IsIn(['laptop', 'desktop', 'existing', 'new'])
+  @IsIn(['laptop', 'desktop', 'existing', 'new', 'shared', 'full_time'])
   option?: string;
+
+  /** Transport, full-time car only — a shared run is whatever is on it. */
+  @IsOptional()
+  @IsIn(['sedan', 'suv'])
+  vehicleType?: string;
+
+  /** Transport — where the person is picked up from. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  pickupLocation?: string;
 
   @IsOptional()
   @IsString()
@@ -69,7 +84,6 @@ export class CreateRequisitionDto {
   @IsString()
   @MinLength(2)
   designation!: string;
-
 
   @Type(() => Number)
   @IsInt()

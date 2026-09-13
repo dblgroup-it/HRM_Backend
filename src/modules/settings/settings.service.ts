@@ -21,6 +21,8 @@ export interface NotificationConfig {
 export interface ScreeningConfig {
   /** Minimum % of Written Test marks to pass (0-100). */
   writtenTestPassPct: number;
+  /** Minimum % of Computer Literacy Test marks to pass (0-100). */
+  computerTestPassPct: number;
   /** Minimum % of AI Proficiency Test marks to pass (0-100). */
   aiTestPassPct: number;
 }
@@ -39,6 +41,7 @@ const DEFAULT_NOTIFICATION: NotificationConfig = { emailEnabled: true };
 
 const DEFAULT_SCREENING: ScreeningConfig = {
   writtenTestPassPct: 50,
+  computerTestPassPct: 50,
   aiTestPassPct: 50,
 };
 
@@ -140,6 +143,11 @@ export class SettingsService {
         0,
         100,
       ),
+      computerTestPassPct: clamp(
+        v.computerTestPassPct ?? DEFAULT_SCREENING.computerTestPassPct,
+        0,
+        100,
+      ),
       aiTestPassPct: clamp(
         v.aiTestPassPct ?? DEFAULT_SCREENING.aiTestPassPct,
         0,
@@ -157,6 +165,10 @@ export class SettingsService {
         input.writtenTestPassPct !== undefined
           ? clamp(input.writtenTestPassPct, 0, 100)
           : current.writtenTestPassPct,
+      computerTestPassPct:
+        input.computerTestPassPct !== undefined
+          ? clamp(input.computerTestPassPct, 0, 100)
+          : current.computerTestPassPct,
       aiTestPassPct:
         input.aiTestPassPct !== undefined
           ? clamp(input.aiTestPassPct, 0, 100)

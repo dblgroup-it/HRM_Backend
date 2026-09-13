@@ -20,4 +20,21 @@ export class BoardPublicController {
   submitVote(@Param('token') token: string, @Body() dto: SubmitVoteDto) {
     return this.board.submitVote(token, dto.notes, dto.decision ?? 'approved');
   }
+
+  /** A whole Hiring Approval Sheet — several candidates, one decision. */
+  @Public()
+  @Get('board-sheet/:token')
+  getSheet(@Param('token') token: string) {
+    return this.board.getSheetVoteInfo(token);
+  }
+
+  @Public()
+  @Post('board-sheet/:token')
+  submitSheet(@Param('token') token: string, @Body() dto: SubmitVoteDto) {
+    return this.board.submitSheetVote(
+      token,
+      dto.notes,
+      dto.decision ?? 'approved',
+    );
+  }
 }

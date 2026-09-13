@@ -5,7 +5,7 @@
  * ordered list of named approvers, and snapshotted onto each requisition at
  * creation time by `ApprovalPathsService.buildStepsForUnitName()`. The old
  * hardcoded rules (Dept Head → Factory HR if factory → SBU Head if new+factory
- * → Corporate HR) are gone; the `ApprovalRole` enum now only survives on
+ * → Head of Talent Acquisition) are gone; the `ApprovalRole` enum now only survives on
  * legacy chains raised before that change and on the CHRO step appended when
  * a final approver escalates.
  */

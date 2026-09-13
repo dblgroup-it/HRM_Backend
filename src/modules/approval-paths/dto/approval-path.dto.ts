@@ -41,8 +41,8 @@ export class AddRaiserDto {
 }
 
 /**
- * A raiser's intermediate approvers. May be empty — a Corporate HR step is
- * always appended, so an empty list means "straight to Corporate HR".
+ * A raiser's intermediate approvers. May be empty — a Head of Talent Acquisition step is
+ * always appended, so an empty list means "straight to Head of Talent Acquisition".
  */
 export class ReplaceApprovalPathDto {
   @IsArray()

@@ -14,12 +14,9 @@ import {
   AuthUser,
 } from '../../common/decorators/current-user.decorator';
 import { ApprovalPathsService } from './approval-paths.service';
-import {
-  AddRaiserDto,
-  ReplaceApprovalPathDto,
-} from './dto/approval-path.dto';
+import { AddRaiserDto, ReplaceApprovalPathDto } from './dto/approval-path.dto';
 
-// Access is enforced in ApprovalPathsService (dynamic RBAC — Corporate HR,
+// Access is enforced in ApprovalPathsService (dynamic RBAC — Head of Talent Acquisition,
 // CHRO or a super user), not by a static @Roles() gate here.
 @Controller('approval-paths')
 export class ApprovalPathsController {
@@ -28,6 +25,18 @@ export class ApprovalPathsController {
   @Get()
   findAll(@CurrentUser() user: AuthUser) {
     return this.approvalPaths.findAll(user.id);
+  }
+
+  /**
+   * The unit/department pairs the caller may raise for.
+   *
+   * Reads only the caller's own nominations, so unlike the rest of this
+   * controller it needs no Head of Talent Acquisition gate — every raiser needs it to fill
+   * in the requisition form.
+   */
+  @Get('my-scope')
+  myScope(@CurrentUser() user: AuthUser) {
+    return this.approvalPaths.myRaiserScope(user.id);
   }
 
   /** Nominate a Requisition Raiser for a unit (creates their empty chain). */
@@ -52,7 +61,12 @@ export class ApprovalPathsController {
     @Query('department') department: string | undefined,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.approvalPaths.findOne(unitId, raiserId, user.id, department ?? '');
+    return this.approvalPaths.findOne(
+      unitId,
+      raiserId,
+      user.id,
+      department ?? '',
+    );
   }
 
   /** Replace one raiser's intermediate approvers. */

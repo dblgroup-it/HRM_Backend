@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,7 +17,10 @@ import {
   isJobGrade,
   TOTAL_MAX,
 } from './salary-fixation.constants';
-import { UpsertSalaryFixationDto } from './dto/salary-fixation.dto';
+import {
+  UpsertSalaryFixationDto,
+  UpsertScreeningTestsDto,
+} from './dto/salary-fixation.dto';
 
 export interface CommitteeScore {
   evaluatorId: string;
@@ -78,8 +80,12 @@ export class SalaryFixationService {
     const position = await this.prisma.position.findFirst({
       where: {
         designation: { equals: requisition.designation, mode: 'insensitive' },
-        department: { name: { equals: requisition.department, mode: 'insensitive' } },
-        unit: { name: { equals: requisition.unitFactory, mode: 'insensitive' } },
+        department: {
+          name: { equals: requisition.department, mode: 'insensitive' },
+        },
+        unit: {
+          name: { equals: requisition.unitFactory, mode: 'insensitive' },
+        },
       },
       select: { grade: true },
     });
@@ -89,31 +95,61 @@ export class SalaryFixationService {
     return null;
   }
 
-  async upsert(candidateId: string, userId: string, dto: UpsertSalaryFixationDto) {
+  async upsert(
+    candidateId: string,
+    userId: string,
+    dto: UpsertSalaryFixationDto,
+  ) {
     const cand = await this.requireCandidate(candidateId, userId);
     const existing = await this.prisma.salaryFixation.findUnique({
       where: { candidateId: cand.id },
     });
 
     const merged = {
-      jobGrade: dto.jobGrade !== undefined ? dto.jobGrade : (existing?.jobGrade ?? null),
+      jobGrade:
+        dto.jobGrade !== undefined
+          ? dto.jobGrade
+          : (existing?.jobGrade ?? null),
       writtenTestEnabled:
         dto.writtenTestEnabled !== undefined
           ? dto.writtenTestEnabled
           : (existing?.writtenTestEnabled ?? false),
       writtenTestTotal:
-        dto.writtenTestTotal !== undefined ? dto.writtenTestTotal : (existing?.writtenTestTotal ?? null),
+        dto.writtenTestTotal !== undefined
+          ? dto.writtenTestTotal
+          : (existing?.writtenTestTotal ?? null),
       writtenTestObtained:
         dto.writtenTestObtained !== undefined
           ? dto.writtenTestObtained
           : (existing?.writtenTestObtained ?? null),
+      computerTestEnabled:
+        dto.computerTestEnabled !== undefined
+          ? dto.computerTestEnabled
+          : (existing?.computerTestEnabled ?? false),
+      computerTestTotal:
+        dto.computerTestTotal !== undefined
+          ? dto.computerTestTotal
+          : (existing?.computerTestTotal ?? null),
+      computerTestObtained:
+        dto.computerTestObtained !== undefined
+          ? dto.computerTestObtained
+          : (existing?.computerTestObtained ?? null),
       aiTestEnabled:
-        dto.aiTestEnabled !== undefined ? dto.aiTestEnabled : (existing?.aiTestEnabled ?? true),
-      aiTestTotal: dto.aiTestTotal !== undefined ? dto.aiTestTotal : (existing?.aiTestTotal ?? null),
+        dto.aiTestEnabled !== undefined
+          ? dto.aiTestEnabled
+          : (existing?.aiTestEnabled ?? true),
+      aiTestTotal:
+        dto.aiTestTotal !== undefined
+          ? dto.aiTestTotal
+          : (existing?.aiTestTotal ?? null),
       aiTestObtained:
-        dto.aiTestObtained !== undefined ? dto.aiTestObtained : (existing?.aiTestObtained ?? null),
+        dto.aiTestObtained !== undefined
+          ? dto.aiTestObtained
+          : (existing?.aiTestObtained ?? null),
       bandOverride:
-        dto.bandOverride !== undefined ? dto.bandOverride : (existing?.bandOverride ?? null),
+        dto.bandOverride !== undefined
+          ? dto.bandOverride
+          : (existing?.bandOverride ?? null),
       proposedSalaryOverride:
         dto.proposedSalaryOverride !== undefined
           ? dto.proposedSalaryOverride
@@ -122,7 +158,11 @@ export class SalaryFixationService {
 
     const saved = await this.prisma.salaryFixation.upsert({
       where: { candidateId: cand.id },
-      create: { candidateId: cand.id, ...merged, status: SalaryFixationStatus.draft },
+      create: {
+        candidateId: cand.id,
+        ...merged,
+        status: SalaryFixationStatus.draft,
+      },
       update: {
         ...merged,
         // Any edit after finalization reopens the record for correction.
@@ -147,11 +187,18 @@ export class SalaryFixationService {
       where: { candidateId: cand.id },
     });
     if (!record) {
-      throw new BadRequestException('Start salary fixation for this candidate first.');
+      throw new BadRequestException(
+        'Start salary fixation for this candidate first.',
+      );
     }
     const committee = await this.getCommitteeScores(cand.id);
     const screening = await this.settings.getScreeningConfig();
-    const view = this.buildView(record, committee, screening, cand.salaryExpectation);
+    const view = this.buildView(
+      record,
+      committee,
+      screening,
+      cand.salaryExpectation,
+    );
 
     if (view.status === SalaryFixationStatus.screening_failed) {
       throw new BadRequestException(
@@ -180,7 +227,12 @@ export class SalaryFixationService {
       action: 'salary_fixation_finalized',
     });
 
-    return this.buildView(finalized, committee, screening, cand.salaryExpectation);
+    return this.buildView(
+      finalized,
+      committee,
+      screening,
+      cand.salaryExpectation,
+    );
   }
 
   /**
@@ -195,11 +247,18 @@ export class SalaryFixationService {
       where: { candidateId: cand.id },
     });
     if (!record) {
-      throw new BadRequestException('Start salary fixation for this candidate first.');
+      throw new BadRequestException(
+        'Start salary fixation for this candidate first.',
+      );
     }
     const committee = await this.getCommitteeScores(cand.id);
     const screening = await this.settings.getScreeningConfig();
-    const view = this.buildView(record, committee, screening, cand.salaryExpectation);
+    const view = this.buildView(
+      record,
+      committee,
+      screening,
+      cand.salaryExpectation,
+    );
 
     if (view.proposedSalary == null) {
       throw new BadRequestException(
@@ -216,7 +275,12 @@ export class SalaryFixationService {
       action: 'salary_fixation_offered',
     });
 
-    return this.buildView(updated, committee, screening, cand.salaryExpectation);
+    return this.buildView(
+      updated,
+      committee,
+      screening,
+      cand.salaryExpectation,
+    );
   }
 
   /**
@@ -268,10 +332,15 @@ export class SalaryFixationService {
   /** Every distinct evaluator (across all of the candidate's interview rounds)
    * who submitted their evaluation — every submission scores the same fixed
    * criteria, so it counts toward salary fixation automatically. */
-  private async getCommitteeScores(candidateId: string): Promise<CommitteeScore[]> {
+  private async getCommitteeScores(
+    candidateId: string,
+  ): Promise<CommitteeScore[]> {
     const evaluations = await this.prisma.evaluation.findMany({
       where: { round: { candidateId } },
-      include: { evaluator: { select: { name: true } }, round: { select: { kind: true } } },
+      include: {
+        evaluator: { select: { name: true } },
+        round: { select: { kind: true } },
+      },
       orderBy: { submittedAt: 'desc' },
     });
 
@@ -298,6 +367,9 @@ export class SalaryFixationService {
       writtenTestEnabled: boolean;
       writtenTestTotal: number | null;
       writtenTestObtained: number | null;
+      computerTestEnabled: boolean;
+      computerTestTotal: number | null;
+      computerTestObtained: number | null;
       aiTestEnabled: boolean;
       aiTestTotal: number | null;
       aiTestObtained: number | null;
@@ -322,6 +394,9 @@ export class SalaryFixationService {
       writtenTestEnabled: false,
       writtenTestTotal: null,
       writtenTestObtained: null,
+      computerTestEnabled: false,
+      computerTestTotal: null,
+      computerTestObtained: null,
       aiTestEnabled: true,
       aiTestTotal: null,
       aiTestObtained: null,
@@ -340,13 +415,22 @@ export class SalaryFixationService {
       base.writtenTestEnabled,
       screening.writtenTestPassPct,
     );
+    const computer = evaluateScreeningTest(
+      base.computerTestTotal,
+      base.computerTestObtained,
+      base.computerTestEnabled,
+      screening.computerTestPassPct,
+    );
     const ai = evaluateScreeningTest(
       base.aiTestTotal,
       base.aiTestObtained,
       base.aiTestEnabled,
       screening.aiTestPassPct,
     );
-    const failed = written.status === 'fail' || ai.status === 'fail';
+    const failed =
+      written.status === 'fail' ||
+      computer.status === 'fail' ||
+      ai.status === 'fail';
 
     let averageScore: number | null = null;
     let computedBand: number | null = null;
@@ -357,7 +441,8 @@ export class SalaryFixationService {
     // Finalizing is blocked separately below and in finalize() itself, so
     // this doesn't let a failed candidate slip through.
     if (committee.length > 0) {
-      averageScore = committee.reduce((sum, c) => sum + c.total, 0) / committee.length;
+      averageScore =
+        committee.reduce((sum, c) => sum + c.total, 0) / committee.length;
       computedBand = bandFromScore(Math.round(averageScore));
       const effectiveBand = base.bandOverride ?? computedBand;
       if (base.jobGrade && isJobGrade(base.jobGrade)) {
@@ -380,14 +465,21 @@ export class SalaryFixationService {
       id: record?.id ?? null,
       candidateId: record?.candidateId ?? null,
       jobGrade: base.jobGrade,
-      jobGradeVerified: base.jobGrade && isJobGrade(base.jobGrade) ? isGradeVerified(base.jobGrade) : null,
+      jobGradeVerified:
+        base.jobGrade && isJobGrade(base.jobGrade)
+          ? isGradeVerified(base.jobGrade)
+          : null,
       writtenTestEnabled: base.writtenTestEnabled,
       writtenTestTotal: base.writtenTestTotal,
       writtenTestObtained: base.writtenTestObtained,
+      computerTestEnabled: base.computerTestEnabled,
+      computerTestTotal: base.computerTestTotal,
+      computerTestObtained: base.computerTestObtained,
       aiTestEnabled: base.aiTestEnabled,
       aiTestTotal: base.aiTestTotal,
       aiTestObtained: base.aiTestObtained,
       writtenTestPassPct: screening.writtenTestPassPct,
+      computerTestPassPct: screening.computerTestPassPct,
       aiTestPassPct: screening.aiTestPassPct,
       interviewers: committee,
       averageScore,
@@ -409,6 +501,139 @@ export class SalaryFixationService {
     };
   }
 
+  /**
+   * Enter (or clear) the hand-marked screening tests for one candidate.
+   *
+   * Deliberately separate from `upsert`: whoever ran the first interview needs
+   * to record Written and Computer Literacy marks, but salary fixation — band,
+   * proposed figure, offer — is Head of Talent Acquisition's alone. This touches only the
+   * six test columns and hands back only the screening picture, so a delegated
+   * interviewer never sees a salary number.
+   *
+   * The AI Proficiency test is not settable here: it is scored by the system
+   * from the candidate's own attempt, not typed in by hand.
+   */
+  async upsertScreeningTests(
+    candidateId: string,
+    userId: string,
+    dto: UpsertScreeningTestsDto,
+  ) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      include: { requisition: true },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    if (
+      !(await this.permissions.hasInterviewDelegation(userId, { candidateId }))
+    ) {
+      await this.requireRecruitmentAccess(cand.requisition, userId);
+    }
+
+    const existing = await this.prisma.salaryFixation.findUnique({
+      where: { candidateId },
+    });
+    const pick = <T>(next: T | undefined, current: T, fallback: T): T =>
+      next !== undefined ? next : (current ?? fallback);
+
+    const data = {
+      writtenTestEnabled: pick(
+        dto.writtenTestEnabled,
+        existing?.writtenTestEnabled,
+        false,
+      ),
+      writtenTestTotal: pick(
+        dto.writtenTestTotal,
+        existing?.writtenTestTotal,
+        null,
+      ),
+      writtenTestObtained: pick(
+        dto.writtenTestObtained,
+        existing?.writtenTestObtained,
+        null,
+      ),
+      computerTestEnabled: pick(
+        dto.computerTestEnabled,
+        existing?.computerTestEnabled,
+        false,
+      ),
+      computerTestTotal: pick(
+        dto.computerTestTotal,
+        existing?.computerTestTotal,
+        null,
+      ),
+      computerTestObtained: pick(
+        dto.computerTestObtained,
+        existing?.computerTestObtained,
+        null,
+      ),
+      aiTestEnabled: pick(dto.aiTestEnabled, existing?.aiTestEnabled, true),
+    };
+
+    const saved = await this.prisma.salaryFixation.upsert({
+      where: { candidateId },
+      create: { candidateId, ...data },
+      update: data,
+    });
+
+    const screening = await this.settings.getScreeningConfig();
+    return {
+      candidateId,
+      writtenTestEnabled: saved.writtenTestEnabled,
+      writtenTestTotal: saved.writtenTestTotal,
+      writtenTestObtained: saved.writtenTestObtained,
+      writtenTestPassPct: screening.writtenTestPassPct,
+      computerTestEnabled: saved.computerTestEnabled,
+      computerTestTotal: saved.computerTestTotal,
+      computerTestObtained: saved.computerTestObtained,
+      computerTestPassPct: screening.computerTestPassPct,
+      aiTestEnabled: saved.aiTestEnabled,
+      aiTestTotal: saved.aiTestTotal,
+      aiTestObtained: saved.aiTestObtained,
+      aiTestPassPct: screening.aiTestPassPct,
+    };
+  }
+
+  /**
+   * The same screening picture, genuinely read-only.
+   *
+   * This used to call through to the upsert with an empty patch, which meant
+   * merely opening the marks dialog created or touched a SalaryFixation row
+   * and filed an audit entry — a read that writes. It now reads, and reports
+   * the configured defaults when no row exists yet.
+   */
+  async getScreeningTests(candidateId: string, userId: string) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      include: { requisition: true },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    if (
+      !(await this.permissions.hasInterviewDelegation(userId, { candidateId }))
+    ) {
+      await this.requireRecruitmentAccess(cand.requisition, userId);
+    }
+
+    const saved = await this.prisma.salaryFixation.findUnique({
+      where: { candidateId },
+    });
+    const screening = await this.settings.getScreeningConfig();
+    return {
+      candidateId,
+      writtenTestEnabled: saved?.writtenTestEnabled ?? false,
+      writtenTestTotal: saved?.writtenTestTotal ?? null,
+      writtenTestObtained: saved?.writtenTestObtained ?? null,
+      writtenTestPassPct: screening.writtenTestPassPct,
+      computerTestEnabled: saved?.computerTestEnabled ?? false,
+      computerTestTotal: saved?.computerTestTotal ?? null,
+      computerTestObtained: saved?.computerTestObtained ?? null,
+      computerTestPassPct: screening.computerTestPassPct,
+      aiTestEnabled: saved?.aiTestEnabled ?? true,
+      aiTestTotal: saved?.aiTestTotal ?? null,
+      aiTestObtained: saved?.aiTestObtained ?? null,
+      aiTestPassPct: screening.aiTestPassPct,
+    };
+  }
+
   private async requireCandidate(candidateId: string, userId: string) {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
@@ -419,9 +644,9 @@ export class SalaryFixationService {
     return cand;
   }
 
-  /** Salary fixation is a recruitment action — Corporate HR / CHRO / super only. */
+  /** Salary fixation is a recruitment action — Head of Talent Acquisition / CHRO / super only. */
   /**
-   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Post-approval work is Head of Talent Acquisition / CHRO / super — plus the Corporate
    * Recruiter assigned to this requisition. Takes the requisition (not just
    * its unit) so the assigned recruiter is always considered.
    */

@@ -7,16 +7,17 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  OnboardingDocStatus,
-  MedicalStatus,
-  MedicalExam,
-  Prisma,
-} from '@prisma/client';
+import { OnboardingDocStatus, MedicalExam, Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import {
+  buildAppointmentLetter,
+  buildOfferLetter,
+  type LetterFormat,
+  type LetterInput,
+} from './letters';
 import { NotificationsService } from '../realtime/notifications.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
@@ -27,10 +28,36 @@ import {
   MedicalDto,
   MedicalExamDto,
   NotifyItDto,
+  OfferLetterDto,
+  AppointmentLetterDto,
 } from './dto/onboarding.dto';
 
 /** Role keys allowed to record medical clearance (configurable / either name). */
 export const MEDICAL_ROLE_KEYS = ['medical_officer', 'medical_team'];
+
+/**
+ * When a candidate's medical is actually due.
+ *
+ * This used to be "the offer has been accepted", which was right while the
+ * offer preceded medical. The chain now runs verify -> medical -> board
+ * approval -> offer, so that condition can never hold at the moment medical
+ * is due and the medical team's queue was permanently empty. It now matches
+ * the step the onboarding page unlocks: documents settled, one way or the
+ * other. Combine with `medicalStatus: 'pending'` at the call site.
+ */
+export const MEDICAL_DUE: Prisma.OnboardingWhereInput = {
+  AND: [
+    // Collected, or HR said there is nothing to collect.
+    { OR: [{ docs: { some: {} } }, { docsSkippedAt: { not: null } }] },
+    // Every collected document verified, or verification explicitly skipped.
+    {
+      OR: [
+        { verificationSkippedAt: { not: null } },
+        { docs: { some: {}, every: { status: 'verified' } } },
+      ],
+    },
+  ],
+};
 
 /** The standard joining-document checklist shown to a selected candidate. */
 export const REQUIRED_DOCS = [
@@ -55,7 +82,10 @@ export interface UploadedDoc {
  * dutyPosition/refNo/registrationNo/familyHistoryDetail/remarks stay
  * optional (the paper form itself often leaves them blank).
  */
-const REQUIRED_MEDICAL_EXAM_FIELDS: { key: keyof MedicalExamValues; label: string }[] = [
+const REQUIRED_MEDICAL_EXAM_FIELDS: {
+  key: keyof MedicalExamValues;
+  label: string;
+}[] = [
   { key: 'dateOfBirth', label: 'Date of Birth' },
   { key: 'examDate', label: 'Date of Examination' },
   { key: 'issueDate', label: 'Date of Issue' },
@@ -75,8 +105,15 @@ const REQUIRED_MEDICAL_EXAM_FIELDS: { key: keyof MedicalExamValues; label: strin
   { key: 'hearingLeftEar', label: 'Hearing (Left Ear)' },
   { key: 'speech', label: 'Speech' },
   { key: 'extremities', label: 'Extremities' },
-  { key: 'noAnemiaJaundiceEtc', label: 'Anemia / Jaundice / Clubbing / Koilonychia / Congenital Malformations' },
-  { key: 'stableNormotensiveNondiabetic', label: 'Physical & Mental Stability / Normotensive / Nondiabetic' },
+  {
+    key: 'noAnemiaJaundiceEtc',
+    label:
+      'Anemia / Jaundice / Clubbing / Koilonychia / Congenital Malformations',
+  },
+  {
+    key: 'stableNormotensiveNondiabetic',
+    label: 'Physical & Mental Stability / Normotensive / Nondiabetic',
+  },
   { key: 'urineTestClear', label: 'Urine Test (Sugar / Albumin)' },
   { key: 'hepatitisBNegative', label: 'Hepatitis B (Negative)' },
   { key: 'liverFunctionNormal', label: 'Liver Function (Normal)' },
@@ -93,7 +130,10 @@ type MedicalExamValues = Omit<
 
 type OnboardingWithDocs = Prisma.OnboardingGetPayload<{
   include: { docs: true };
-}>;
+}> & {
+  /** Present only where the query includes it. */
+  medicalClearedBy?: { name: string } | null;
+};
 
 @Injectable()
 export class OnboardingService {
@@ -133,7 +173,10 @@ export class OnboardingService {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.prisma.onboarding.findUnique({
       where: { candidateId },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
     return {
       aiConfigured: this.ai.isConfigured(),
@@ -164,6 +207,15 @@ export class OnboardingService {
             ? cand.salaryFixation.jobGrade
             : null,
         facilities: cand.requisition.facilities ?? null,
+        // Lifted out of the facilities blob, as the requisition serializer
+        // does, so the panel renders the same on both pages.
+        specialNotes: Array.isArray(
+          (cand.requisition.facilities as { specialNotes?: unknown } | null)
+            ?.specialNotes,
+        )
+          ? (cand.requisition.facilities as { specialNotes: string[] })
+              .specialNotes
+          : [],
         /** Lets the UI gate provisioning on the assigned recruiter, matching
          *  the access rule the API already enforces. */
         recruiterId: cand.requisition.recruiterId ?? null,
@@ -231,8 +283,12 @@ export class OnboardingService {
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
       data: { docsSkippedAt: new Date() },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
+    await this.notifyMedicalTeamIfDue(ob.id);
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'docs_skipped',
     });
@@ -246,8 +302,12 @@ export class OnboardingService {
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
       data: { verificationSkippedAt: new Date() },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
+    await this.notifyMedicalTeamIfDue(ob.id);
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'verification_skipped',
     });
@@ -261,6 +321,9 @@ export class OnboardingService {
       where: { id: docId },
       data: { status },
     });
+    // The last document verified is what puts the candidate in front of the
+    // medical team.
+    await this.notifyMedicalTeamIfDue(doc.onboarding.id);
     this.notifications.broadcastChange(
       'candidate',
       doc.onboarding.candidate.requisitionId,
@@ -277,7 +340,10 @@ export class OnboardingService {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.prisma.onboarding.findUnique({
       where: { candidateId },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
     if (!ob)
       throw new BadRequestException(
@@ -337,7 +403,8 @@ export class OnboardingService {
 
     const result = {
       verdict: dto.verdict,
-      overview: dto.note?.trim() || 'Manually reviewed by HR — no automated check run.',
+      overview:
+        dto.note?.trim() || 'Manually reviewed by HR — no automated check run.',
       findings: [] as unknown[],
       source: 'manual',
       reviewedBy: actor.name,
@@ -357,7 +424,31 @@ export class OnboardingService {
 
   // --- HR: offer (Stage C) -------------------------------------------------
 
-  async sendOffer(candidateId: string, userId: string) {
+  /**
+   * Render the offer letter without sending it, so HR can read it first.
+   *
+   * Takes the draft terms rather than the stored ones: the preview has to
+   * reflect what is on screen, including edits not yet saved.
+   */
+  async previewOfferLetter(
+    candidateId: string,
+    userId: string,
+    dto: OfferLetterDto,
+  ) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    return {
+      html: buildOfferLetter(dto.format, await this.letterInput(cand, ob, dto)),
+    };
+  }
+
+  /**
+   * Send the offer letter.
+   *
+   * The rendered letter is stored as it went out — the candidate holds a copy,
+   * so it must not change later because a template or a salary did.
+   */
+  async sendOffer(candidateId: string, userId: string, dto: OfferLetterDto) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
     if (!cand.email) {
@@ -365,25 +456,173 @@ export class OnboardingService {
         'This candidate has no email address on file',
       );
     }
+
+    const input = await this.letterInput(cand, ob, dto);
+    const letter = buildOfferLetter(dto.format, input);
     const link = this.publicLink(ob.token);
+
     await this.mail.send({
       to: cand.email,
       subject: `Offer of employment — ${cand.requisition.designation} | DBL Group`,
-      text: `Dear ${cand.name},\n\nWe are pleased to offer you the position of ${cand.requisition.designation} at ${cand.requisition.unitFactory}, DBL Group.\n\nPlease review and accept your offer here:\n\n${link}\n\nWarm regards,\nDBL Group Recruitment`,
-      html: this.emailHtml(
-        `Dear ${cand.name},<br><br>We are delighted to offer you the position of <b>${cand.requisition.designation}</b> at <b>${cand.requisition.unitFactory}</b>, DBL Group.<br><br>Please review and accept your offer using the button below.`,
-        { label: 'Review & accept offer', url: link },
-      ),
+      text: `Dear ${cand.name},\n\nPlease find your offer of employment for the position of ${cand.requisition.designation} at ${cand.requisition.unitFactory}, DBL Group.\n\nTo accept and submit your joining documents:\n\n${link}\n\nWarm regards,\nDBL Group Recruitment`,
+      // The letter itself is the email body — an offer is a document, not a
+      // notification with a link to one.
+      html: `${letter}
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:18px auto 0;padding:18px 34px;border-top:1px solid #dbe3ec;text-align:center">
+  <a href="${link}" style="display:inline-block;background:#1877c0;color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 30px;border-radius:6px">Accept offer &amp; submit documents</a>
+</div>`,
     });
+
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
-      data: { offerSentAt: new Date(), status: 'offer_sent' },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      data: {
+        offerSentAt: new Date(),
+        status: 'offer_sent',
+        offerFormat: dto.format,
+        offerRef: dto.reference?.trim() || null,
+        offerJoiningDate: dto.joiningDate ? new Date(dto.joiningDate) : null,
+        offerJobLocation: dto.jobLocation?.trim() || null,
+        offerProbationMonths: dto.probationMonths ?? null,
+        offerNoticeDays: dto.noticeDays ?? null,
+        offerBenefits: dto.benefits ?? [],
+        candidateAddress: dto.address?.trim() || null,
+        offerLetterHtml: letter,
+      },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'offer_sent',
     });
     return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * The appointment letter — issued after joining, once verification is done.
+   *
+   * Both offer formats promise one (the junior letter calls it a Service
+   * Agreement), so this closes that loop rather than being a second offer.
+   */
+  async previewAppointmentLetter(
+    candidateId: string,
+    userId: string,
+    dto: AppointmentLetterDto,
+  ) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    return {
+      html: buildAppointmentLetter(
+        await this.letterInput(cand, ob, {
+          format: 'junior',
+          reference: dto.reference,
+          joiningDate: dto.joiningDate,
+          address: dto.address,
+        }),
+      ),
+    };
+  }
+
+  async sendAppointmentLetter(
+    candidateId: string,
+    userId: string,
+    dto: AppointmentLetterDto,
+  ) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    if (!cand.email) {
+      throw new BadRequestException(
+        'This candidate has no email address on file',
+      );
+    }
+    if (!ob.hrVerifiedAt) {
+      throw new BadRequestException(
+        'Complete the final verification before issuing the appointment letter.',
+      );
+    }
+
+    const letter = buildAppointmentLetter(
+      await this.letterInput(cand, ob, {
+        format: 'junior',
+        reference: dto.reference,
+        joiningDate: dto.joiningDate,
+        address: dto.address,
+      }),
+    );
+
+    await this.mail.send({
+      to: cand.email,
+      subject: `Appointment letter — ${cand.requisition.designation} | DBL Group`,
+      text: `Dear ${cand.name},\n\nPlease find your appointment letter for the position of ${cand.requisition.designation} at ${cand.requisition.unitFactory}, DBL Group.\n\nWarm regards,\nDBL Group`,
+      html: letter,
+    });
+
+    const updated = await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: {
+        appointmentSentAt: new Date(),
+        appointmentRef: dto.reference?.trim() || null,
+        appointmentLetterHtml: letter,
+        ...(dto.address?.trim()
+          ? { candidateAddress: dto.address.trim() }
+          : {}),
+      },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'appointment_sent',
+    });
+    return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * Everything the templates need, with stored values as the fallback.
+   *
+   * The signatory is whoever holds CHRO — the letters go out over their
+   * signature, so it is read from the role rather than hard-coded.
+   */
+  private async letterInput(
+    cand: {
+      name: string;
+      requisition: { designation: string; unitFactory: string };
+    },
+    ob: {
+      offerRef: string | null;
+      offerJoiningDate: Date | null;
+      offerJobLocation: string | null;
+      offerProbationMonths: number | null;
+      offerNoticeDays: number | null;
+      offerBenefits: string[];
+      candidateAddress: string | null;
+    },
+    dto: Partial<OfferLetterDto> & { format: LetterFormat },
+  ): Promise<LetterInput> {
+    const chro = await this.prisma.roleAssignment.findFirst({
+      where: { role: { key: 'chro' } },
+      select: { user: { select: { name: true } } },
+    });
+    return {
+      candidateName: cand.name,
+      salutation: dto.salutation ?? null,
+      address: dto.address ?? ob.candidateAddress,
+      designation: cand.requisition.designation,
+      unitFactory: cand.requisition.unitFactory,
+      reference: dto.reference ?? ob.offerRef,
+      date: new Date(),
+      joiningDate: dto.joiningDate
+        ? new Date(dto.joiningDate)
+        : ob.offerJoiningDate,
+      jobLocation: dto.jobLocation ?? ob.offerJobLocation,
+      probationMonths: dto.probationMonths ?? ob.offerProbationMonths ?? 6,
+      noticeDays: dto.noticeDays ?? ob.offerNoticeDays ?? 15,
+      benefits: dto.benefits ?? ob.offerBenefits ?? [],
+      signatoryName: chro?.user.name ?? 'Chief Human Resources Officer',
+      signatoryTitle: 'Chief Human Resources Officer',
+    };
   }
 
   /**
@@ -401,7 +640,10 @@ export class OnboardingService {
       data: alreadyAccepted
         ? {}
         : { offerAcceptedAt: new Date(), status: 'offer_accepted' },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
     if (!alreadyAccepted) {
       const unit = cand.requisition.unitFactory;
@@ -448,7 +690,10 @@ export class OnboardingService {
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
       data: { hrVerifiedAt: new Date(), status: 'hr_final' },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
     // Auto-reject all remaining applied candidates for this requisition.
     await this.prisma.candidate.updateMany({
@@ -512,7 +757,10 @@ export class OnboardingService {
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
       data: { archivedAt: new Date(), archiveFolderUrl },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'archived',
@@ -589,7 +837,10 @@ export class OnboardingService {
         itNotifiedAt: new Date(),
         status: 'onboarded',
       },
-      include: { docs: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'it_notified',
@@ -607,12 +858,10 @@ export class OnboardingService {
   async medicalQueue(userId: string) {
     await this.requireMedicalRole(userId);
     const rows = await this.prisma.onboarding.findMany({
-      where: {
-        offerAcceptedAt: { not: null },
-        medicalStatus: 'pending',
-      },
+      where: { medicalStatus: 'pending', archivedAt: null, ...MEDICAL_DUE },
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
         candidate: {
           include: {
             requisition: {
@@ -626,7 +875,8 @@ export class OnboardingService {
           },
         },
       },
-      orderBy: { offerAcceptedAt: 'asc' },
+      // Was `offerAcceptedAt` — always null now that the offer follows medical.
+      orderBy: { createdAt: 'asc' },
     });
     return rows.map((r) => ({
       ...this.serialize(r, r.candidate.name, r.candidate.email),
@@ -651,16 +901,40 @@ export class OnboardingService {
       },
     });
     if (!ob) throw new NotFoundException('Onboarding not found');
-    await this.requireMedicalRole(userId);
 
-    if (dto.status === 'cleared') {
+    // A by-hand result is HR's to record as well as the medical team's: the
+    // exam happened on paper, often at a clinic that never touches this
+    // system, and waiting for someone to retype it into the structured form
+    // stalls the candidate. The structured form itself stays medical-only.
+    if (dto.manual) {
+      if (!(await this.hasMedicalRole(userId))) {
+        await this.requireRecruitmentAccess(
+          ob.candidate.requisition,
+          userId,
+          'record a medical result by hand',
+        );
+      }
+    } else {
+      await this.requireMedicalRole(userId);
+    }
+
+    // A by-hand result attests to an exam done on paper, so the structured
+    // form is not required — but a note is, because that note plus any
+    // uploaded report is then the only record of what was actually checked.
+    if (dto.manual && dto.status !== 'pending' && !dto.note?.trim()) {
+      throw new BadRequestException(
+        'Add a note describing the manual check — it is the only record of what was examined.',
+      );
+    }
+
+    if (dto.status === 'cleared' && !dto.manual) {
       const exam = ob.medicalExam;
       const missing = REQUIRED_MEDICAL_EXAM_FIELDS.filter(
         (f) => exam?.[f.key] === null || exam?.[f.key] === undefined,
       ).map((f) => f.label);
       if (missing.length) {
         throw new BadRequestException(
-          `Complete the medical exam form before clearing: ${missing.join(', ')}`,
+          `Complete the medical exam form before clearing, or record it as a manual check: ${missing.join(', ')}`,
         );
       }
     }
@@ -671,11 +945,15 @@ export class OnboardingService {
         medicalStatus: dto.status,
         medicalNote: dto.note ?? null,
         medicalClearedAt: dto.status === 'cleared' ? new Date() : null,
+        // A rejection recorded on paper is just as manual as a clearance, and
+        // the badge should say so either way.
+        medicalManual: dto.status === 'pending' ? false : Boolean(dto.manual),
+        medicalClearedById: dto.status === 'pending' ? null : userId,
         status: ob.status === 'offer_accepted' ? 'medical' : ob.status,
       },
     });
 
-    // Tell Corporate HR the candidate cleared (or didn't).
+    // Tell Head of Talent Acquisition the candidate cleared (or didn't).
     const hrIds = await this.permissions.recruitmentRecipients(
       ob.candidate.requisition.unitFactory,
       ob.candidate.requisition.recruiterId,
@@ -683,7 +961,9 @@ export class OnboardingService {
     await this.notifications.notifyMany(hrIds, {
       type: 'onboarding',
       title: `Medical ${dto.status}`,
-      message: `${ob.candidate.name} (${ob.candidate.requisition.designation}) medical is ${dto.status}.`,
+      message: `${ob.candidate.name} (${ob.candidate.requisition.designation}) medical is ${dto.status}${
+        dto.status !== 'pending' && dto.manual ? ' (recorded by hand)' : ''
+      }.`,
       link: `/requisitions/${ob.candidate.requisitionId}`,
     });
     this.notifications.broadcastChange(
@@ -697,7 +977,7 @@ export class OnboardingService {
   }
 
   /** Medical exam form data is readable by the medical team (who fill it in)
-   * and by Corporate HR / CHRO (who view the summary on the onboarding page). */
+   * and by Head of Talent Acquisition / CHRO (who view the summary on the onboarding page). */
   async getMedicalExam(onboardingId: string, userId: string) {
     const ob = await this.prisma.onboarding.findUnique({
       where: { id: onboardingId },
@@ -860,6 +1140,7 @@ export class OnboardingService {
       where: { token },
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
         candidate: {
           include: {
             requisition: {
@@ -934,7 +1215,7 @@ export class OnboardingService {
         data: { status: 'docs_submitted' },
       });
     }
-    // Nudge Corporate HR that a document came in.
+    // Nudge Head of Talent Acquisition that a document came in.
     const hrIds = await this.permissions.recruitmentRecipients(
       ob.candidate.requisition.unitFactory,
       ob.candidate.requisition.recruiterId,
@@ -968,7 +1249,7 @@ export class OnboardingService {
         where: { id: ob.id },
         data: { offerAcceptedAt: new Date(), status: 'offer_accepted' },
       });
-      // Offer accepted → notify Corporate HR + medical officers (triggers medical).
+      // Offer accepted → notify Head of Talent Acquisition + medical officers (triggers medical).
       const unit = ob.candidate.requisition.unitFactory;
       const hrIds = await this.permissions.recruitmentRecipients(
         unit,
@@ -1007,7 +1288,8 @@ export class OnboardingService {
   // --- helpers -------------------------------------------------------------
 
   private publicLink(token: string): string {
-    const origin = this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
+    const origin =
+      this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
     return `${origin}/onboarding/${token}`;
   }
 
@@ -1068,7 +1350,7 @@ export class OnboardingService {
 
   /**
    * Fire the AI cross-verification when all of an onboarding's documents have
-   * been extracted; alerts Corporate HR if real discrepancies are found.
+   * been extracted; alerts Head of Talent Acquisition if real discrepancies are found.
    */
   private async autoCrossCheck(onboardingId: string, reqId: string) {
     try {
@@ -1141,31 +1423,127 @@ export class OnboardingService {
   }
 
   /**
-   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Post-approval work is Head of Talent Acquisition / CHRO / super — plus the Corporate
    * Recruiter assigned to this requisition. Takes the requisition (not just
    * its unit) so the assigned recruiter is always considered.
    */
   private async requireRecruitmentAccess(
     req: { unitFactory: string; recruiterId: string | null },
     userId: string,
+    action = 'manage onboarding',
   ) {
     await this.permissions.requireRecruitmentAccess(
       userId,
       req.unitFactory,
       req.recruiterId,
-      'manage onboarding',
+      action,
     );
   }
 
+  /**
+   * Tell the medical team a candidate is now waiting on them.
+   *
+   * Nothing used to reach them at all — the queue was the only signal, and it
+   * was empty. Stamped so verifying five documents one at a time raises one
+   * alert rather than five.
+   */
+  private async notifyMedicalTeamIfDue(onboardingId: string): Promise<void> {
+    const ob = await this.prisma.onboarding.findFirst({
+      where: {
+        id: onboardingId,
+        medicalStatus: 'pending',
+        medicalNotifiedAt: null,
+        archivedAt: null,
+        ...MEDICAL_DUE,
+      },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) return;
+
+    const assignments = await this.prisma.roleAssignment.findMany({
+      where: { role: { key: { in: MEDICAL_ROLE_KEYS } } },
+      select: { userId: true },
+    });
+    const ids = [...new Set(assignments.map((a) => a.userId))];
+    // Stamp regardless: with no medical officer appointed there is nobody to
+    // tell, and re-checking on every document verified would achieve nothing.
+    await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: { medicalNotifiedAt: new Date() },
+    });
+    if (!ids.length) return;
+
+    await this.notifications.notifyMany(ids, {
+      type: 'onboarding',
+      title: 'Medical clearance needed',
+      message: `${ob.candidate.name} (${ob.candidate.requisition.designation}, ${ob.candidate.requisition.unitFactory}) is waiting for medical clearance.`,
+      link: '/medical',
+    });
+  }
+
+  /**
+   * Send (or re-send) the medical team's alert for one candidate.
+   *
+   * The automatic alert fires when the documents settle. This exists because
+   * that is a moment in time: a candidate whose documents settled before the
+   * alert existed, or whose medical officer was appointed afterwards, would
+   * otherwise wait forever with nobody told.
+   */
+  async alertMedicalTeam(onboardingId: string, userId: string) {
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('Onboarding not found');
+    await this.requireRecruitmentAccess(
+      ob.candidate.requisition,
+      userId,
+      'alert the medical team',
+    );
+    if (ob.medicalStatus !== 'pending') {
+      throw new BadRequestException(
+        "This candidate's medical result is already recorded.",
+      );
+    }
+
+    const assignments = await this.prisma.roleAssignment.findMany({
+      where: { role: { key: { in: MEDICAL_ROLE_KEYS } } },
+      select: { userId: true },
+    });
+    const ids = [...new Set(assignments.map((a) => a.userId))];
+    if (!ids.length) {
+      throw new BadRequestException(
+        'No medical officer is appointed yet — assign the Medical Officer role in Access Control first.',
+      );
+    }
+
+    await this.notifications.notifyMany(ids, {
+      type: 'onboarding',
+      title: 'Medical clearance needed',
+      message: `${ob.candidate.name} (${ob.candidate.requisition.designation}, ${ob.candidate.requisition.unitFactory}) is waiting for medical clearance.`,
+      link: '/medical',
+    });
+    await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: { medicalNotifiedAt: new Date() },
+    });
+    return { ok: true, notified: ids.length };
+  }
+
   /** Is the user a medical officer / team member anywhere (or a super user)? */
-  private async requireMedicalRole(userId: string) {
-    const ok =
+  private async hasMedicalRole(userId: string): Promise<boolean> {
+    return (
       (await this.permissions.isSuperUser(userId)) ||
       Boolean(
         await this.prisma.roleAssignment.findFirst({
           where: { userId, role: { key: { in: MEDICAL_ROLE_KEYS } } },
         }),
-      );
+      )
+    );
+  }
+
+  private async requireMedicalRole(userId: string) {
+    const ok = await this.hasMedicalRole(userId);
     if (!ok) {
       throw new ForbiddenException(
         'Only a medical officer / team member or super user can access medical clearance',
@@ -1217,7 +1595,8 @@ export class OnboardingService {
       speech: exam?.speech ?? '',
       extremities: exam?.extremities ?? '',
       noAnemiaJaundiceEtc: exam?.noAnemiaJaundiceEtc ?? null,
-      stableNormotensiveNondiabetic: exam?.stableNormotensiveNondiabetic ?? null,
+      stableNormotensiveNondiabetic:
+        exam?.stableNormotensiveNondiabetic ?? null,
       urineTestClear: exam?.urineTestClear ?? null,
       hepatitisBNegative: exam?.hepatitisBNegative ?? null,
       liverFunctionNormal: exam?.liverFunctionNormal ?? null,
@@ -1250,6 +1629,26 @@ export class OnboardingService {
       medicalStatus: ob.medicalStatus,
       medicalNote: ob.medicalNote ?? '',
       medicalClearedAt: ob.medicalClearedAt?.toISOString() ?? null,
+      // Whether the clearance came from a paper check rather than the
+      // structured report, and who put their name to it.
+      // Offer & appointment letters
+      offerFormat: ob.offerFormat,
+      offerRef: ob.offerRef,
+      offerJoiningDate: ob.offerJoiningDate
+        ? ob.offerJoiningDate.toISOString().slice(0, 10)
+        : null,
+      offerJobLocation: ob.offerJobLocation,
+      offerProbationMonths: ob.offerProbationMonths,
+      offerNoticeDays: ob.offerNoticeDays,
+      offerBenefits: ob.offerBenefits ?? [],
+      candidateAddress: ob.candidateAddress,
+      appointmentRef: ob.appointmentRef,
+      appointmentSentAt: ob.appointmentSentAt?.toISOString() ?? null,
+      medicalManual: ob.medicalManual,
+      medicalClearedByName: ob.medicalClearedBy?.name ?? null,
+      // So HR can see the request actually reached the medical team, rather
+      // than assuming it did.
+      medicalNotifiedAt: ob.medicalNotifiedAt?.toISOString() ?? null,
       hrVerifiedAt: ob.hrVerifiedAt?.toISOString() ?? null,
       crossCheck: ob.crossCheck as {
         verdict?: string;

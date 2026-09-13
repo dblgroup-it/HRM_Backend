@@ -244,8 +244,12 @@ ${JSON.stringify(ctx.requisitions)}`;
       pipeline[c.stage.toLowerCase()] = c._count._all;
 
     const [newReqs7d, newCands7d, acts7d] = await Promise.all([
-      this.prisma.requisition.count({ where: { createdAt: { gte: since }, deletedAt: null } }),
-      this.prisma.candidate.count({ where: { createdAt: { gte: since }, deletedAt: null } }),
+      this.prisma.requisition.count({
+        where: { createdAt: { gte: since }, deletedAt: null },
+      }),
+      this.prisma.candidate.count({
+        where: { createdAt: { gte: since }, deletedAt: null },
+      }),
       this.prisma.requisitionActivity.findMany({
         where: { createdAt: { gte: since } },
         select: { action: true },
@@ -381,7 +385,7 @@ ${JSON.stringify(ctx.requisitions)}`;
     });
     if (assignment) return;
     throw new ForbiddenException(
-      'HR insights are available to Corporate HR/CHRO, HR managers and super users.',
+      'HR insights are available to Head of Talent Acquisition/CHRO, HR managers and super users.',
     );
   }
 }
