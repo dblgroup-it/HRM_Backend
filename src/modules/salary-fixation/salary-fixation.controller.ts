@@ -5,9 +5,12 @@ import {
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
 import { SalaryFixationService } from './salary-fixation.service';
-import { UpsertSalaryFixationDto } from './dto/salary-fixation.dto';
+import {
+  UpsertSalaryFixationDto,
+  UpsertScreeningTestsDto,
+} from './dto/salary-fixation.dto';
 
-/** Phase 4 — post-interview salary fixation (Corporate HR / CHRO / super only). */
+/** Phase 4 — post-interview salary fixation (Head of Talent Acquisition / CHRO / super only). */
 @Controller()
 export class SalaryFixationController {
   constructor(private readonly salaryFixation: SalaryFixationService) {}
@@ -24,6 +27,24 @@ export class SalaryFixationController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.salaryFixation.upsert(id, user.id, dto);
+  }
+
+  /**
+   * Screening-test marks only — reachable by whoever ran the first interview
+   * as well as Head of Talent Acquisition, and returning no salary information.
+   */
+  @Get('candidates/:id/screening-tests')
+  getScreeningTests(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.salaryFixation.getScreeningTests(id, user.id);
+  }
+
+  @Patch('candidates/:id/screening-tests')
+  upsertScreeningTests(
+    @Param('id') id: string,
+    @Body() dto: UpsertScreeningTestsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.salaryFixation.upsertScreeningTests(id, user.id, dto);
   }
 
   @Post('candidates/:id/salary-fixation/offer')

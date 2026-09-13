@@ -15,6 +15,8 @@ import {
 import { InterviewService } from './interview.service';
 import {
   BulkScheduleInterviewDto,
+  DelegateInterviewsDto,
+  FirstInterviewOutcomeDto,
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
@@ -25,6 +27,60 @@ export class InterviewController {
   constructor(private readonly interviews: InterviewService) {}
 
   /** The current user's own interview assignments (committee marking). */
+  /** Hand shortlisted candidates to people who will run the first interview. */
+  @Post('interview-delegations')
+  delegate(@Body() dto: DelegateInterviewsDto, @CurrentUser() user: AuthUser) {
+    return this.interviews.delegate(
+      dto.candidateIds,
+      dto.delegateUserIds,
+      { id: user.id, name: user.name },
+      dto.note,
+      dto.tests,
+    );
+  }
+
+  /** Candidates handed to me, with whether a round exists yet. */
+  @Get('my-delegated-candidates')
+  myDelegated(@CurrentUser() user: AuthUser) {
+    return this.interviews.myDelegatedCandidates(user.id);
+  }
+
+  @Get('candidates/:candidateId/interview-delegations')
+  listDelegations(
+    @Param('candidateId') candidateId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.listDelegations(candidateId, user.id);
+  }
+
+  @Delete('candidates/:candidateId/interview-delegations/:delegateUserId')
+  revokeDelegation(
+    @Param('candidateId') candidateId: string,
+    @Param('delegateUserId') delegateUserId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.revokeDelegation(
+      candidateId,
+      delegateUserId,
+      user.id,
+    );
+  }
+
+  /** First-interview verdict — advance to final, or reject. */
+  @Post('candidates/:candidateId/first-interview-outcome')
+  firstInterviewOutcome(
+    @Param('candidateId') candidateId: string,
+    @Body() dto: FirstInterviewOutcomeDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.recordFirstInterviewOutcome(
+      candidateId,
+      dto.outcome,
+      { id: user.id, name: user.name },
+      dto.note,
+    );
+  }
+
   @Get('my-interviews')
   myInterviews(@CurrentUser() user: AuthUser) {
     return this.interviews.myInterviews(user.id);

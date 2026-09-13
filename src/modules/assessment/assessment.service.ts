@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -8,7 +7,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
-import { CRITERIA, TOTAL_MAX } from '../salary-fixation/salary-fixation.constants';
+import {
+  CRITERIA,
+  TOTAL_MAX,
+} from '../salary-fixation/salary-fixation.constants';
 import { AddCommitteeMemberDto } from './dto/assessment.dto';
 
 @Injectable()
@@ -20,7 +22,7 @@ export class AssessmentService {
   ) {}
 
   async getSetup(reqId: string, userId: string) {
-    const req = await this.loadReq(reqId, userId);
+    const req = await this.loadReq(reqId, userId, true);
     const committee = await this.prisma.committeeMember.findMany({
       where: { requisitionId: reqId },
       include: { user: { include: { employee: true } } },
@@ -72,8 +74,16 @@ export class AssessmentService {
     });
     const aiScoreByCandidate = new Map(
       salaryFixations
-        .filter((s) => s.aiTestTotal !== null && s.aiTestObtained !== null && s.aiTestTotal > 0)
-        .map((s) => [s.candidateId, round1((s.aiTestObtained! / s.aiTestTotal!) * 100)]),
+        .filter(
+          (s) =>
+            s.aiTestTotal !== null &&
+            s.aiTestObtained !== null &&
+            s.aiTestTotal > 0,
+        )
+        .map((s) => [
+          s.candidateId,
+          round1((s.aiTestObtained! / s.aiTestTotal!) * 100),
+        ]),
     );
 
     return candidates.map((c) => {
@@ -89,7 +99,8 @@ export class AssessmentService {
         interviewAvg = round1((sum / allEvals.length / TOTAL_MAX) * 100);
       }
 
-      const aiProficiencyScore: number | null = aiScoreByCandidate.get(c.id) ?? null;
+      const aiProficiencyScore: number | null =
+        aiScoreByCandidate.get(c.id) ?? null;
 
       // Simple average of non-null normalised components
       const components: number[] = [
@@ -133,7 +144,13 @@ export class AssessmentService {
       include: { requisition: true },
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(candidate.requisition, userId);
+    if (
+      !(await this.permissions.hasInterviewDelegation(userId, {
+        candidateId,
+      }))
+    ) {
+      await this.requireRecruitmentAccess(candidate.requisition, userId);
+    }
 
     const rounds = await this.prisma.interviewRound.findMany({
       where: { candidateId },
@@ -150,7 +167,9 @@ export class AssessmentService {
       );
     }
 
-    const criteriaLine = CRITERIA.map((c) => `${c.label} (max ${c.max})`).join(', ');
+    const criteriaLine = CRITERIA.map((c) => `${c.label} (max ${c.max})`).join(
+      ', ',
+    );
 
     const roundLines = rounds
       .filter((r) => r.evaluations.length > 0)
@@ -191,7 +210,7 @@ Evaluation criteria: ${criteriaLine}
 Panel evaluation data:
 ${roundLines}
 
-Write a concise professional summary (3–4 sentences) for Corporate HR covering:
+Write a concise professional summary (3–4 sentences) for Head of Talent Acquisition covering:
 1. Overall panel impression and score trend
 2. Key strengths observed by the panel
 3. Any concerns or disagreements between panelists (if present)
@@ -208,7 +227,7 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
     userId: string,
     dto: AddCommitteeMemberDto,
   ) {
-    await this.loadReq(reqId, userId);
+    await this.loadReq(reqId, userId, true);
     const member = await this.prisma.user.findUnique({
       where: { id: dto.memberUserId },
     });
@@ -237,24 +256,37 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
       include: { requisition: true },
     });
     if (!member) throw new NotFoundException('Committee member not found');
-    await this.requireRecruitmentAccess(member.requisition, userId);
+    // Arranging a committee includes undoing a wrong pick.
+    await this.loadReq(member.requisitionId, userId, true);
     await this.prisma.committeeMember.delete({ where: { id: memberId } });
     return this.getSetup(member.requisitionId, userId);
   }
 
   // --- internals ----------------------------------------------------------
 
-  private async loadReq(reqId: string, userId: string) {
+  private async loadReq(reqId: string, userId: string, allowDelegate = false) {
     const req = await this.prisma.requisition.findUnique({
       where: { id: reqId },
     });
     if (!req) throw new NotFoundException('Requisition not found');
+    // Someone handed candidates from this requisition to interview has to be
+    // able to see and build the committee — that is the job they were given.
+    // Off by default so the requisition-wide surfaces (scorecard across every
+    // candidate, deliberation notes) stay with Head of Talent Acquisition.
+    if (
+      allowDelegate &&
+      (await this.permissions.hasInterviewDelegation(userId, {
+        requisitionId: reqId,
+      }))
+    ) {
+      return req;
+    }
     await this.requireRecruitmentAccess(req, userId);
     return req;
   }
 
   /**
-   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Post-approval work is Head of Talent Acquisition / CHRO / super — plus the Corporate
    * Recruiter assigned to this requisition. Takes the requisition (not just
    * its unit) so the assigned recruiter is always considered.
    */

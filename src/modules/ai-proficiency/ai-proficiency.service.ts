@@ -46,11 +46,16 @@ export class AiProficiencyService {
 
   // --- global question bank (admin/HR) -------------------------------------
 
-  async getBank(userId: string, opts: { search?: string; grade?: string; page?: number }) {
+  async getBank(
+    userId: string,
+    opts: { search?: string; grade?: string; page?: number },
+  ) {
     await this.requireRecruitmentRole(userId);
     const page = Math.max(1, opts.page ?? 1);
     const where = {
-      ...(opts.search ? { prompt: { contains: opts.search, mode: 'insensitive' as const } } : {}),
+      ...(opts.search
+        ? { prompt: { contains: opts.search, mode: 'insensitive' as const } }
+        : {}),
       ...(opts.grade ? { grades: { has: opts.grade } } : {}),
     };
     const [total, questions] = await Promise.all([
@@ -64,7 +69,12 @@ export class AiProficiencyService {
     ]);
     return {
       questions: questions.map(serializeQuestion),
-      meta: { total, page, pageSize: PAGE_SIZE, totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)) },
+      meta: {
+        total,
+        page,
+        pageSize: PAGE_SIZE,
+        totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+      },
     };
   }
 
@@ -155,7 +165,11 @@ export class AiProficiencyService {
       orderBy: { createdAt: 'desc' },
     });
     if (attempts.length === 0) return null;
-    return serializeAttempt(attempts[0], this.publicLink(attempts[0].token), attempts.length);
+    return serializeAttempt(
+      attempts[0],
+      this.publicLink(attempts[0].token),
+      attempts.length,
+    );
   }
 
   /** Per-question breakdown of the latest submitted attempt — what HR sees
@@ -173,7 +187,13 @@ export class AiProficiencyService {
 
     const questions = await this.prisma.aiProficiencyQuestion.findMany({
       where: { id: { in: latest.questionIds } },
-      select: { id: true, prompt: true, options: true, marks: true, answer: true },
+      select: {
+        id: true,
+        prompt: true,
+        options: true,
+        marks: true,
+        answer: true,
+      },
     });
     const byId = new Map(questions.map((q) => [q.id, q]));
     const answers = (latest.answers as Record<string, string> | null) ?? {};
@@ -188,10 +208,14 @@ export class AiProficiencyService {
       maxScore: latest.maxScore,
       terminationReason: latest.terminationReason,
       violations:
-        (latest.violations as { leftAt: string; returnedAt: string | null; endedTest: boolean }[] | null) ?? [],
+        (latest.violations as
+          | { leftAt: string; returnedAt: string | null; endedTest: boolean }[]
+          | null) ?? [],
       questions: ordered.map((q) => {
         const given = answers[q.id] ?? null;
-        const isCorrect = given != null && given.trim().toLowerCase() === q.answer.trim().toLowerCase();
+        const isCorrect =
+          given != null &&
+          given.trim().toLowerCase() === q.answer.trim().toLowerCase();
         return {
           id: q.id,
           prompt: q.prompt,
@@ -262,7 +286,9 @@ export class AiProficiencyService {
           text: `Dear ${cand.name},\n\nPlease complete your online screening test using the link below:\n\n${link}\n\nBest regards,\nDBL Group Recruitment`,
         });
       } catch (err) {
-        this.logger.warn(`AI Proficiency Test email failed: ${(err as Error).message}`);
+        this.logger.warn(
+          `AI Proficiency Test email failed: ${(err as Error).message}`,
+        );
       }
     }
 
@@ -388,10 +414,16 @@ export class AiProficiencyService {
     }
 
     const existing =
-      (attempt.violations as { leftAt: string; returnedAt: string | null; endedTest: boolean }[] | null) ?? [];
+      (attempt.violations as
+        | { leftAt: string; returnedAt: string | null; endedTest: boolean }[]
+        | null) ?? [];
     const violations = [
       ...existing,
-      { leftAt: dto.leftAt, returnedAt: dto.returnedAt ?? null, endedTest: dto.endedTest },
+      {
+        leftAt: dto.leftAt,
+        returnedAt: dto.returnedAt ?? null,
+        endedTest: dto.endedTest,
+      },
     ];
 
     await this.prisma.aiProficiencyAttempt.update({
@@ -448,12 +480,20 @@ export class AiProficiencyService {
       },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.permissions.requireRecruitmentAccess(
-      userId,
-      cand.requisition.unitFactory,
-      cand.requisition.recruiterId,
-      'manage the AI Proficiency Test',
-    );
+    // Whoever was handed this candidate to interview sets their tests up too —
+    // otherwise the brief says "AI Proficiency required" and the person who
+    // has to act on it cannot issue the link. Scoped to their own candidates:
+    // the question bank itself stays Head of Talent Acquisition's (requireRecruitmentRole).
+    if (
+      !(await this.permissions.hasInterviewDelegation(userId, { candidateId }))
+    ) {
+      await this.permissions.requireRecruitmentAccess(
+        userId,
+        cand.requisition.unitFactory,
+        cand.requisition.recruiterId,
+        'manage the AI Proficiency Test',
+      );
+    }
     return cand;
   }
 
@@ -468,7 +508,7 @@ export class AiProficiencyService {
       );
     if (!ok) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can manage the question bank.',
+        'Only Head of Talent Acquisition, CHRO or a super user can manage the question bank.',
       );
     }
   }
@@ -528,9 +568,10 @@ function serializeAttempt(
     // alongside "4/4 marks" instead of leaving it read as 4 questions.
     questionCount: attempt.questionIds.length,
     timeLimitMinutes: attempt.timeLimitMinutes,
-    violations: (attempt.violations as
-      | { leftAt: string; returnedAt: string | null; endedTest: boolean }[]
-      | null) ?? [],
+    violations:
+      (attempt.violations as
+        | { leftAt: string; returnedAt: string | null; endedTest: boolean }[]
+        | null) ?? [],
     terminationReason: attempt.terminationReason,
     submittedAt: attempt.submittedAt?.toISOString() ?? null,
     createdAt: attempt.createdAt.toISOString(),

@@ -3,11 +3,64 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
+  Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+
+/**
+ * Which screening tests these candidates must sit, set at hand-off time.
+ *
+ * Head of Talent Acquisition decides what applies and out of how many marks; the interviewer
+ * they send to fills in what was scored. Obtained marks are deliberately not
+ * settable here — this is the brief, not the result.
+ */
+export class DelegationTestsDto {
+  @IsOptional() @IsBoolean() writtenTestEnabled?: boolean;
+  @IsOptional() @IsNumber() @Min(1) writtenTestTotal?: number | null;
+  @IsOptional() @IsBoolean() computerTestEnabled?: boolean;
+  @IsOptional() @IsNumber() @Min(1) computerTestTotal?: number | null;
+  @IsOptional() @IsBoolean() aiTestEnabled?: boolean;
+}
+
+/** Hand shortlisted candidates to the people who will interview them. */
+export class DelegateInterviewsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  candidateIds!: string[];
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  delegateUserIds!: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DelegationTestsDto)
+  tests?: DelegationTestsDto;
+}
+
+/** What the first-interview panel decided. */
+export class FirstInterviewOutcomeDto {
+  @IsIn(['final', 'rejected'])
+  outcome!: 'final' | 'rejected';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
 
 export class ScheduleInterviewDto {
   @IsIn(['first', 'second', 'final'])
