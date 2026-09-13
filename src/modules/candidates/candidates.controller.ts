@@ -69,14 +69,20 @@ export class CandidatesController {
 
   /** Talent Bank candidates the AI has automatically matched to this requisition. */
   @Get('requisitions/:reqId/talent-bank-matches')
-  talentBankMatches(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+  talentBankMatches(
+    @Param('reqId') reqId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.candidates.listTalentBankMatches(reqId, user.id);
   }
 
   /** Manual refresh alongside the automatic triggers. */
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('requisitions/:reqId/talent-bank-matches/sync')
-  rescanTalentBankMatches(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+  rescanTalentBankMatches(
+    @Param('reqId') reqId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.candidates.rescanTalentBankMatches(reqId, user.id);
   }
 
@@ -158,6 +164,18 @@ export class CandidatesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.candidates.update(id, dto, user.id);
+  }
+
+  /** The CV as structured data, a document link, or both. */
+  @Get('candidates/:id/cv')
+  cv(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.cv(id, user.id);
+  }
+
+  /** The whole lifecycle of this hire, oldest first — feeds the printed summary. */
+  @Get('candidates/:id/timeline')
+  timeline(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.timeline(id, user.id);
   }
 
   @Get('candidates/:id/apply-history')

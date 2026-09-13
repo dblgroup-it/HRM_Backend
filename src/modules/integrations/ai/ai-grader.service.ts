@@ -212,11 +212,7 @@ export interface DraftRequisitionResult {
   education: string;
   experience: string;
   others: string;
-  preferredSources: (
-    | 'job_advertisement'
-    | 'headhunting'
-    | 'cv_bank'
-  )[];
+  preferredSources: ('job_advertisement' | 'headhunting' | 'cv_bank')[];
   /** Short note on what the AI assumed / could not determine. */
   notes: string;
 }
@@ -482,7 +478,7 @@ Use clear field names that match the document, for example: Full Name, Document 
 
   /**
    * Generate a polished job role profile from a requisition's details. Used by
-   * Corporate HR's "generate role profile" step before a vacancy is posted.
+   * Head of Talent Acquisition's "generate role profile" step before a vacancy is posted.
    */
   async generateRoleProfile(
     input: RoleProfileInput,
@@ -519,7 +515,9 @@ Use clear field names that match the document, for example: Full Name, Document 
     return this.parseProficiencyQuestions(raw, input.count);
   }
 
-  private buildProficiencyQuestionsPrompt(i: GenerateProficiencyQuestionsInput): string {
+  private buildProficiencyQuestionsPrompt(
+    i: GenerateProficiencyQuestionsInput,
+  ): string {
     const level = GRADE_LEVEL_HINT[i.grade] ?? 'general staff';
     return `You are building an HR pre-interview screening test for DBL Group, a large Bangladeshi manufacturing conglomerate. Generate ${i.count} multiple-choice questions suitable for candidates at job grade ${i.grade} (${level}).
 
@@ -532,7 +530,10 @@ Respond with ONLY a compact JSON array and nothing else, in this exact shape:
 [{"prompt":"<question>","options":["<a>","<b>","<c>","<d>"],"answer":"<must exactly match one of the options>","marks":<1-3>}]`;
   }
 
-  private parseProficiencyQuestions(raw: string, count: number): GeneratedProficiencyQuestion[] {
+  private parseProficiencyQuestions(
+    raw: string,
+    count: number,
+  ): GeneratedProficiencyQuestion[] {
     try {
       const match = raw.match(/\[[\s\S]*\]/);
       const arr = JSON.parse(match ? match[0] : raw) as unknown[];
@@ -556,10 +557,15 @@ Respond with ONLY a compact JSON array and nothing else, in this exact shape:
             marks: Math.max(1, Math.min(3, Math.round(Number(o.marks)) || 1)),
           };
         })
-        .filter((q) => q.prompt && q.options.length >= 2 && q.options.includes(q.answer))
+        .filter(
+          (q) =>
+            q.prompt && q.options.length >= 2 && q.options.includes(q.answer),
+        )
         .slice(0, count);
     } catch {
-      this.logger.warn(`Could not parse AI proficiency questions: ${raw.slice(0, 120)}`);
+      this.logger.warn(
+        `Could not parse AI proficiency questions: ${raw.slice(0, 120)}`,
+      );
       return [];
     }
   }
@@ -793,7 +799,11 @@ Respond with ONLY a compact JSON object and nothing else:
     // no match is dropped and called out in `notes` — a value the form can't
     // offer would otherwise sit in a dropdown that has no such option.
     const norm = (v: string) =>
-      v.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+      v
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
     const snap = (value: string, options: string[]): string => {
       const target = norm(value);
       if (!target) return '';
@@ -966,8 +976,11 @@ Respond with ONLY a compact JSON object and nothing else:
    * Natural-language search over the Talent Bank. Scores each candidate for
    * relevance to the hiring query and returns ranked results.
    */
-  async searchTalentBank(input: TalentBankSearchInput): Promise<TalentBankSearchOutput> {
-    if (!this.isConfigured()) throw new ServiceUnavailableException('AI is not configured');
+  async searchTalentBank(
+    input: TalentBankSearchInput,
+  ): Promise<TalentBankSearchOutput> {
+    if (!this.isConfigured())
+      throw new ServiceUnavailableException('AI is not configured');
     const list = input.candidates
       .map(
         (c) =>
@@ -989,7 +1002,10 @@ Respond with ONLY a compact JSON object and nothing else:
       this.provider === 'claude'
         ? await this.callClaude(prompt, 900)
         : await this.callGemini(prompt);
-    return this.parseTalentBankSearch(raw, input.candidates.map((c) => c.id));
+    return this.parseTalentBankSearch(
+      raw,
+      input.candidates.map((c) => c.id),
+    );
   }
 
   /**
@@ -1001,7 +1017,8 @@ Respond with ONLY a compact JSON object and nothing else:
   async matchTalentBankToRequisition(
     input: TalentBankRequisitionMatchInput,
   ): Promise<TalentBankSearchOutput> {
-    if (!this.isConfigured()) throw new ServiceUnavailableException('AI is not configured');
+    if (!this.isConfigured())
+      throw new ServiceUnavailableException('AI is not configured');
     const list = input.candidates
       .map(
         (c) =>
@@ -1016,8 +1033,12 @@ Respond with ONLY a compact JSON object and nothing else:
       `Experience: ${r.experience}`,
       r.others ? `Other requirements: ${r.others}` : null,
       `Job description: ${r.jobDescription}`,
-      r.responsibilities?.length ? `Responsibilities: ${r.responsibilities.join('; ')}` : null,
-      r.requirements?.length ? `Requirements: ${r.requirements.join('; ')}` : null,
+      r.responsibilities?.length
+        ? `Responsibilities: ${r.responsibilities.join('; ')}`
+        : null,
+      r.requirements?.length
+        ? `Requirements: ${r.requirements.join('; ')}`
+        : null,
     ]
       .filter(Boolean)
       .join('\n');
@@ -1037,20 +1058,36 @@ Respond with ONLY a compact JSON object and nothing else:
       this.provider === 'claude'
         ? await this.callClaude(prompt, 900)
         : await this.callGemini(prompt);
-    return this.parseTalentBankSearch(raw, input.candidates.map((c) => c.id));
+    return this.parseTalentBankSearch(
+      raw,
+      input.candidates.map((c) => c.id),
+    );
   }
 
-  private parseTalentBankSearch(raw: string, validIds: string[]): TalentBankSearchOutput {
+  private parseTalentBankSearch(
+    raw: string,
+    validIds: string[],
+  ): TalentBankSearchOutput {
     try {
       const m = raw.match(/\{[\s\S]*\}/);
-      const obj = JSON.parse(m ? m[0] : raw) as { summary?: unknown; results?: unknown };
+      const obj = JSON.parse(m ? m[0] : raw) as {
+        summary?: unknown;
+        results?: unknown;
+      };
       const results = Array.isArray(obj.results)
         ? (obj.results as unknown[])
             .map((r) => {
-              const o = r as { id?: unknown; relevance?: unknown; reason?: unknown };
+              const o = r as {
+                id?: unknown;
+                relevance?: unknown;
+                reason?: unknown;
+              };
               return {
                 id: String(o.id ?? '').trim(),
-                relevance: Math.max(0, Math.min(100, Math.round(Number(o.relevance) || 0))),
+                relevance: Math.max(
+                  0,
+                  Math.min(100, Math.round(Number(o.relevance) || 0)),
+                ),
                 reason: String(o.reason ?? '').slice(0, 300),
               };
             })
@@ -1060,7 +1097,9 @@ Respond with ONLY a compact JSON object and nothing else:
         : [];
       return { results, summary: String(obj.summary ?? '').slice(0, 400) };
     } catch {
-      this.logger.warn(`Could not parse talent bank search: ${raw.slice(0, 120)}`);
+      this.logger.warn(
+        `Could not parse talent bank search: ${raw.slice(0, 120)}`,
+      );
       return { results: [], summary: '' };
     }
   }
@@ -1210,7 +1249,7 @@ Interviews:
 ${interviews}`;
       })
       .join('\n\n');
-    return `You are advising DBL Group's Corporate HR on a final hiring decision. Compare the finalists below for the role, strictly on the evidence given (CV screening, exam scores, interview panel marks and comments). Be balanced — name genuine risks, not filler. Use candidate names (not labels like C1) in the recommendation text.
+    return `You are advising DBL Group's Head of Talent Acquisition on a final hiring decision. Compare the finalists below for the role, strictly on the evidence given (CV screening, exam scores, interview panel marks and comments). Be balanced — name genuine risks, not filler. Use candidate names (not labels like C1) in the recommendation text.
 
 ROLE: ${i.role.designation} — ${i.role.department}
 Job description: ${i.role.jobDescription || '(none)'}
@@ -1391,7 +1430,7 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
   private async fetchJson<T>(url: string, init: RequestInit): Promise<T> {
     const controller = new AbortController();
     // Large grounding prompts (e.g. the requisition draft, which enumerates
-    // every unit/department a Corporate HR user can see) routinely take
+    // every unit/department a Head of Talent Acquisition user can see) routinely take
     // 15-20s and have been observed to occasionally spike well past 60s —
     // callers already budget up to 90s client-side, so match that here.
     const timer = setTimeout(() => controller.abort(), 85_000);

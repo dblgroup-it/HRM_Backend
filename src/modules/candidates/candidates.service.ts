@@ -20,6 +20,8 @@ import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
 import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { RecruitmentService } from './recruitment.service';
+import type { CvProfile } from './cv/cv-profile.types';
+import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import {
   BulkRejectDto,
   CandidateQueryDto,
@@ -37,7 +39,10 @@ export interface UploadedCv {
   size: number;
 }
 
-type CandidateRow = Prisma.CandidateGetPayload<object>;
+type CandidateRow = Prisma.CandidateGetPayload<object> & {
+  /** Present only where the query includes it; the name of whoever rejected. */
+  rejectedBy?: { name: string } | null;
+};
 
 interface ScreeningJob {
   done: number;
@@ -99,7 +104,10 @@ export class CandidatesService {
     const page = Math.max(1, query.page ?? 1);
     const pageSize = Math.min(200, Math.max(1, query.pageSize ?? 50));
 
-    const where: Prisma.CandidateWhereInput = { requisitionId: reqId, deletedAt: null };
+    const where: Prisma.CandidateWhereInput = {
+      requisitionId: reqId,
+      deletedAt: null,
+    };
     if (query.stage) where.stage = query.stage.toUpperCase() as CandidateStage;
     if (query.minScore != null) where.matchScore = { gte: query.minScore };
     if (query.search?.trim()) {
@@ -124,7 +132,11 @@ export class CandidatesService {
         orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: { onboarding: { select: { status: true } } },
+        include: {
+          onboarding: { select: { status: true } },
+          // So the row can say who turned them down, not just that it happened.
+          rejectedBy: { select: { name: true } },
+        },
       }),
       this.prisma.candidate.count({ where }),
     ]);
@@ -246,7 +258,10 @@ export class CandidatesService {
   ) {
     const req = await this.requireReq(reqId, userId);
 
-    const where: Prisma.CandidateWhereInput = { requisitionId: reqId, deletedAt: null };
+    const where: Prisma.CandidateWhereInput = {
+      requisitionId: reqId,
+      deletedAt: null,
+    };
     if (query.stage) where.stage = query.stage.toUpperCase() as CandidateStage;
     if (query.minScore != null) where.matchScore = { gte: query.minScore };
     if (query.search?.trim()) {
@@ -404,6 +419,270 @@ export class CandidatesService {
     return { rejected: result.count };
   }
 
+  /**
+   * The candidate's CV in the system's common format.
+   *
+   * `profile` is present when the source sent structured data (Bdjobs today);
+   * `url` when there is a document. A candidate may have either, both or —
+   * for a manually entered name — neither, so the caller is told which.
+   *
+   * Readable by whoever may run the recruitment, and by an interviewer the
+   * candidate has been delegated to: reading a CV before an interview is the
+   * whole point of the delegation.
+   */
+  async cv(id: string, userId: string) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: { requisition: true },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    if (
+      !(await this.permissions.hasInterviewDelegation(userId, {
+        candidateId: id,
+      }))
+    ) {
+      await this.requireRecruitmentAccess(cand.requisition, userId);
+    }
+
+    return {
+      candidateId: cand.id,
+      name: cand.name,
+      url: cand.cvUrl,
+      capturedAt: cand.cvProfileAt?.toISOString() ?? null,
+      profile: (cand.cvProfile as unknown as CvProfile | null) ?? null,
+    };
+  }
+
+  /**
+   * Everything that has happened to this hire, oldest first.
+   *
+   * Assembled rather than stored: the record of a hire is spread across the
+   * requisition's activity log, its sign-off chain, the interviews, the board
+   * sheet and the onboarding row, and no single table knows the whole story.
+   * Pulling it together here means the printed summary — which goes in a
+   * personnel file — says the same thing whoever prints it and whenever.
+   */
+  async timeline(id: string, userId: string): Promise<TimelineEvent[]> {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: {
+        requisition: {
+          include: {
+            approvalSteps: { orderBy: { orderIndex: 'asc' } },
+            activities: { orderBy: { createdAt: 'asc' } },
+          },
+        },
+        rejectedBy: { select: { name: true } },
+        interviews: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            panelists: { include: { user: { select: { name: true } } } },
+            evaluations: {
+              select: {
+                submittedAt: true,
+                total: true,
+                evaluator: { select: { name: true } },
+              },
+            },
+          },
+        },
+        boardApprovals: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            requestedBy: { select: { name: true } },
+            hrApprovedBy: { select: { name: true } },
+            votes: {
+              orderBy: { respondedAt: 'asc' },
+              include: { user: { select: { name: true } } },
+            },
+          },
+        },
+        onboarding: {
+          include: {
+            docs: { orderBy: { createdAt: 'asc' } },
+            medicalClearedBy: { select: { name: true } },
+          },
+        },
+        salaryFixation: true,
+      },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(cand.requisition, userId);
+
+    const e: TimelineEvent[] = [];
+    const req = cand.requisition;
+
+    // ── The vacancy ──────────────────────────────────────────────────
+    pushIf(e, req.createdAt, {
+      phase: 'requisition',
+      title: `Requisition ${req.code} raised`,
+      detail: `${req.designation} · ${req.department} · ${req.unitFactory}`,
+      actor: req.raisedBy ?? undefined,
+    });
+    req.approvalSteps
+      .filter((st) => st.actedAt)
+      .forEach((st) => {
+        pushIf(e, st.actedAt, {
+          phase: 'requisition',
+          title: `${st.status === 'APPROVED' ? 'Approved' : st.status.toLowerCase()} — ${st.title}`,
+          detail: st.note || undefined,
+          actor: st.assignee || undefined,
+        });
+      });
+    req.activities
+      // A note is the human sentence someone wrote; without one the row only
+      // repeats the sign-off step above it as a bare verb ("approved").
+      .filter((a) => a.note.trim())
+      .forEach((a) => {
+        pushIf(e, a.createdAt, {
+          phase: 'requisition',
+          title: a.note,
+          actor: a.actor,
+        });
+      });
+
+    // ── The candidate ────────────────────────────────────────────────
+    pushIf(e, cand.createdAt, {
+      phase: 'recruitment',
+      title: 'Applied',
+      detail: `Source: ${cand.source}`,
+    });
+    pushIf(e, cand.screenedAt, {
+      phase: 'recruitment',
+      title: 'CV screened',
+      // The score only — the AI's reasoning is printed once, in the candidate
+      // block, and repeating a paragraph here would swamp the history.
+      detail:
+        cand.matchScore != null ? `AI match ${cand.matchScore}/100` : undefined,
+    });
+    pushIf(e, cand.rejectedAt, {
+      phase: 'recruitment',
+      title: `Rejected${cand.rejectionStage ? ` at ${cand.rejectionStage.replace(/_/g, ' ')}` : ''}`,
+      detail: cand.rejectionReason ?? undefined,
+      actor: cand.rejectedBy?.name,
+    });
+
+    // ── Interviews ───────────────────────────────────────────────────
+    cand.interviews.forEach((r) => {
+      const panel = r.panelists.map((p) => p.user.name).join(', ');
+      pushIf(e, r.scheduledAt ?? r.createdAt, {
+        phase: 'assessment',
+        title: `${r.kind.toLowerCase()} interview ${r.status.toLowerCase()}`,
+        detail: [
+          r.mode.toLowerCase(),
+          r.location || null,
+          panel ? `panel: ${panel}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      });
+      r.evaluations.forEach((v) => {
+        pushIf(e, v.submittedAt, {
+          phase: 'assessment',
+          title: 'Evaluation submitted',
+          detail: `score ${v.total}`,
+          actor: v.evaluator.name,
+        });
+      });
+    });
+
+    // ── Board approval ───────────────────────────────────────────────
+    cand.boardApprovals.forEach((b) => {
+      pushIf(e, b.createdAt, {
+        phase: 'approval',
+        title: 'Sent for hiring approval',
+        actor: b.requestedBy.name,
+      });
+      b.votes
+        .filter((v) => v.respondedAt)
+        .forEach((v) => {
+          pushIf(e, v.respondedAt, {
+            phase: 'approval',
+            title: `${v.stage.toUpperCase()} ${v.status}`,
+            detail: v.notes || undefined,
+            actor: v.user.name,
+          });
+        });
+      pushIf(e, b.hrApprovedAt, {
+        phase: 'approval',
+        title: "Approved on the board's behalf by HR",
+        detail: b.hrApprovalNote ?? undefined,
+        actor: b.hrApprovedBy?.name,
+      });
+      pushIf(e, b.rejectedAt, {
+        phase: 'approval',
+        title: 'Hiring approval declined',
+        detail: b.rejectedReason ?? undefined,
+      });
+    });
+
+    // ── Onboarding ───────────────────────────────────────────────────
+    const ob = cand.onboarding;
+    if (ob) {
+      pushIf(e, ob.createdAt, {
+        phase: 'onboarding',
+        title: 'Onboarding started',
+      });
+      ob.docs.forEach((doc) => {
+        pushIf(e, doc.createdAt, {
+          phase: 'onboarding',
+          title: `Document submitted — ${doc.label}`,
+          detail: doc.status,
+        });
+      });
+      pushIf(e, ob.docsSkippedAt, {
+        phase: 'onboarding',
+        title: 'Document collection skipped',
+      });
+      pushIf(e, ob.verificationSkippedAt, {
+        phase: 'onboarding',
+        title: 'Document verification skipped',
+      });
+      pushIf(e, ob.crossCheckedAt, {
+        phase: 'onboarding',
+        title: 'AI cross-verification run',
+      });
+      pushIf(e, ob.medicalNotifiedAt, {
+        phase: 'onboarding',
+        title: 'Medical team alerted',
+      });
+      pushIf(e, ob.medicalClearedAt, {
+        phase: 'onboarding',
+        title: `Medical ${ob.medicalStatus}${ob.medicalManual ? ' (recorded by hand)' : ''}`,
+        detail: ob.medicalNote ?? undefined,
+        actor: ob.medicalClearedBy?.name,
+      });
+      pushIf(e, ob.offerSentAt, {
+        phase: 'onboarding',
+        title: 'Offer letter sent',
+      });
+      pushIf(e, ob.offerAcceptedAt, {
+        phase: 'onboarding',
+        title: 'Offer accepted',
+      });
+      pushIf(e, ob.appointmentSentAt, {
+        phase: 'onboarding',
+        title: 'Appointment letter issued',
+      });
+      pushIf(e, ob.hrVerifiedAt, {
+        phase: 'onboarding',
+        title: 'Final HR verification',
+      });
+      pushIf(e, ob.itNotifiedAt, {
+        phase: 'onboarding',
+        title: 'IT provisioning requested',
+        detail:
+          [ob.itEmail, ob.itAssetId].filter(Boolean).join(' · ') || undefined,
+      });
+      pushIf(e, ob.archivedAt, {
+        phase: 'onboarding',
+        title: 'Documents archived',
+      });
+    }
+
+    return sortTimeline(e);
+  }
+
   async applyHistory(id: string, userId: string) {
     const cand = await this.prisma.candidate.findUnique({
       where: { id },
@@ -498,14 +777,21 @@ export class CandidatesService {
       where: { talentPool: true, deletedAt: null, onboarding: null },
       include: {
         requisition: {
-          select: { id: true, code: true, designation: true, unitFactory: true, department: true },
+          select: {
+            id: true,
+            code: true,
+            designation: true,
+            unitFactory: true,
+            department: true,
+          },
         },
       },
       orderBy: { matchScore: 'desc' },
       take: 120,
     });
 
-    if (rows.length === 0) return { results: [], summary: 'Talent Bank is empty.', query };
+    if (rows.length === 0)
+      return { results: [], summary: 'Talent Bank is empty.', query };
 
     const aiResult = await this.ai.searchTalentBank({
       query,
@@ -719,7 +1005,8 @@ export class CandidatesService {
     if (dto.email !== undefined) data.email = dto.email;
     if (dto.phone !== undefined) data.phone = dto.phone;
     if (dto.notes !== undefined) data.notes = dto.notes;
-    if (dto.salaryExpectation !== undefined) data.salaryExpectation = dto.salaryExpectation;
+    if (dto.salaryExpectation !== undefined)
+      data.salaryExpectation = dto.salaryExpectation;
     if (dto.talentPool !== undefined) {
       data.talentPool = dto.talentPool;
       if (dto.talentPool && !cand.talentPool) {
@@ -841,7 +1128,10 @@ export class CandidatesService {
       }
     }
 
-    await this.prisma.candidate.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.prisma.candidate.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'removed',
     });
@@ -1005,7 +1295,7 @@ export class CandidatesService {
   /**
    * AI side-by-side comparison of a requisition's finalists (interview / final /
    * selected candidates) using CV screening, exam scores and panel marks. Purely
-   * advisory output for Corporate HR's final decision — nothing is persisted.
+   * advisory output for Head of Talent Acquisition's final decision — nothing is persisted.
    */
   async compareFinalists(reqId: string, userId: string) {
     const req = await this.requireReq(reqId, userId);
@@ -1046,10 +1336,22 @@ export class CandidatesService {
         s.candidateId,
         [
           ...(s.writtenTestTotal !== null && s.writtenTestObtained !== null
-            ? [{ type: 'Written Test', score: s.writtenTestObtained, maxScore: s.writtenTestTotal }]
+            ? [
+                {
+                  type: 'Written Test',
+                  score: s.writtenTestObtained,
+                  maxScore: s.writtenTestTotal,
+                },
+              ]
             : []),
           ...(s.aiTestTotal !== null && s.aiTestObtained !== null
-            ? [{ type: 'AI Proficiency Test', score: s.aiTestObtained, maxScore: s.aiTestTotal }]
+            ? [
+                {
+                  type: 'AI Proficiency Test',
+                  score: s.aiTestObtained,
+                  maxScore: s.aiTestTotal,
+                },
+              ]
             : []),
         ],
       ]),
@@ -1134,7 +1436,10 @@ export class CandidatesService {
     const data: Prisma.CandidateUpdateInput = {
       matchScore: result.score,
       matchSummary: result.summary || null,
-      matchDetails: result.criteria.length > 0 ? (result.criteria as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+      matchDetails:
+        result.criteria.length > 0
+          ? (result.criteria as unknown as Prisma.InputJsonValue)
+          : Prisma.DbNull,
       screenedAt: new Date(),
     };
     // Backfill contact details the AI found in the CV — only when we don't
@@ -1259,7 +1564,10 @@ export class CandidatesService {
       throw new BadRequestException('Please provide a valid email address');
     }
     const candidates = await this.prisma.candidate.findMany({
-      where: { email: { equals: email.trim(), mode: 'insensitive' }, deletedAt: null },
+      where: {
+        email: { equals: email.trim(), mode: 'insensitive' },
+        deletedAt: null,
+      },
       include: {
         requisition: {
           select: { code: true, designation: true, unitFactory: true },
@@ -1360,12 +1668,12 @@ export class CandidatesService {
   }
 
   /**
-   * Recruitment (the CV pipeline) is restricted to Corporate HR, CHRO and super
+   * Recruitment (the CV pipeline) is restricted to Head of Talent Acquisition, CHRO and super
    * users — both viewing and managing. Department Head / Factory HR / SBU Head /
    * Medical never see it.
    */
   /**
-   * Post-approval work is Corporate HR / CHRO / super — plus the Corporate
+   * Post-approval work is Head of Talent Acquisition / CHRO / super — plus the Corporate
    * Recruiter assigned to this requisition. Takes the requisition (not just
    * its unit) so the assigned recruiter is always considered.
    */
@@ -1405,11 +1713,13 @@ export class CandidatesService {
       );
     }
 
-    const req = await this.prisma.requisition.findUnique({ where: { id: requisitionId } });
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: requisitionId },
+    });
     if (!req) throw new NotFoundException('Requisition not found');
     // Reading the bank is global, but adding someone to a pipeline is a write
     // to that requisition — a recruiter may only source into requisitions they
-    // are actually running. Corporate HR / CHRO / super are unaffected.
+    // are actually running. Head of Talent Acquisition / CHRO / super are unaffected.
     await this.permissions.requireRecruitmentAccess(
       userId,
       req.unitFactory,
@@ -1417,7 +1727,9 @@ export class CandidatesService {
       'add a Talent Bank candidate to this requisition',
     );
     if (!['APPROVED', 'POSTED'].includes(req.status)) {
-      throw new BadRequestException('Target requisition must be approved or posted');
+      throw new BadRequestException(
+        'Target requisition must be approved or posted',
+      );
     }
 
     if (source.email && !force) {
@@ -1427,7 +1739,10 @@ export class CandidatesService {
       const dup = await this.prisma.candidate.findFirst({
         where: { requisitionId, email: source.email, deletedAt: null },
       });
-      if (dup) throw new ConflictException('A candidate with this email is already in that pipeline');
+      if (dup)
+        throw new ConflictException(
+          'A candidate with this email is already in that pipeline',
+        );
     }
 
     const copy = await this.prisma.candidate.create({
@@ -1449,7 +1764,7 @@ export class CandidatesService {
 
   /** Global recruitment role check (for cross-requisition views like talent pool). */
   /**
-   * Talent Bank access — Corporate HR, CHRO, super users and Corporate
+   * Talent Bank access — Head of Talent Acquisition, CHRO, super users and Corporate
    * Recruiters.
    *
    * The bank is a shared pool by design: a recruiter sourcing for their own
@@ -1472,7 +1787,7 @@ export class CandidatesService {
       );
     if (!ok) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO, a Corporate Recruiter or a super user can view the Talent Bank',
+        'Only Head of Talent Acquisition, CHRO, a Corporate Recruiter or a super user can view the Talent Bank',
       );
     }
   }
@@ -1488,7 +1803,7 @@ export class CandidatesService {
       );
     if (!ok) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can perform this action',
+        'Only Head of Talent Acquisition, CHRO or a super user can perform this action',
       );
     }
   }
@@ -1509,7 +1824,13 @@ export class CandidatesService {
         candidate: {
           include: {
             requisition: {
-              select: { id: true, code: true, designation: true, unitFactory: true, department: true },
+              select: {
+                id: true,
+                code: true,
+                designation: true,
+                unitFactory: true,
+                department: true,
+              },
             },
           },
         },
@@ -1603,8 +1924,12 @@ export class CandidatesService {
    * replaces its existing rows with the freshly computed set (an empty
    * result means "no matches right now", not "leave stale rows").
    */
-  private async syncTalentBankMatchesForRequisition(reqId: string): Promise<void> {
-    const req = await this.prisma.requisition.findUnique({ where: { id: reqId } });
+  private async syncTalentBankMatchesForRequisition(
+    reqId: string,
+  ): Promise<void> {
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+    });
     if (!req || !['APPROVED', 'POSTED'].includes(req.status)) return;
     if (!this.ai.isConfigured()) return;
 
@@ -1616,7 +1941,9 @@ export class CandidatesService {
         requisitionId: { not: reqId },
       },
       include: {
-        requisition: { select: { designation: true, unitFactory: true, department: true } },
+        requisition: {
+          select: { designation: true, unitFactory: true, department: true },
+        },
       },
       orderBy: { matchScore: 'desc' },
       take: 120,
@@ -1634,12 +1961,17 @@ export class CandidatesService {
     const existingIds = new Set(existing.map((m) => m.candidateId));
 
     if (pool.length === 0) {
-      await this.prisma.talentBankMatch.deleteMany({ where: { requisitionId: reqId } });
+      await this.prisma.talentBankMatch.deleteMany({
+        where: { requisitionId: reqId },
+      });
       return;
     }
 
     const rp =
-      (req.roleProfile as { responsibilities?: string[]; requirements?: string[] } | null) ?? null;
+      (req.roleProfile as {
+        responsibilities?: string[];
+        requirements?: string[];
+      } | null) ?? null;
     const result = await this.ai.matchTalentBankToRequisition({
       requisition: {
         designation: req.designation,
@@ -1648,8 +1980,12 @@ export class CandidatesService {
         experience: req.experience,
         others: req.others,
         placeOfPosting: req.placeOfPosting,
-        responsibilities: Array.isArray(rp?.responsibilities) ? rp?.responsibilities : undefined,
-        requirements: Array.isArray(rp?.requirements) ? rp?.requirements : undefined,
+        responsibilities: Array.isArray(rp?.responsibilities)
+          ? rp?.responsibilities
+          : undefined,
+        requirements: Array.isArray(rp?.requirements)
+          ? rp?.requirements
+          : undefined,
       },
       candidates: pool.map((c) => ({
         id: c.id,
@@ -1669,8 +2005,18 @@ export class CandidatesService {
       }),
       ...result.results.map((r) =>
         this.prisma.talentBankMatch.upsert({
-          where: { requisitionId_candidateId: { requisitionId: reqId, candidateId: r.id } },
-          create: { requisitionId: reqId, candidateId: r.id, relevance: r.relevance, reason: r.reason },
+          where: {
+            requisitionId_candidateId: {
+              requisitionId: reqId,
+              candidateId: r.id,
+            },
+          },
+          create: {
+            requisitionId: reqId,
+            candidateId: r.id,
+            relevance: r.relevance,
+            reason: r.reason,
+          },
           update: { relevance: r.relevance, reason: r.reason },
         }),
       ),
@@ -1688,7 +2034,9 @@ export class CandidatesService {
         message: `${newlyMatched.length} Talent Bank candidate${newlyMatched.length > 1 ? 's' : ''} matched for ${req.code} · ${req.designation}.`,
         link: `/requisitions/${reqId}`,
       });
-      this.notifications.broadcastChange('candidate', reqId, { action: 'talent_bank_matched' });
+      this.notifications.broadcastChange('candidate', reqId, {
+        action: 'talent_bank_matched',
+      });
     }
   }
 
@@ -1712,7 +2060,12 @@ export class CandidatesService {
     const ops: Prisma.PrismaPromise<unknown>[] = [
       this.prisma.candidate.update({
         where: { id },
-        data: { isRedFlagged: true, redFlagReason: reason, redFlaggedAt: new Date(), redFlaggedById: userId },
+        data: {
+          isRedFlagged: true,
+          redFlagReason: reason,
+          redFlaggedAt: new Date(),
+          redFlaggedById: userId,
+        },
       }),
     ];
     if (normEmail) {
@@ -1751,7 +2104,12 @@ export class CandidatesService {
 
     await this.prisma.candidate.update({
       where: { id },
-      data: { isRedFlagged: false, redFlagReason: null, redFlaggedAt: null, redFlaggedById: null },
+      data: {
+        isRedFlagged: false,
+        redFlagReason: null,
+        redFlaggedAt: null,
+        redFlaggedById: null,
+      },
     });
     return { ok: true };
   }
@@ -1881,6 +2239,12 @@ function serializeCandidate(c: CandidateRow) {
     isRedFlagged: c.isRedFlagged,
     redFlagReason: c.redFlagReason ?? null,
     redFlaggedAt: c.redFlaggedAt ? c.redFlaggedAt.toISOString() : null,
+    // Where a rejection happened, so a factory interviewer's call after the
+    // first interview reads differently from a CV screening rejection.
+    rejectedAt: c.rejectedAt ? c.rejectedAt.toISOString() : null,
+    rejectionStage: c.rejectionStage ?? null,
+    rejectionReason: c.rejectionReason ?? null,
+    rejectedByName: c.rejectedBy?.name ?? null,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   };

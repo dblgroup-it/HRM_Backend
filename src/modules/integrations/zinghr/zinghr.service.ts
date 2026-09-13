@@ -7,6 +7,11 @@ import * as bcrypt from 'bcryptjs';
 import { Prisma, SyncLog } from '@prisma/client';
 
 import { PrismaService } from '../../../prisma/prisma.service';
+import { AuditService } from '../../audit/audit.service';
+import {
+  runWithContext,
+  systemContext,
+} from '../../../common/context/request-context';
 import { normalizeUnitName } from '../../../common/util/normalize-unit';
 import { ZING_ATTR, ZingHrEmployee, ZingHrResponse } from './zinghr.types';
 
@@ -25,6 +30,7 @@ export class ZingHrService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly scheduler: SchedulerRegistry,
+    private readonly audit: AuditService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -105,7 +111,19 @@ export class ZingHrService implements OnModuleInit {
 
   // --- worker -------------------------------------------------------------
 
+  /**
+   * The sync writes thousands of User and Employee rows per run, so it runs
+   * inside a system context with database-level auditing switched off and
+   * accounts for itself with a single summary entry at the end.
+   */
   private async runSync(logId: string): Promise<void> {
+    return runWithContext(
+      { ...systemContext('ZingHR sync'), suppressDbAudit: true },
+      () => this.runSyncInner(logId),
+    );
+  }
+
+  private async runSyncInner(logId: string): Promise<void> {
     const prefix = this.config.get<string>('zinghr.employeeCodePrefix', '151');
     const startedMs = Date.now();
 
@@ -207,11 +225,32 @@ export class ZingHrService implements OnModuleInit {
         `✅ Done in ${secs}s — inserted ${inserted}, updated ${updated}, skipped ${skipped}, failed ${failed}`,
       );
       await persist({ status: 'success', finishedAt: new Date() });
+      // One audit row for the whole run. Logging each employee write would add
+      // ~4,400 rows a night and bury the ~50 things a person actually did.
+      await this.audit.record({
+        action: 'synced',
+        entity: 'Employee',
+        summary: `ZingHR sync — ${processed} read, ${inserted} created, ${updated} updated, ${skipped} skipped${failed ? `, ${failed} failed` : ''}`,
+        changes: [
+          { field: 'read', from: null, to: processed },
+          { field: 'created', from: null, to: inserted },
+          { field: 'updated', from: null, to: updated },
+          { field: 'skipped', from: null, to: skipped },
+          { field: 'failed', from: null, to: failed },
+        ],
+        source: 'system',
+      });
       this.logger.log(
         `ZingHR sync done — inserted: ${inserted}, updated: ${updated}, skipped: ${skipped}, failed: ${failed}`,
       );
     } catch (e) {
       log(`❌ Sync failed: ${(e as Error).message}`);
+      await this.audit.record({
+        action: 'sync failed',
+        entity: 'Employee',
+        summary: `ZingHR sync failed — ${(e as Error).message}`,
+        source: 'system',
+      });
       await persist({
         status: 'failed',
         message: (e as Error).message,

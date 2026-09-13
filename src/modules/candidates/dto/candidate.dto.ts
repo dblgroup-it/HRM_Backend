@@ -172,7 +172,9 @@ export class CopyToRequisitionDto {
   // ANY non-empty string (including the literal "false") to `true` via `Boolean(value)`,
   // which would silently invert this flag — so convert it ourselves before @IsBoolean sees it.
   @IsOptional()
-  @Transform(({ value }) => (value === undefined ? value : value === true || value === 'true'))
+  @Transform(({ value }) =>
+    value === undefined ? value : value === true || value === 'true',
+  )
   @IsBoolean()
   force?: boolean;
 }
