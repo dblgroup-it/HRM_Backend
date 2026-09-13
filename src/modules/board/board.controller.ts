@@ -11,7 +11,10 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 
-import { AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../../common/decorators/current-user.decorator';
 import { DOC_UPLOAD } from '../../common/upload/file-upload';
 import { BoardService, type UploadedAttachment } from './board.service';
 import {
@@ -20,6 +23,8 @@ import {
   HrApproveDto,
   SendBoardApprovalDto,
   UpdateBoardGroupDto,
+  SendSheetDto,
+  UpdateSheetRowDto,
 } from './dto/board.dto';
 
 @Controller()
@@ -87,6 +92,51 @@ export class BoardController {
   @Get('candidates/:id/board-approval')
   getApprovalStatus(@Param('id') candidateId: string) {
     return this.board.getApprovalStatus(candidateId);
+  }
+
+  /** Everything waiting on this Head of Talent Acquisition, ready to be put onto a sheet. */
+  @Get('board-approvals/inbox')
+  hrInbox(@CurrentUser() user: AuthUser) {
+    return this.board.hrInbox(user.id);
+  }
+
+  /** Sheets this user has sent, with where each one has got to. */
+  @Get('board-sheets')
+  listSheets(@CurrentUser() user: AuthUser) {
+    return this.board.listSheets(user.id);
+  }
+
+  /** Send the sheet's current stage out again, to whoever still owes a reply. */
+  @Post('board-sheets/:id/resend')
+  resendSheet(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.board.resendSheet(id, user.id);
+  }
+
+  /** Correct a row's CV-derived columns before the sheet is sent. */
+  @Patch('board-approvals/:id/sheet-row')
+  updateSheetRow(
+    @Param('id') id: string,
+    @Body() dto: UpdateSheetRowDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.board.updateSheetRow(id, user.id, dto);
+  }
+
+  /** Who can sign a sheet: CHRO holders and the configured board groups. */
+  @Get('board-sheets/approvers')
+  sheetApprovers(@CurrentUser() user: AuthUser) {
+    return this.board.sheetApprovers(user.id);
+  }
+
+  /** Send one or many candidates onward as a single sheet. */
+  @Post('board-sheets')
+  sendSheet(@Body() dto: SendSheetDto, @CurrentUser() user: AuthUser) {
+    return this.board.sendSheet(
+      dto.approvalIds,
+      dto.chroId,
+      dto.boardMemberIds,
+      user.id,
+    );
   }
 
   @Post('candidates/:id/board-approval/hr-approve')
