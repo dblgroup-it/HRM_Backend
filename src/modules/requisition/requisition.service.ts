@@ -107,7 +107,7 @@ export class RequisitionService {
     }
 
     // This raiser's own chain for this unit — an ordered list of named
-    // approvers with a Corporate HR step appended — snapshotted here so later
+    // approvers with a Head of Talent Acquisition step appended — snapshotted here so later
     // edits to the path never reroute a requisition already in flight.
     // Throws a clear error when this raiser has no path configured here.
     const steps = await this.approvalPaths.buildStepsForRaiser(
@@ -231,7 +231,6 @@ export class RequisitionService {
     });
   }
 
-
   /**
    * Requisitioner sends a clarified requisition back into the chain.
    *
@@ -285,7 +284,7 @@ export class RequisitionService {
   /**
    * What this user is allowed to see in the requisition list.
    *
-   * Corporate HR / CHRO / super see everything. Everyone else sees only their
+   * Head of Talent Acquisition / CHRO / super see everything. Everyone else sees only their
    * own business — requisitions they raised, ones they're named on the chain
    * of, or ones they've been assigned to recruit. Holding a unit-scoped role
    * does NOT expose the whole unit's requisitions: a raiser shouldn't see a
@@ -330,10 +329,25 @@ export class RequisitionService {
           ? [
               {
                 OR: [
-                  { designation: { contains: search, mode: 'insensitive' as const } },
+                  {
+                    designation: {
+                      contains: search,
+                      mode: 'insensitive' as const,
+                    },
+                  },
                   { code: { contains: search, mode: 'insensitive' as const } },
-                  { department: { contains: search, mode: 'insensitive' as const } },
-                  { unitFactory: { contains: search, mode: 'insensitive' as const } },
+                  {
+                    department: {
+                      contains: search,
+                      mode: 'insensitive' as const,
+                    },
+                  },
+                  {
+                    unitFactory: {
+                      contains: search,
+                      mode: 'insensitive' as const,
+                    },
+                  },
                 ],
               },
             ]
@@ -411,7 +425,6 @@ export class RequisitionService {
     });
   }
 
-
   /**
    * Counts per status for the tiles/chips — computed in the database so the
    * page never has to pull every requisition just to count them.
@@ -428,10 +441,25 @@ export class RequisitionService {
           ? [
               {
                 OR: [
-                  { designation: { contains: search, mode: 'insensitive' as const } },
+                  {
+                    designation: {
+                      contains: search,
+                      mode: 'insensitive' as const,
+                    },
+                  },
                   { code: { contains: search, mode: 'insensitive' as const } },
-                  { department: { contains: search, mode: 'insensitive' as const } },
-                  { unitFactory: { contains: search, mode: 'insensitive' as const } },
+                  {
+                    department: {
+                      contains: search,
+                      mode: 'insensitive' as const,
+                    },
+                  },
+                  {
+                    unitFactory: {
+                      contains: search,
+                      mode: 'insensitive' as const,
+                    },
+                  },
                 ],
               },
             ]
@@ -523,7 +551,7 @@ export class RequisitionService {
       });
 
       if (dto.decision === 'escalate') {
-        // Corporate HR signs off, then a CHRO step is appended for final approval.
+        // Head of Talent Acquisition signs off, then a CHRO step is appended for final approval.
         await tx.approvalStep.update({
           where: { id: current.id },
           data: {
@@ -646,7 +674,7 @@ export class RequisitionService {
         await this.notifications.notify(req.raisedById, {
           type: 'requisition_approved',
           title: 'Requisition fully approved',
-          message: `${req.code} · ${req.designation} is approved — Corporate HR will continue.`,
+          message: `${req.code} · ${req.designation} is approved — Head of Talent Acquisition will continue.`,
           link: `/requisitions/${id}`,
         });
       }
@@ -692,7 +720,8 @@ export class RequisitionService {
     const req = await this.load(id, actor.id);
     await this.requireCurrentApprover(req, actor.id);
 
-    const nextGrade = dto.grade !== undefined ? dto.grade.trim() || null : undefined;
+    const nextGrade =
+      dto.grade !== undefined ? dto.grade.trim() || null : undefined;
     const gradeChanged = nextGrade !== undefined && nextGrade !== req.grade;
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -744,7 +773,9 @@ export class RequisitionService {
             ? { jobDescription: dto.jobDescription }
             : {}),
           ...(dto.education !== undefined ? { education: dto.education } : {}),
-          ...(dto.experience !== undefined ? { experience: dto.experience } : {}),
+          ...(dto.experience !== undefined
+            ? { experience: dto.experience }
+            : {}),
           ...(dto.others !== undefined ? { others: dto.others } : {}),
           ...(dto.preferredSources !== undefined
             ? { preferredSources: dto.preferredSources }
@@ -765,9 +796,9 @@ export class RequisitionService {
    * HR confirms or skips one or more of the requisitioner's facility requests
    * (Laptop/Desktop, Transport, Dormitory, Seating). While the requisition is
    * awaiting approval, only the current pending approver (Factory HR, SBU
-   * Head, Corporate HR — whoever's turn it is) or a super user may act, same
+   * Head, Head of Talent Acquisition — whoever's turn it is) or a super user may act, same
    * as `update()`. Once approved, there's no more pending step — so from that
-   * point on Corporate HR / CHRO / super users may keep re-confirming or
+   * point on Head of Talent Acquisition / CHRO / super users may keep re-confirming or
    * changing a decision (e.g. from the Onboarding page, right up to joining).
    */
   async updateFacilities(
@@ -778,10 +809,13 @@ export class RequisitionService {
     const req = await this.load(id, actor.id);
     await this.requireFacilitiesEditAccess(req, actor.id);
 
-    const current = (req.facilities ?? {}) as unknown as Record<string, FacilityDecision>;
+    const current = (req.facilities ?? {}) as unknown as Record<
+      string,
+      FacilityDecision
+    >;
     const next: Record<string, FacilityDecision> = { ...current };
     const changes: { key: string; note: string }[] = [];
-    for (const d of dto.decisions) {
+    for (const d of dto.decisions ?? []) {
       // Requisitions created before the `facilities` column existed have no
       // seeded entry for this key — fall back to an empty pending decision
       // instead of silently skipping (see updateFacilities pre-migration bug).
@@ -796,7 +830,10 @@ export class RequisitionService {
           decidedBy: null,
           decidedAt: null,
         } satisfies FacilityDecision);
-      if (existing.status === d.status && (existing.hrNote ?? '') === (d.hrNote ?? '')) {
+      if (
+        existing.status === d.status &&
+        (existing.hrNote ?? '') === (d.hrNote ?? '')
+      ) {
         continue; // no-op — don't log or touch decidedBy/decidedAt for an unchanged decision
       }
       // HR can grant a facility the requisitioner never asked for. Marking it
@@ -807,10 +844,9 @@ export class RequisitionService {
       const label = FACILITY_LABEL[d.key] ?? d.key;
       changes.push({
         key: d.key,
-        note:
-          added
-            ? `Added and confirmed ${label} (not requested by the requisitioner)${d.hrNote ? ` — "${d.hrNote}"` : ''}`
-            : existing.status === 'pending'
+        note: added
+          ? `Added and confirmed ${label} (not requested by the requisitioner)${d.hrNote ? ` — "${d.hrNote}"` : ''}`
+          : existing.status === 'pending'
             ? `${verb} ${label}${d.hrNote ? ` — "${d.hrNote}"` : ''}`
             : `Changed ${label} from ${existing.status} to ${d.status}${d.hrNote ? ` — "${d.hrNote}"` : ''}`,
       });
@@ -824,10 +860,65 @@ export class RequisitionService {
       };
     }
 
+    // Fixed appointment terms — the bonus share, the salary review, the tax
+    // line. Stored beside the facility decisions because they are settled by
+    // the same people at the same moment, and they travel with the
+    // requisition rather than with any one candidate.
+    if (dto.specialNotes) {
+      const before = Array.isArray(current.specialNotes)
+        ? (current.specialNotes as unknown as string[])
+        : [];
+      const after = [
+        ...new Set(dto.specialNotes.map((n) => n.trim()).filter(Boolean)),
+      ];
+      if (before.join('|') !== after.join('|')) {
+        changes.push({
+          key: 'specialNotes',
+          note: after.length
+            ? `Set special notes: ${after.join('; ')}`
+            : 'Cleared the special notes',
+        });
+      }
+      (next as unknown as Record<string, unknown>).specialNotes = after;
+    }
+
+    // Nothing to write: a repeated decision and an unchanged note list.
+    if (!changes.length && !dto.specialNotes) return serialize(req);
+
+    // Fixed appointment terms — the bonus share, the salary review, the tax
+    // line. Stored beside the facility decisions because they are settled by
+    // the same people at the same moment, and they travel with the
+    // requisition rather than with any one candidate.
+    if (dto.specialNotes) {
+      const before = Array.isArray(current.specialNotes)
+        ? (current.specialNotes as unknown as string[])
+        : [];
+      const after = [
+        ...new Set(dto.specialNotes.map((n) => n.trim()).filter(Boolean)),
+      ];
+      if (before.join('|') !== after.join('|')) {
+        changes.push({
+          key: 'specialNotes',
+          note: after.length
+            ? `Set special notes: ${after.join('; ')}`
+            : 'Cleared the special notes',
+        });
+      }
+      (next as unknown as Record<string, unknown>).specialNotes = after;
+    }
+
+    // Nothing to write: a repeated decision and an unchanged note list.
+    if (!changes.length && !dto.specialNotes) return serialize(req);
+
     const updated = await this.prisma.$transaction(async (tx) => {
       for (const c of changes) {
         await tx.requisitionActivity.create({
-          data: { requisitionId: id, actor: actor.name, action: 'EDITED', note: c.note },
+          data: {
+            requisitionId: id,
+            actor: actor.name,
+            action: 'EDITED',
+            note: c.note,
+          },
         });
       }
       return tx.requisition.update({
@@ -882,7 +973,7 @@ export class RequisitionService {
    * Facilities are settled by the HR side, not by the sign-off chain.
    *
    * Confirming a laptop or a desk is a provisioning commitment, so it belongs
-   * to Corporate HR / CHRO and the assigned Corporate Recruiter — the people
+   * to Head of Talent Acquisition / CHRO and the assigned Corporate Recruiter — the people
    * who actually deliver it — rather than to whichever approver happens to
    * hold the requisition at that moment. The same gate applies before and
    * after approval, so a decision can't be made by one party and revised by a
@@ -900,7 +991,7 @@ export class RequisitionService {
     );
   }
 
-  /** Step 3 — generate the AI role profile. Corporate HR owns this step. */
+  /** Step 3 — generate the AI role profile. Head of Talent Acquisition owns this step. */
   async generateRoleProfile(id: string, actor: { id: string; name: string }) {
     const req = await this.load(id, actor.id);
     if (req.status !== 'APPROVED' && req.status !== 'PROFILE_GENERATED') {
@@ -934,7 +1025,7 @@ export class RequisitionService {
     return serialized;
   }
 
-  /** Save Corporate HR's manual edits to the role profile. */
+  /** Save Head of Talent Acquisition's manual edits to the role profile. */
   async updateRoleProfile(
     id: string,
     dto: {
@@ -1034,7 +1125,7 @@ export class RequisitionService {
     }
   }
 
-  /** Step 4 — publish to candidate sources. Corporate HR owns this step. */
+  /** Step 4 — publish to candidate sources. Head of Talent Acquisition owns this step. */
   async post(
     id: string,
     dto: PostRequisitionDto,
@@ -1217,7 +1308,7 @@ export class RequisitionService {
     if (!req) throw new NotFoundException('Requisition not found');
     // Mirrors `visibilityClause`: you reach a requisition if it's your own
     // business — you raised it, you're named on its chain, or you're its
-    // recruiter — otherwise only Corporate HR / CHRO / super (all-unit scope).
+    // recruiter — otherwise only Head of Talent Acquisition / CHRO / super (all-unit scope).
     // Holding a unit-scoped role is deliberately not enough.
     if (userId) {
       const isOwnBusiness =
@@ -1288,7 +1379,7 @@ export class RequisitionService {
 
   /**
    * Nominate the Corporate Recruiter who owns this requisition's post-approval
-   * lifecycle. Additive — Corporate HR and CHRO keep their access; this just
+   * lifecycle. Additive — Head of Talent Acquisition and CHRO keep their access; this just
    * gives the requisition an owner (and someone to notify).
    */
   async assignRecruiter(
@@ -1298,7 +1389,7 @@ export class RequisitionService {
   ) {
     const req = await this.load(id, actor.id);
 
-    // Only Corporate HR / CHRO / super may nominate — deliberately NOT the
+    // Only Head of Talent Acquisition / CHRO / super may nominate — deliberately NOT the
     // current recruiter, so a recruiter can't hand the requisition on unasked.
     const allowed =
       (await this.permissions.hasRoleForUnitName(
@@ -1313,7 +1404,7 @@ export class RequisitionService {
       ));
     if (!allowed) {
       throw new ForbiddenException(
-        'Only Corporate HR, CHRO or a super user can assign a recruiter',
+        'Only Head of Talent Acquisition, CHRO or a super user can assign a recruiter',
       );
     }
 
@@ -1331,7 +1422,9 @@ export class RequisitionService {
       });
       if (!recruiter) throw new NotFoundException('Recruiter not found');
       if (recruiter.status !== 'ACTIVE') {
-        throw new BadRequestException(`${recruiter.name} is not an active user`);
+        throw new BadRequestException(
+          `${recruiter.name} is not an active user`,
+        );
       }
       const holds = await this.permissions.hasRoleForUnitName(
         recruiterId,
@@ -1460,6 +1553,13 @@ function serialize(req: RequisitionFull) {
     experience: req.experience,
     others: req.others ?? '',
     facilities: req.facilities ?? null,
+    // Lifted out of the facilities blob so the frontend's
+    // Record<FacilityKey, …> keeps its shape.
+    specialNotes: Array.isArray(
+      (req.facilities as { specialNotes?: unknown } | null)?.specialNotes,
+    )
+      ? (req.facilities as { specialNotes: string[] }).specialNotes
+      : [],
     preferredSources: req.preferredSources,
     status: low(req.status),
     approvalChain: req.approvalSteps.map((s) => ({
@@ -1512,6 +1612,10 @@ function toDate(value?: string): Date | null {
 export interface FacilityDecision {
   requested: boolean;
   option: string | null;
+  /** Transport, full-time only: 'sedan' | 'suv'. */
+  vehicleType?: string | null;
+  /** Transport: where the person is picked up from. */
+  pickupLocation?: string | null;
   note: string;
   status: 'pending' | 'confirmed' | 'skipped';
   hrNote: string;
@@ -1519,7 +1623,12 @@ export interface FacilityDecision {
   decidedAt: string | null;
 }
 
-export const FACILITY_KEYS = ['laptopDesktop', 'transport', 'dormitory', 'seating'] as const;
+export const FACILITY_KEYS = [
+  'laptopDesktop',
+  'transport',
+  'dormitory',
+  'seating',
+] as const;
 
 export const FACILITY_LABEL: Record<string, string> = {
   laptopDesktop: 'Laptop / Desktop',
@@ -1538,6 +1647,9 @@ function buildInitialFacilities(
     result[key] = {
       requested: input?.requested ?? false,
       option: input?.option ?? null,
+      // Only transport sends these; the others carry null and cost nothing.
+      vehicleType: input?.vehicleType ?? null,
+      pickupLocation: input?.pickupLocation ?? null,
       note: input?.note ?? '',
       status: 'pending',
       hrNote: '',

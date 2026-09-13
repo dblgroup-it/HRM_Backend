@@ -132,7 +132,7 @@ export class RequisitionController {
     });
   }
 
-  // Corporate HR (or a super user) continues from here — enforced in the service.
+  // Head of Talent Acquisition (or a super user) continues from here — enforced in the service.
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post(':id/role-profile')
   generateRoleProfile(@Param('id') id: string, @CurrentUser() user: AuthUser) {
@@ -142,7 +142,7 @@ export class RequisitionController {
     });
   }
 
-  /** Save manual edits to the role profile (Corporate HR / super). */
+  /** Save manual edits to the role profile (Head of Talent Acquisition / super). */
   @Patch(':id/role-profile')
   updateRoleProfile(
     @Param('id') id: string,

@@ -34,11 +34,23 @@ export class FacilityDecisionDto {
 }
 
 export class UpdateFacilitiesDto {
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => FacilityDecisionDto)
-  decisions!: FacilityDecisionDto[];
+  decisions?: FacilityDecisionDto[];
+
+  /**
+   * The fixed appointment terms HR attaches — bonus share, salary review,
+   * tax. Sent as the complete list, so removing one is just leaving it out;
+   * omit the field entirely to leave the notes untouched.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(300, { each: true })
+  specialNotes?: string[];
 }
 
 /** Editable fields when a requisition is bounced back for clarification. */
@@ -125,7 +137,7 @@ export class AssignRecruiterDto {
   recruiterId!: string | null;
 }
 
-/** Corporate HR's manual edits to the (AI-)generated role profile. */
+/** Head of Talent Acquisition's manual edits to the (AI-)generated role profile. */
 export class UpdateRoleProfileDto {
   @IsString()
   @MaxLength(2000)
