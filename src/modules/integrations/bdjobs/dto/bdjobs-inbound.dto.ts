@@ -20,11 +20,6 @@ class InboundCandidateDto {
   @IsOptional() @IsString() @MaxLength(30) phone?: string;
 }
 
-class InboundProfileDto {
-  @IsString() @MaxLength(100) bdjobsApplicantId!: string;
-  @IsOptional() @IsArray() @IsString({ each: true }) skills?: string[];
-}
-
 /**
  * Bdjobs' structured candidate profile.
  *
@@ -58,11 +53,26 @@ export class BdJobsInboundCandidateDto {
   @Type(() => InboundCandidateDto)
   candidate?: InboundCandidateDto;
 
+  /**
+   * Bdjobs' flat candidate profile.
+   *
+   * Deliberately NOT a validated nested class. It used to be one declaring
+   * `bdjobsApplicantId` and `skills`, and the global pipe runs with
+   * `forbidNonWhitelisted` — so when the live job board posted the twelve
+   * fields it actually sends (currentEmployer, expectedSalary, dateOfBirth,
+   * employmentHistory, educationHistory and the rest) every application was
+   * rejected at the door with a 400. Nobody can fix that from Bdjobs' side,
+   * and the next field they add would break it again.
+   *
+   * `@IsObject()` without `@ValidateNested()` means class-validator does not
+   * descend, so `whitelist` leaves the contents alone and unknown keys are
+   * kept rather than rejected. The shape is interpreted by
+   * `bdjobsProfileToCandidateData`, which is defensive about every field —
+   * the same treatment `CandidateData` already gets, and for the same reason.
+   */
   @IsOptional()
   @IsObject()
-  @ValidateNested()
-  @Type(() => InboundProfileDto)
-  profile?: InboundProfileDto;
+  profile?: Record<string, unknown>;
 
   /**
    * Optional since a structured CandidateData block is itself a CV — a Bdjobs

@@ -22,6 +22,7 @@ import type {
 import { EDU_LEVELS } from './bdjobs.types';
 import { BdJobsInboundCandidateDto } from './dto/bdjobs-inbound.dto';
 import { bdjobsToCvProfile } from '../../candidates/cv/bdjobs-cv.mapper';
+import { bdjobsProfileToCandidateData } from '../../candidates/cv/bdjobs-profile.adapter';
 import { BdJobsInboundError } from './bdjobs-inbound.errors';
 import type { CvProfile } from '../../candidates/cv/cv-profile.types';
 import {
@@ -575,8 +576,17 @@ export class BdJobsService {
     //    the name, contact details and the vacancy reference, so the rest of
     //    this method can fall back to it instead of demanding duplicates.
     const warnings: string[] = [];
-    const cv: CvProfile | null = dto.CandidateData
-      ? bdjobsToCvProfile(dto.CandidateData, new Date(), warnings)
+    // Bdjobs sends the same applicant two ways: a nested `CandidateData`
+    // block, or — from the live job board — a flat `profile`. Both are
+    // translated to one shape and run through one mapper, so the approval
+    // sheet and the interviewer's card cannot disagree about a candidate
+    // because of which door they came in by. `CandidateData` wins when both
+    // are present: it is the richer, explicitly structured block.
+    const candidateData =
+      dto.CandidateData ??
+      bdjobsProfileToCandidateData(dto.profile, dto.candidate);
+    const cv: CvProfile | null = candidateData
+      ? bdjobsToCvProfile(candidateData, new Date(), warnings)
       : null;
 
     // 4. Resolve the requisition by jobReferenceId (our code), the reference
@@ -662,6 +672,25 @@ export class BdJobsService {
       );
     }
 
+    // `profile` is no longer a validated nested class (see the DTO comment), so
+    // the one field we persist from it is checked here instead. Too long for
+    // the column is reported back rather than thrown: refusing a whole
+    // application over a reference number we only keep for traceability is how
+    // this integration broke in the first place.
+    const rawApplicantId = dto.profile?.bdjobsApplicantId;
+    let applicantId: string | null =
+      typeof rawApplicantId === 'string' && rawApplicantId.trim().length
+        ? rawApplicantId.trim()
+        : typeof rawApplicantId === 'number'
+          ? String(rawApplicantId)
+          : null;
+    if (applicantId && applicantId.length > 100) {
+      warnings.push(
+        `profile.bdjobsApplicantId is ${applicantId.length} characters; the field holds 100, so it was not stored.`,
+      );
+      applicantId = null;
+    }
+
     const candidate = await this.prisma.candidate.create({
       data: {
         requisitionId: requisition.id,
@@ -675,7 +704,7 @@ export class BdJobsService {
         cvProfileAt: cv ? new Date() : undefined,
         salaryExpectation: cv?.compensation.expected ?? null,
         bdjobsApplicationId: dto.applicationId,
-        bdjobsApplicantId: dto.profile?.bdjobsApplicantId ?? null,
+        bdjobsApplicantId: applicantId,
         bdjobsJobId: dto.bdJobsJobId,
       },
     });

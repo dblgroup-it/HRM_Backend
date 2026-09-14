@@ -204,7 +204,11 @@ export function bdjobsToCvProfile(
             : undefined,
         degree: text(q.degree) ? tidy(String(q.degree)) : undefined,
         country: text(q.country),
-        passYear: positiveNumber(q.passYear),
+        // `passYear` in the nested CandidateData variant, `passingYear` in
+        // the flat profile one. Reading only the first spelling silently blanked
+        // the pass year — and with it the sheet's Education column — for every
+        // candidate arriving from the live job board.
+        passYear: positiveNumber(q.passYear ?? q.passingYear),
         result: text(q.grade) ?? text(q.percentage),
       };
     }),
