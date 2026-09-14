@@ -13,7 +13,8 @@
 #   2. Stop the PM2 app — `npm ci` deletes node_modules, and Windows will
 #      throw EBUSY/EPERM (and can leave the tree half-deleted) if a running
 #      node process still has files in it open. Stop first, always.
-#   3. Backend: npm ci, prisma generate, prisma migrate deploy, npm run build.
+#   3. Backend: npm ci, prisma generate, npm run build, THEN migrate. The
+#      build comes before the migration on purpose — see the block itself.
 #   4. Restart PM2.
 #   5. Frontend: build to a scratch directory, then atomically swap it into
 #      dist/ — nginx serves HRM_Frontend/dist directly, and a plain
@@ -193,18 +194,47 @@ on_error() {
 trap on_error ERR
 
 # ── 3. backend: install, generate, migrate, build ───────────────────────
-log "[3/6] Backend: npm ci, prisma generate, prisma migrate deploy, build"
+log "[3/6] Backend: npm ci, prisma generate, build, then migrate"
 cd "$BACKEND_DIR"
 step "npm ci (deletes and reinstalls node_modules)"
 npm ci
 step "prisma generate"
 npx prisma generate
+
+# `nest build` empties dist/ before it compiles, so a build that dies part-way
+# leaves no entrypoint at all — and dist/ is not tracked in git, so there is
+# nothing to restore from. That is exactly what happened on 2026-09-14: the
+# compiler was killed for running out of heap, and the API stayed down until a
+# build finally succeeded, because `pm2 start` had no dist/main.js to run.
+# Keep the previous build first, the same way the frontend swap below does.
+step "setting the current build aside as dist.old"
+rm -rf dist.old
+if [ -d dist ]; then mv dist dist.old; fi
+
+# Build BEFORE migrating.
+#
+# `prisma generate` reads schema.prisma, not the database, so nothing in the
+# build needs the migration to have run. Migrating first would mean a failed
+# compile leaves a migrated database with no code that matches it — the one
+# state that cannot be walked back without restoring the backup, and the
+# slowest possible way to discover a typo.
+step "npm run build"
+if ! npm run build || [ ! -f dist/main.js ]; then
+  if [ -d dist.old ]; then
+    rm -rf dist
+    mv dist.old dist
+    step "build failed — previous dist/ restored"
+  fi
+  die "backend build failed. The database was NOT migrated and the previous build is back in place, so the API can be restarted as it was:
+  pm2 start \"$BACKEND_DIR/ecosystem.config.js\"
+Backup taken before any changes: $BACKUP_FILE"
+fi
+step "built; previous build kept as dist.old for one deploy cycle"
+
 step "prisma migrate status (review before deploy)"
 npx prisma migrate status || true
 step "prisma migrate deploy — DESTRUCTIVE, applies all pending migrations"
 npx prisma migrate deploy
-step "npm run build"
-npm run build
 
 # ── 4. restart PM2 ───────────────────────────────────────────────────────
 log "[4/6] Starting $PM2_APP"
