@@ -46,7 +46,21 @@ import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.mod
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     ScheduleModule.forRoot(),
     // Global rate limit: 120 requests/min per IP (tighter on sensitive routes).
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    // Global ceiling for the ~227 routes that declare no @Throttle of their
+    // own. Per client IP — and because staff leave through a handful of site
+    // NAT addresses, one bucket covers everyone at that site, not one person.
+    //
+    // 120/min was sized as if it were per person. The SPA issues tens of
+    // requests per minute of ordinary use, so a single office would have sat at
+    // the ceiling permanently and served 429s to people doing nothing unusual.
+    // 1200/min is chosen to be invisible to legitimate use while still bounding
+    // a runaway client or a scraper.
+    //
+    // This is not the security control. Sensitive routes carry their own, much
+    // tighter @Throttle, per-account lockout guards sign-in, and authorization
+    // guards every endpoint. This exists so one misbehaving caller cannot
+    // exhaust the server.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 1200 }]),
     PrismaModule,
     MemoryCacheModule,
     // Streams private Drive documents to authorized callers — replaces the
