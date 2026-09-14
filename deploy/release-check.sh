@@ -4,10 +4,16 @@
 #
 #   ./release-check.sh
 #
-# Provider-neutral: the same gates GitHub Actions runs, runnable from a laptop
-# or from the production server before `deploy.sh`. Touches nothing — no
-# install beyond `npm ci` into node_modules, no database writes, no network
-# calls except the npm registry.
+# Provider-neutral: the same gates GitHub Actions runs. No database writes and
+# no network calls except the npm registry.
+#
+# NOT SAFE AGAINST A RUNNING APP. The gates below run `npm ci`, which DELETES
+# node_modules before reinstalling it. On Windows the OS refuses to unlink files
+# a live process holds open, so running this while PM2 serves the app leaves the
+# tree half-deleted: the running process survives on modules already loaded into
+# memory, but the next restart fails. Learned the hard way on the production
+# server — hence the guard below. Run this on a build machine, or stop the app
+# first (`deploy.sh` does exactly that at its step 2).
 set -uo pipefail
 
 # This script lives in HRM_Backend/deploy/ so that it ships with the backend
@@ -21,6 +27,28 @@ if [ ! -d "$BACKEND" ] || [ ! -d "$FRONTEND" ]; then
   printf 'Cannot find HRM_Backend and HRM_Frontend beside each other under %s\n' "$ROOT" >&2
   printf 'Both repositories must be checked out into the same parent directory.\n' >&2
   exit 2
+fi
+
+# ── refuse to run while an app is live ──────────────────────────────────────
+# `npm ci` deletes node_modules. See the header comment: on Windows that
+# corrupts the tree under a running process instead of failing cleanly.
+if [ "${ALLOW_LIVE_NPM_CI:-0}" != "1" ] && command -v pm2 >/dev/null 2>&1; then
+  LIVE="$(pm2 jlist 2>/dev/null \
+    | tr ',' '\n' \
+    | grep -c '"status":"online"' || true)"
+  if [ "${LIVE:-0}" -gt 0 ]; then
+    printf '\n\033[31mREFUSING TO RUN\033[0m — %s PM2 process(es) are online.\n' "$LIVE" >&2
+    printf '\n' >&2
+    printf 'The gates run `npm ci`, which deletes node_modules. A live process holds\n' >&2
+    printf 'those files open, so the delete half-succeeds and the app cannot restart.\n' >&2
+    printf '\n' >&2
+    printf 'Do one of these instead:\n' >&2
+    printf '  * Run this on a build machine, not the server that serves traffic.\n' >&2
+    printf '  * Stop the app first:  pm2 stop <app>   (deploy.sh does this itself)\n' >&2
+    printf '  * Override only if you know the tree is not in use:\n' >&2
+    printf '      ALLOW_LIVE_NPM_CI=1 %s\n' "$0" >&2
+    exit 2
+  fi
 fi
 
 FAILED=()

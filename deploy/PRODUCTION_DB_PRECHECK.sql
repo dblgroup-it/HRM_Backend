@@ -265,11 +265,39 @@ SELECT CASE WHEN count(*) = 0 THEN 'OK — nothing to redact'
 \echo '=== 11. Accounts still on a provisioned password ===================='
 -- must_change_password is NOT set by the migration (it defaults false), so
 -- this reports zero until an operator runs the reviewed rollout statement.
-SELECT count(*) FILTER (WHERE must_change_password) AS must_change,
-       count(*) FILTER (WHERE locked_until > now()) AS currently_locked,
-       count(*) FILTER (WHERE two_factor_enabled)   AS two_factor_enabled,
-       count(*) AS total_users
-  FROM users;
+--
+-- This file is meant to be run BEFORE the release, so the three lockout
+-- columns may not exist yet — they arrive with 20260913230000_first_login_and_lockout.
+-- Selecting them unconditionally aborts the section with
+-- `column "must_change_password" does not exist`, which looks alarming and is
+-- not. Pick the statement based on what the database actually has, and say so.
+SELECT CASE WHEN EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_schema = current_schema()
+            AND table_name   = 'users'
+            AND column_name  = 'must_change_password'
+       )
+       THEN $sql$
+            SELECT 'post-migration'                              AS schema_state,
+                   count(*) FILTER (WHERE must_change_password)   AS must_change,
+                   count(*) FILTER (WHERE locked_until > now())   AS currently_locked,
+                   count(*) FILTER (WHERE two_factor_enabled)     AS two_factor_enabled,
+                   count(*)                                       AS total_users,
+                   'OK'                                           AS verdict
+              FROM users;
+            $sql$
+       ELSE $sql$
+            SELECT 'pre-migration'  AS schema_state,
+                   NULL::bigint     AS must_change,
+                   NULL::bigint     AS currently_locked,
+                   count(*) FILTER (WHERE two_factor_enabled) AS two_factor_enabled,
+                   count(*)         AS total_users,
+                   'OK — lockout columns arrive with this release; nothing to check yet'
+                                    AS verdict
+              FROM users;
+            $sql$
+       END
+\gexec
 
 \echo ''
 \echo '=== 12. Migration state ============================================='
