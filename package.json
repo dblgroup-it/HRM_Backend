@@ -16,7 +16,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:seed": "ts-node prisma/seed.ts",
-    "test": "jest"
+    "test": "cross-env NODE_OPTIONS=--max-old-space-size=3072 jest"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.26",
