@@ -21,9 +21,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -35,7 +35,14 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      # `prisma validate` only checks the schema file — it never connects. But it
+      # still resolves env("DATABASE_URL") while parsing the datasource block, so
+      # without the variable it fails with P1012 and the whole run stops before
+      # typecheck. Locally this is invisible because Prisma loads .env, and CI has
+      # no .env. A throwaway value satisfies the parser; nothing dials it.
       - name: Validate Prisma schema
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
         run: npx prisma validate
 
       - name: Typecheck
@@ -65,7 +72,7 @@ jobs:
   no-public-drive-sharing:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Refuse any new public Drive sharing
         run: |
           # Sensitive documents must stay private and be streamed by the API.
