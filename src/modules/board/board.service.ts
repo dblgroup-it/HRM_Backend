@@ -5,9 +5,18 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  migrateTokenFields,
+  newTokenFields,
+  tokenLookupWhere,
+} from '../../common/crypto/action-token';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import * as ExcelJS from 'exceljs';
+import type { Response } from 'express';
 
+import { FileGrantService } from '../../common/files/file-grant.service';
+import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
@@ -118,6 +127,8 @@ export class BoardService {
     private readonly config: ConfigService,
     private readonly drive: DriveService,
     private readonly recruitment: RecruitmentService,
+    private readonly files: FileGrantService,
+    private readonly secureFiles: SecureFileService,
   ) {}
 
   /* ─── Board Groups ─── */
@@ -438,7 +449,10 @@ export class BoardService {
         data: {
           boardApprovalId: approvalId,
           userId: user.id,
-          token,
+          // Only the hash is stored. The raw value goes into the emailed
+          // link and nowhere else — read access to the database is no longer
+          // enough to cast somebody else's board vote.
+          ...newTokenFields(token),
           tokenExpiresAt: expiresAt,
           stage,
           status: 'pending',
@@ -450,7 +464,16 @@ export class BoardService {
           subject: `${STAGE_SUBJECT[stage]} — ${candidate.name} for ${candidate.requisition.designation}`,
           html: this.buildApprovalEmail(
             user.name,
-            { ...candidate, salary },
+            {
+              ...candidate,
+              salary,
+              // Token-scoped, not a public Drive link: it stops working the
+              // moment this approver votes or the token expires, and it can
+              // only ever reach this candidate's CV.
+              cvUrl: candidate.cvFileId
+                ? `${frontendUrl}/api/board-vote/${token}/cv`
+                : candidate.cvUrl,
+            },
             candidate.requisition,
             `${frontendUrl}/board-vote/${token}`,
             stage,
@@ -480,7 +503,7 @@ export class BoardService {
       orderBy: { createdAt: 'desc' },
     });
     if (!approval) return null;
-    return serializeApproval(approval);
+    return serializeApproval(approval, this.files);
   }
 
   async hrApprove(
@@ -532,7 +555,9 @@ export class BoardService {
         mimeType: file.mimetype,
         buffer: file.buffer,
       });
-      await this.drive.shareAnyoneWithLink(uploaded.id, 'reader');
+      // Stays private. The attachment is streamed to authorized viewers by
+      // this API, including to CHRO/board members holding a valid approval
+      // token — see common/files/ and the token-scoped document routes.
     } catch (e) {
       this.logger.error(
         `Failed to upload board HR approval attachment: ${(e as Error).message}`,
@@ -570,9 +595,132 @@ export class BoardService {
 
   /* ─── Public vote ─── */
 
+  /**
+   * Make a link usable from an inbox or a spreadsheet.
+   *
+   * Document links are relative (`/api/files/…`) because the app usually just
+   * follows them; an email client has no origin to resolve them against, so
+   * they are absolutised against the public site, where nginx proxies `/api/`
+   * to this server.
+   */
+  private absoluteUrl(url: string): string {
+    if (/^https?:\/\//i.test(url)) return url;
+    const base = (
+      this.config.get<string>('frontendUrl') ?? 'http://localhost:3000'
+    ).replace(/\/$/, '');
+    return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
+  }
+
+  /**
+   * Replace a legacy raw token with its hash, the first time it is presented.
+   *
+   * Rows written before hashing carry the raw value; this retires them as they
+   * are used, so the residue shrinks on its own and the raw column can
+   * eventually be dropped. Best-effort: a failure here must never stop somebody
+   * casting their vote.
+   */
+  private async upgradeLegacyVoteToken(
+    vote: { id: string; tokenHash: string | null },
+    raw: string,
+  ): Promise<void> {
+    if (vote.tokenHash) return;
+    try {
+      await this.prisma.boardApprovalVote.update({
+        where: { id: vote.id },
+        data: migrateTokenFields(raw),
+      });
+    } catch {
+      // Best effort — never block the action being authorized.
+    }
+  }
+
+  /**
+   * Verify a vote token and hand back the approval it belongs to.
+   *
+   * Shared by the vote page and by the CV stream below, so a document can
+   * never be reached with a token that has expired or has already been used.
+   */
+  private async voteForDocument(token: string) {
+    const vote = await this.prisma.boardApprovalVote.findFirst({
+      where: tokenLookupWhere(token),
+      include: {
+        boardApproval: { include: { candidate: true } },
+        batch: { include: { approvals: { include: { candidate: true } } } },
+      },
+    });
+    if (!vote) throw new NotFoundException('This approval link is invalid.');
+    if (new Date() > vote.tokenExpiresAt) {
+      throw new BadRequestException('This approval link has expired.');
+    }
+    if (vote.status !== 'pending') {
+      throw new BadRequestException(
+        'This approval has already been submitted — the documents are no longer available through this link.',
+      );
+    }
+    return vote;
+  }
+
+  /**
+   * Stream the CV for a single-candidate board approval.
+   *
+   * The candidate is resolved from the token, never from the request, so a
+   * board member cannot read another candidate's CV by editing the URL.
+   */
+  async streamVoteCv(token: string, res: Response): Promise<void> {
+    const vote = await this.voteForDocument(token);
+    const candidate = vote.boardApproval?.candidate;
+    if (!candidate) {
+      throw new BadRequestException(
+        'This link belongs to an approval sheet, not a single candidate.',
+      );
+    }
+    if (!candidate.cvFileId) {
+      throw new NotFoundException(
+        'No CV document is on file for this candidate.',
+      );
+    }
+    await this.secureFiles.stream(res, candidate.cvFileId, {
+      filename: `${candidate.name} — CV`,
+    });
+  }
+
+  /**
+   * Stream one candidate's CV from a Hiring Approval Sheet.
+   *
+   * `candidateId` comes from the request, so it is checked against the sheet
+   * the token actually belongs to — a token for sheet A cannot fetch a CV from
+   * sheet B.
+   */
+  async streamSheetCv(
+    token: string,
+    candidateId: string,
+    res: Response,
+  ): Promise<void> {
+    const vote = await this.voteForDocument(token);
+    const onThisSheet = vote.batch?.approvals.some(
+      (a) => a.candidate.id === candidateId,
+    );
+    if (!onThisSheet) {
+      throw new ForbiddenException(
+        'That candidate is not on this approval sheet.',
+      );
+    }
+    const candidate = vote.batch!.approvals.find(
+      (a) => a.candidate.id === candidateId,
+    )!.candidate;
+    if (!candidate.cvFileId) {
+      throw new NotFoundException(
+        'No CV document is on file for this candidate.',
+      );
+    }
+    await this.secureFiles.stream(res, candidate.cvFileId, {
+      filename: `${candidate.name} — CV`,
+    });
+  }
+
   async getVoteInfo(token: string) {
-    const vote = await this.prisma.boardApprovalVote.findUnique({
-      where: { token },
+    const vote = await this.prisma.boardApprovalVote.findFirst({
+      where: tokenLookupWhere(token),
       include: {
         user: { select: { id: true, name: true } },
         boardApproval: {
@@ -615,7 +763,10 @@ export class BoardService {
         unit: candidate.requisition.unitFactory,
         department: candidate.requisition.department,
         code: candidate.requisition.code,
-        cvUrl: candidate.cvUrl,
+        // Scoped to this vote token rather than a public Drive link.
+        cvUrl: candidate.cvFileId
+          ? `/api/board-vote/${token}/cv`
+          : candidate.cvUrl,
         // The AI match score is deliberately withheld: this chain signs off on
         // the agreed salary, which is the figure that matters here.
         salary: await this.fixedSalary(candidate.id).catch(() => null),
@@ -630,8 +781,8 @@ export class BoardService {
     notes?: string,
     decision: 'approved' | 'rejected' = 'approved',
   ) {
-    const vote = await this.prisma.boardApprovalVote.findUnique({
-      where: { token },
+    const vote = await this.prisma.boardApprovalVote.findFirst({
+      where: tokenLookupWhere(token),
       include: {
         user: { select: { id: true, name: true } },
         boardApproval: {
@@ -644,6 +795,7 @@ export class BoardService {
     });
 
     if (!vote) throw new NotFoundException('Invalid approval link.');
+    await this.upgradeLegacyVoteToken(vote, token);
     if (new Date() > vote.tokenExpiresAt)
       throw new BadRequestException('This link has expired.');
     if (vote.status !== 'pending') return { ok: true, alreadyVoted: true };
@@ -658,10 +810,15 @@ export class BoardService {
     }
     const approvalId = vote.boardApprovalId;
 
-    await this.prisma.boardApprovalVote.update({
-      where: { id: vote.id },
+    // Claim the vote conditionally. The read above happened outside any
+    // transaction, so a double submit (or a link opened in two tabs) could
+    // otherwise advance the chain twice — opening the next stage twice, which
+    // means two sets of tokens and two notification emails.
+    const claimed = await this.prisma.boardApprovalVote.updateMany({
+      where: { id: vote.id, status: 'pending' },
       data: { status: decision, notes: notes ?? null, respondedAt: new Date() },
     });
+    if (claimed.count !== 1) return { ok: true, alreadyVoted: true };
 
     const { candidate } = vote.boardApproval;
     const stageLabel = STAGE_LABEL[vote.stage] ?? 'Board';
@@ -819,40 +976,62 @@ export class BoardService {
   }
 
   /** One line of the approval sheet, shaped like DBL's paper form. */
-  private sheetRow(r: {
-    id: string;
-    createdAt: Date;
-    sheetEducation: string | null;
-    sheetExperience: string | null;
-    sheetLastOrg: string | null;
-    requestedBy: { id: string; name: string };
-    candidate: {
+  /**
+   * One row of a Hiring Approval Sheet.
+   *
+   * `cvUrl` is never a Google Drive link any more. Interactive pages get a
+   * short-lived signed grant into this API; emailed sheets get one that lasts
+   * as long as the approval token they accompany; a board member reading the
+   * sheet through their token link gets a route scoped to that token, so the
+   * CV stops being reachable the moment they vote or the token expires.
+   */
+  private sheetRow(
+    r: {
+      id: string;
+      createdAt: Date;
+      sheetEducation: string | null;
+      sheetExperience: string | null;
+      sheetLastOrg: string | null;
+      requestedBy: { id: string; name: string };
+      candidate: {
+        id: string;
+        name: string;
+        cvUrl: string | null;
+        cvFileId?: string | null;
+        cvProfile?: unknown;
+        matchDetails?: unknown;
+        salaryFixation: {
+          proposedSalary: number | null;
+          status: string;
+        } | null;
+        requisition: {
+          id: string;
+          code: string;
+          designation: string;
+          department: string;
+          unitFactory: string;
+          requirementType: string;
+          replaceOfName: string | null;
+          replaceOfEmployeeCode: string | null;
+          raisedBy: string | null;
+          approvalSteps?: {
+            orderIndex: number;
+            title: string;
+            assignee: string;
+            status: string;
+            actedAt: Date | null;
+          }[];
+        };
+      };
+    },
+    /** How this audience should reach the CV. Defaults to a short grant. */
+    cvUrlFor?: (candidate: {
       id: string;
       name: string;
+      cvFileId?: string | null;
       cvUrl: string | null;
-      cvProfile?: unknown;
-      matchDetails?: unknown;
-      salaryFixation: { proposedSalary: number | null; status: string } | null;
-      requisition: {
-        id: string;
-        code: string;
-        designation: string;
-        department: string;
-        unitFactory: string;
-        requirementType: string;
-        replaceOfName: string | null;
-        replaceOfEmployeeCode: string | null;
-        raisedBy: string | null;
-        approvalSteps?: {
-          orderIndex: number;
-          title: string;
-          assignee: string;
-          status: string;
-          actedAt: Date | null;
-        }[];
-      };
-    };
-  }) {
+    }) => string | null,
+  ) {
     const req = r.candidate.requisition;
     const isReplacement = req.requirementType === 'existing';
     // Three sources, most trustworthy first: HR's own correction, then a
@@ -864,7 +1043,11 @@ export class BoardService {
       approvalId: r.id,
       candidateId: r.candidate.id,
       name: r.candidate.name,
-      cvUrl: r.candidate.cvUrl,
+      cvUrl: cvUrlFor
+        ? cvUrlFor(r.candidate)
+        : (this.files.url(r.candidate.cvFileId, 'cv', {
+            filename: `${r.candidate.name} — CV`,
+          }) ?? r.candidate.cvUrl),
       position: req.designation,
       department: req.department,
       unit: req.unitFactory,
@@ -1149,7 +1332,18 @@ export class BoardService {
       where: { batchId, stage, status: 'pending' },
     });
 
-    const rows = batch.approvals.map((a) => this.sheetRow(a));
+    // The sheet is read in an inbox, possibly days later, so the CV grant has
+    // to outlive a UI session. It is still scoped to one file, still expires,
+    // and is still served by this API rather than by a public Drive URL.
+    const cvTtlSeconds = 30 * 24 * 60 * 60;
+    const rows = batch.approvals.map((a) =>
+      this.sheetRow(a, (c) =>
+        this.files.url(c.cvFileId, 'cv', {
+          filename: `${c.name} — CV`,
+          ttlSeconds: cvTtlSeconds,
+        }),
+      ),
+    );
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     const frontendUrl =
       this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
@@ -1164,7 +1358,10 @@ export class BoardService {
         data: {
           batchId,
           userId: user.id,
-          token,
+          // Only the hash is stored. The raw value goes into the emailed
+          // link and nowhere else — read access to the database is no longer
+          // enough to cast somebody else's board vote.
+          ...newTokenFields(token),
           tokenExpiresAt: expiresAt,
           stage,
           status: 'pending',
@@ -1282,7 +1479,18 @@ export class BoardService {
       where: { batchId, stage, status: 'pending' },
     });
 
-    const rows = batch.approvals.map((a) => this.sheetRow(a));
+    // The sheet is read in an inbox, possibly days later, so the CV grant has
+    // to outlive a UI session. It is still scoped to one file, still expires,
+    // and is still served by this API rather than by a public Drive URL.
+    const cvTtlSeconds = 30 * 24 * 60 * 60;
+    const rows = batch.approvals.map((a) =>
+      this.sheetRow(a, (c) =>
+        this.files.url(c.cvFileId, 'cv', {
+          filename: `${c.name} — CV`,
+          ttlSeconds: cvTtlSeconds,
+        }),
+      ),
+    );
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     const frontendUrl =
       this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
@@ -1299,7 +1507,10 @@ export class BoardService {
         data: {
           batchId,
           userId: user.id,
-          token,
+          // Only the hash is stored. The raw value goes into the emailed
+          // link and nowhere else — read access to the database is no longer
+          // enough to cast somebody else's board vote.
+          ...newTokenFields(token),
           tokenExpiresAt: expiresAt,
           stage,
           status: 'pending',
@@ -1331,8 +1542,8 @@ export class BoardService {
 
   /** What the recipient of a sheet link sees. */
   async getSheetVoteInfo(token: string) {
-    const vote = await this.prisma.boardApprovalVote.findUnique({
-      where: { token },
+    const vote = await this.prisma.boardApprovalVote.findFirst({
+      where: tokenLookupWhere(token),
       include: {
         user: { select: { name: true } },
         batch: {
@@ -1394,7 +1605,14 @@ export class BoardService {
       alreadyVoted: vote.status !== 'pending',
       batchStatus: vote.batch.status,
       rejectedReason: vote.batch.rejectedReason,
-      rows: vote.batch.approvals.map((a) => this.sheetRow(a)),
+      // Scoped to THIS vote token: the CV becomes unreachable the moment the
+      // token is used or expires, and the token cannot be pointed at a
+      // candidate who is not on this sheet (checked server-side).
+      rows: vote.batch.approvals.map((a) =>
+        this.sheetRow(a, (c) =>
+          c.cvFileId ? `/api/board-sheet/${token}/cv/${c.id}` : c.cvUrl,
+        ),
+      ),
     };
   }
 
@@ -1410,8 +1628,8 @@ export class BoardService {
     notes?: string,
     decision: 'approved' | 'rejected' = 'approved',
   ) {
-    const vote = await this.prisma.boardApprovalVote.findUnique({
-      where: { token },
+    const vote = await this.prisma.boardApprovalVote.findFirst({
+      where: tokenLookupWhere(token),
       include: {
         user: { select: { id: true, name: true } },
         batch: { include: { approvals: true } },
@@ -1432,10 +1650,13 @@ export class BoardService {
     const count = batch.approvals.length;
     const stageLabel = STAGE_LABEL[vote.stage] ?? 'Board';
 
-    await this.prisma.boardApprovalVote.update({
-      where: { id: vote.id },
+    // Same conditional claim as submitVote — one decision per token, even if
+    // the link is submitted twice at once.
+    const claimed = await this.prisma.boardApprovalVote.updateMany({
+      where: { id: vote.id, status: 'pending' },
       data: { status: decision, notes: notes ?? null, respondedAt: new Date() },
     });
+    if (claimed.count !== 1) return { ok: true, alreadyVoted: true };
 
     if (decision === 'rejected') {
       await this.prisma.boardApprovalBatch.update({
@@ -1491,6 +1712,312 @@ export class BoardService {
   }
 
   /** Sheets this user prepared, newest first. */
+  /**
+   * One sent sheet with its full rows — what HR needs to print it or hand it
+   * to someone as a spreadsheet.
+   *
+   * The list endpoint carries only summaries, and the rows otherwise exist
+   * solely inside the email and the approver's token page; neither is
+   * reachable once a sheet has gone out.
+   */
+  async sheetDetail(batchId: string, userId: string) {
+    await this.requireRecruitmentRole(userId);
+    const isSuper = await this.permissions.isSuperUser(userId);
+    const batch = await this.prisma.boardApprovalBatch.findFirst({
+      where: { id: batchId, ...(isSuper ? {} : { createdById: userId }) },
+      include: {
+        createdBy: { select: { name: true } },
+        chro: { select: { name: true } },
+        approvals: {
+          include: {
+            requestedBy: { select: { id: true, name: true } },
+            candidate: {
+              include: {
+                requisition: {
+                  select: {
+                    id: true,
+                    code: true,
+                    designation: true,
+                    department: true,
+                    unitFactory: true,
+                    requirementType: true,
+                    replaceOfName: true,
+                    replaceOfEmployeeCode: true,
+                    raisedBy: true,
+                    approvalSteps: {
+                      select: {
+                        orderIndex: true,
+                        title: true,
+                        assignee: true,
+                        status: true,
+                        actedAt: true,
+                      },
+                      orderBy: { orderIndex: 'asc' },
+                    },
+                  },
+                },
+                salaryFixation: {
+                  select: { proposedSalary: true, status: true },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        votes: {
+          include: { user: { select: { name: true } } },
+          orderBy: { respondedAt: { sort: 'asc', nulls: 'last' } },
+        },
+      },
+    });
+    if (!batch) throw new NotFoundException('Sheet not found');
+
+    return {
+      id: batch.id,
+      reference: batch.reference,
+      status: batch.status,
+      currentStage: batch.currentStage,
+      preparedBy: batch.createdBy.name,
+      chroName: batch.chro?.name ?? null,
+      createdAt: batch.createdAt.toISOString(),
+      rows: batch.approvals.map((a) => this.sheetRow(a)),
+      votes: batch.votes.map((v) => ({
+        name: v.user.name,
+        stage: v.stage,
+        status: v.status,
+        notes: v.notes,
+        respondedAt: v.respondedAt?.toISOString() ?? null,
+      })),
+    };
+  }
+
+  /**
+   * One approval sheet as a working Excel file.
+   *
+   * Not a CSV dump: a sheet gets circulated, annotated and filed, so it opens
+   * with the header frozen and filterable, salaries as real numbers, the CV as
+   * a live link, the sign-off trail on its own tab, and print settings already
+   * set to one landscape page wide — the things that make the difference
+   * between data and a document somebody can work in.
+   *
+   * Deliberately no totals row: DBL's paper form has none, and a sum of
+   * salaries across unrelated vacancies would not mean anything.
+   */
+  async exportSheet(batchId: string, userId: string) {
+    const sheet = await this.sheetDetail(batchId, userId);
+
+    const BRAND = 'FF1877C0';
+    const INK = 'FF12202F';
+    const MUTED = 'FF5A6B7F';
+    const RULE = 'FFDCE4EE';
+    const ZEBRA = 'FFF7FAFD';
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'DBL HRM';
+    wb.created = new Date();
+    wb.title = `Hiring Approval Sheet ${sheet.reference}`;
+
+    const ws = wb.addWorksheet('Approval Sheet', {
+      views: [{ state: 'frozen', ySplit: 5 }],
+      pageSetup: {
+        orientation: 'landscape',
+        paperSize: 9, // A4
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        margins: {
+          left: 0.4,
+          right: 0.4,
+          top: 0.5,
+          bottom: 0.5,
+          header: 0.2,
+          footer: 0.2,
+        },
+        printTitlesRow: '5:5',
+      },
+    });
+
+    ws.columns = [
+      { header: 'SL', key: 'sl', width: 5 },
+      { header: 'Name', key: 'name', width: 26 },
+      { header: 'Position', key: 'position', width: 22 },
+      { header: 'Department', key: 'department', width: 20 },
+      { header: 'Unit', key: 'unit', width: 24 },
+      { header: 'Education', key: 'education', width: 32 },
+      { header: 'Req.', key: 'requirement', width: 12 },
+      { header: 'Team', key: 'team', width: 20 },
+      { header: 'Total Exp.', key: 'experience', width: 14 },
+      { header: 'Last Organization', key: 'lastOrg', width: 24 },
+      { header: 'Salary', key: 'salary', width: 13 },
+      { header: 'Remark', key: 'remark', width: 22 },
+      { header: 'Requisition', key: 'code', width: 15 },
+      { header: 'Vacancy approved by', key: 'chain', width: 46 },
+      { header: 'CV', key: 'cv', width: 10 },
+    ];
+    const LAST_COL = 'O';
+
+    // ── Title block ────────────────────────────────────────────────────
+    ws.mergeCells(`A1:${LAST_COL}1`);
+    const title = ws.getCell('A1');
+    title.value = 'DBL Group — Hiring Approval Sheet';
+    title.font = { bold: true, size: 15, color: { argb: BRAND } };
+    title.alignment = { vertical: 'middle' };
+    ws.getRow(1).height = 24;
+
+    ws.mergeCells(`A2:${LAST_COL}2`);
+    const sub = ws.getCell('A2');
+    sub.value = `Ref ${sheet.reference}   ·   Prepared by ${sheet.preparedBy}   ·   ${new Date(
+      sheet.createdAt,
+    ).toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })}   ·   Status: ${sheet.status}`;
+    sub.font = { size: 10, color: { argb: MUTED } };
+    ws.getRow(3).height = 6;
+
+    // ── Header ─────────────────────────────────────────────────────────
+    const header = ws.getRow(5);
+    ws.columns.forEach((c, i) => {
+      header.getCell(i + 1).value = c.header as string;
+    });
+    header.height = 26;
+    header.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: BRAND },
+      };
+      cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = {
+        vertical: 'middle',
+        horizontal: 'center',
+        wrapText: true,
+      };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FF0F5999' } } };
+    });
+
+    // ── Rows ───────────────────────────────────────────────────────────
+    sheet.rows.forEach((r, i) => {
+      const row = ws.addRow({
+        sl: i + 1,
+        name: r.name,
+        position: r.position,
+        department: r.department,
+        unit: r.unit,
+        education: r.education ?? '',
+        requirement: r.requirement,
+        team: r.team,
+        experience: r.totalExperience ?? '',
+        lastOrg: r.lastOrganization ?? '',
+        salary: r.salary ?? null,
+        remark: r.remark,
+        code: r.requisitionCode,
+        chain: r.approvalChain,
+        cv: r.cvUrl ? 'Open CV' : '',
+      });
+      const bg = i % 2 === 0 ? 'FFFFFFFF' : ZEBRA;
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
+        cell.font = { size: 10, color: { argb: INK } };
+        cell.alignment = { vertical: 'top', wrapText: col >= 6 };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: bg },
+        };
+        cell.border = {
+          top: { style: 'hair', color: { argb: RULE } },
+          bottom: { style: 'hair', color: { argb: RULE } },
+          left: { style: 'hair', color: { argb: RULE } },
+          right: { style: 'hair', color: { argb: RULE } },
+        };
+      });
+      row.getCell('sl').alignment = { vertical: 'top', horizontal: 'center' };
+      row.getCell('name').font = { size: 10, bold: true, color: { argb: INK } };
+      row.getCell('requirement').alignment = {
+        vertical: 'top',
+        horizontal: 'center',
+      };
+      // A real number, so it can be sorted, filtered and added up by whoever
+      // needs to — rather than text that merely looks like money.
+      const salary = row.getCell('salary');
+      salary.numFmt = '#,##0';
+      salary.alignment = { vertical: 'top', horizontal: 'right' };
+      salary.font = { size: 10, bold: true, color: { argb: INK } };
+      if (r.cvUrl) {
+        const cv = row.getCell('cv');
+        // Absolute: the workbook is opened outside the browser.
+        cv.value = { text: 'Open CV', hyperlink: this.absoluteUrl(r.cvUrl) };
+        cv.font = { size: 10, color: { argb: BRAND }, underline: true };
+      }
+      row.getCell('chain').font = { size: 9, color: { argb: MUTED } };
+    });
+
+    ws.autoFilter = { from: 'A5', to: `${LAST_COL}5` };
+
+    // ── The sign-off trail, on its own tab ─────────────────────────────
+    const votes = wb.addWorksheet('Approvals', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+    votes.columns = [
+      { header: 'Approver', key: 'name', width: 28 },
+      { header: 'Stage', key: 'stage', width: 12 },
+      { header: 'Decision', key: 'status', width: 14 },
+      { header: 'Responded', key: 'at', width: 16 },
+      { header: 'Note', key: 'notes', width: 60 },
+    ];
+    const vh = votes.getRow(1);
+    vh.height = 22;
+    vh.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: BRAND },
+      };
+      cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    sheet.votes.forEach((v) => {
+      const row = votes.addRow({
+        name: v.name,
+        stage: v.stage,
+        status: v.status,
+        at: v.respondedAt
+          ? new Date(v.respondedAt).toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })
+          : '',
+        notes: v.notes ?? '',
+      });
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        cell.font = { size: 10 };
+        cell.alignment = { vertical: 'top', wrapText: true };
+      });
+      const decision = row.getCell('status');
+      const fill =
+        v.status === 'approved'
+          ? 'FFD1FAE5'
+          : v.status === 'rejected'
+            ? 'FFFEE2E2'
+            : 'FFFEF4D3';
+      decision.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: fill },
+      };
+      decision.font = { size: 10, bold: true };
+      decision.alignment = { vertical: 'top', horizontal: 'center' };
+    });
+
+    const buffer = await wb.xlsx.writeBuffer();
+    return {
+      buffer: Buffer.from(buffer),
+      filename: `${sheet.reference.replace(/[^\w-]+/g, '_')}.xlsx`,
+    };
+  }
+
   async listSheets(userId: string) {
     await this.requireRecruitmentRole(userId);
     const isSuper = await this.permissions.isSuperUser(userId);
@@ -1594,7 +2121,7 @@ export class BoardService {
     const nowrap = 'white-space:nowrap';
     const cvLink = (url: string | null, size: string) =>
       url
-        ? `<a href="${esc(url)}" target="_blank" rel="noreferrer" style="display:inline-block;white-space:nowrap;font-weight:400;font-size:${size};color:#1877c0;text-decoration:underline">View CV</a>`
+        ? `<a href="${esc(this.absoluteUrl(url))}" target="_blank" rel="noreferrer" style="display:inline-block;white-space:nowrap;font-weight:400;font-size:${size};color:#1877c0;text-decoration:underline">View CV</a>`
         : '';
 
     // Budgeted so the long fields have room; the short ones never wrap at all.
@@ -2045,33 +2572,42 @@ export class BoardService {
 }
 
 /* ─── Serializer ─── */
-function serializeApproval(approval: {
-  id: string;
-  status: string;
-  currentStage: string;
-  rejectedReason: string | null;
-  rejectedAt: Date | null;
-  corporateHr: { id: string; name: string } | null;
-  chro: { id: string; name: string } | null;
-  boardMemberIds: string[];
-  createdAt: Date;
-  updatedAt: Date;
-  requestedBy: { id: string; name: string };
-  hrApprovedBy: { id: string; name: string } | null;
-  hrApprovalNote: string | null;
-  hrApprovalAttachmentUrl: string | null;
-  hrApprovalAttachmentName: string | null;
-  hrApprovedAt: Date | null;
-  votes: Array<{
+/**
+ * The attachment link points at this API. The justification document HR files
+ * when approving on the board's behalf is private on Drive like everything
+ * else; `files` mints a grant for a caller who has already been authorized.
+ */
+function serializeApproval(
+  approval: {
     id: string;
     status: string;
-    stage: string;
-    notes: string | null;
-    respondedAt: Date | null;
-    tokenExpiresAt: Date;
-    user: { id: string; name: string; email: string | null };
-  }>;
-}) {
+    currentStage: string;
+    rejectedReason: string | null;
+    rejectedAt: Date | null;
+    corporateHr: { id: string; name: string } | null;
+    chro: { id: string; name: string } | null;
+    boardMemberIds: string[];
+    createdAt: Date;
+    updatedAt: Date;
+    requestedBy: { id: string; name: string };
+    hrApprovedBy: { id: string; name: string } | null;
+    hrApprovalNote: string | null;
+    hrApprovalAttachmentFileId: string | null;
+    hrApprovalAttachmentUrl: string | null;
+    hrApprovalAttachmentName: string | null;
+    hrApprovedAt: Date | null;
+    votes: Array<{
+      id: string;
+      status: string;
+      stage: string;
+      notes: string | null;
+      respondedAt: Date | null;
+      tokenExpiresAt: Date;
+      user: { id: string; name: string; email: string | null };
+    }>;
+  },
+  files?: FileGrantService,
+) {
   return {
     id: approval.id,
     status: approval.status,
@@ -2086,7 +2622,11 @@ function serializeApproval(approval: {
     requestedBy: approval.requestedBy,
     hrApprovedBy: approval.hrApprovedBy,
     hrApprovalNote: approval.hrApprovalNote,
-    hrApprovalAttachmentUrl: approval.hrApprovalAttachmentUrl,
+    hrApprovalAttachmentUrl:
+      files?.url(approval.hrApprovalAttachmentFileId, 'board-attachment', {
+        filename:
+          approval.hrApprovalAttachmentName ?? 'Board approval attachment',
+      }) ?? approval.hrApprovalAttachmentUrl,
     hrApprovalAttachmentName: approval.hrApprovalAttachmentName,
     hrApprovedAt: approval.hrApprovedAt?.toISOString() ?? null,
     votes: approval.votes.map((v) => ({

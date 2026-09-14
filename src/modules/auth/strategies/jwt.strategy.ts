@@ -15,6 +15,10 @@ export interface JwtPayload {
   tv?: number;
   /** Set on the short-lived token issued between password + 2FA steps. */
   pending2fa?: boolean;
+  /** The account still holds a password it did not choose (see FirstLoginGuard). */
+  mcp?: boolean;
+  /** Wrong 2FA codes already spent against this challenge. */
+  att?: number;
 }
 
 @Injectable()
@@ -50,6 +54,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       employeeCode: user.employeeCode,
       name: user.name,
       role: user.role,
+      // Read from the database, not from the token: a user cannot clear the
+      // restriction by editing (or re-signing) their own JWT.
+      mustChangePassword: user.mustChangePassword,
     };
   }
 }

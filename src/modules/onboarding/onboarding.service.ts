@@ -6,10 +6,15 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { tokenLookupWhere } from '../../common/crypto/action-token';
 import { ConfigService } from '@nestjs/config';
 import { OnboardingDocStatus, MedicalExam, Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 
+import type { Response } from 'express';
+
+import { FileGrantService } from '../../common/files/file-grant.service';
+import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import {
@@ -148,6 +153,8 @@ export class OnboardingService {
     private readonly ai: AiGraderService,
     private readonly recruitment: RecruitmentService,
     private readonly config: ConfigService,
+    private readonly files: FileGrantService,
+    private readonly secureFiles: SecureFileService,
   ) {}
 
   // --- HR: lifecycle -------------------------------------------------------
@@ -160,6 +167,8 @@ export class OnboardingService {
     });
     if (!existing) {
       await this.prisma.onboarding.create({
+        // STAGED: still stored raw — the link is re-displayed and re-sent,
+        // so it must remain reconstructible. See FINAL_GO_LIVE_GATE.md.
         data: { candidateId, token: randomBytes(18).toString('hex') },
       });
       this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -233,7 +242,7 @@ export class OnboardingService {
         'This candidate has no email address on file',
       );
     }
-    const link = this.publicLink(ob.token);
+    const link = this.publicLink(ob.token ?? '');
     await this.mail.send({
       to: cand.email,
       subject: `Joining documents — ${cand.requisition.designation} | DBL Group`,
@@ -459,7 +468,7 @@ export class OnboardingService {
 
     const input = await this.letterInput(cand, ob, dto);
     const letter = buildOfferLetter(dto.format, input);
-    const link = this.publicLink(ob.token);
+    const link = this.publicLink(ob.token ?? '');
 
     await this.mail.send({
       to: cand.email,
@@ -585,9 +594,36 @@ export class OnboardingService {
    * The signatory is whoever holds CHRO — the letters go out over their
    * signature, so it is read from the role rather than hard-coded.
    */
+  /**
+   * Where a candidate's address comes from, most trustworthy first.
+   *
+   * What HR typed wins. Then a structured CV the applicant filled in
+   * themselves (Bdjobs). Then what the AI read off an uploaded CV — a
+   * reading, which is why it comes last and why HR sees it in an editable
+   * field before the letter goes anywhere.
+   */
+  private resolveAddress(
+    typed: string | null | undefined,
+    saved: string | null,
+    cand: { cvProfile?: unknown; cvAddress?: string | null },
+  ): string | null {
+    if (typed?.trim()) return typed.trim();
+    if (saved?.trim()) return saved.trim();
+    const profile = cand.cvProfile as
+      | { contact?: { currentAddress?: string; permanentAddress?: string } }
+      | null
+      | undefined;
+    const fromProfile =
+      profile?.contact?.currentAddress ?? profile?.contact?.permanentAddress;
+    if (fromProfile?.trim()) return fromProfile.trim();
+    return cand.cvAddress?.trim() || null;
+  }
+
   private async letterInput(
     cand: {
       name: string;
+      cvProfile?: unknown;
+      cvAddress?: string | null;
       requisition: { designation: string; unitFactory: string };
     },
     ob: {
@@ -608,7 +644,7 @@ export class OnboardingService {
     return {
       candidateName: cand.name,
       salutation: dto.salutation ?? null,
-      address: dto.address ?? ob.candidateAddress,
+      address: this.resolveAddress(dto.address, ob.candidateAddress, cand),
       designation: cand.requisition.designation,
       unitFactory: cand.requisition.unitFactory,
       reference: dto.reference ?? ob.offerRef,
@@ -735,17 +771,11 @@ export class OnboardingService {
           );
           await this.drive.moveFile(candFolder, reqArchive);
           archiveFolderUrl = `https://drive.google.com/drive/folders/${candFolder}`;
-          // Folders stay private by default (same as every other Drive
-          // folder in this app) — grant read access so "Open archive
-          // folder" actually opens for whoever clicks it, not just
-          // hr.recruitment@.
-          this.drive
-            .shareAnyoneWithLink(candFolder, 'reader')
-            .catch((err) =>
-              this.logger.warn(
-                `Archive folder share failed for ${candFolder}: ${(err as Error).message}`,
-              ),
-            );
+          // The folder stays PRIVATE. It holds the candidate's national ID,
+          // certificates and photographs; publishing it as "anyone with the
+          // link" gave every one of those documents a permanent unauthenticated
+          // URL. HR opens the individual documents through this API instead,
+          // and this URL is retained only for the recruitment account's own use.
         }
       } catch (err) {
         this.logger.warn(
@@ -846,6 +876,63 @@ export class OnboardingService {
       action: 'it_notified',
     });
     return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * Stream one submitted onboarding document.
+   *
+   * Two different gates, chosen by what the document is. An ordinary joining
+   * document (national ID, certificate, photograph) needs recruitment access to
+   * this candidate. A medical record needs a medical role — recruitment can see
+   * that the report exists and whether the candidate was cleared, but not open
+   * the report itself.
+   */
+  async streamDoc(docId: string, userId: string, res: Response): Promise<void> {
+    const doc = await this.prisma.onboardingDoc.findUnique({
+      where: { id: docId },
+      include: {
+        onboarding: {
+          include: { candidate: { include: { requisition: true } } },
+        },
+      },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    if (isMedicalDoc(doc.label)) {
+      await this.requireMedicalRole(userId);
+    } else {
+      await this.requireRecruitmentAccess(
+        doc.onboarding.candidate.requisition,
+        userId,
+        "open this candidate's documents",
+      );
+    }
+    await this.secureFiles.stream(res, doc.fileId, { filename: doc.label });
+  }
+
+  /**
+   * Stream the Medical Fitness Report for an onboarding.
+   *
+   * Medical roles only, unconditionally — this is the single most sensitive
+   * document the system stores, and it used to carry a permanent public Drive
+   * link that anyone who was ever forwarded it could open forever.
+   */
+  async streamMedicalReport(
+    onboardingId: string,
+    userId: string,
+    res: Response,
+  ): Promise<void> {
+    await this.requireMedicalRole(userId);
+    const doc = await this.prisma.onboardingDoc.findFirst({
+      where: {
+        onboardingId,
+        label: { contains: 'Medical', mode: 'insensitive' },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!doc)
+      throw new NotFoundException('No medical report has been uploaded');
+    await this.secureFiles.stream(res, doc.fileId, { filename: doc.label });
   }
 
   // --- Medical officer (Stage D) -------------------------------------------
@@ -985,21 +1072,20 @@ export class OnboardingService {
     });
     if (!ob) throw new NotFoundException('Onboarding not found');
 
-    const isMedical =
-      (await this.permissions.isSuperUser(userId)) ||
-      Boolean(
-        await this.prisma.roleAssignment.findFirst({
-          where: { userId, role: { key: { in: MEDICAL_ROLE_KEYS } } },
-        }),
-      );
+    const isMedical = await this.canReadFullMedical(userId);
     if (!isMedical) {
+      // Recruitment may confirm the check happened and whether the candidate
+      // is fit. It may not read the clinical findings — this method used to
+      // return the whole record to anyone with recruitment access.
       await this.requireRecruitmentAccess(ob.candidate.requisition, userId);
     }
 
     const exam = await this.prisma.medicalExam.findUnique({
       where: { onboardingId },
     });
-    return this.serializeMedicalExam(exam);
+    return isMedical
+      ? this.serializeFullMedicalExam(exam)
+      : this.serializeMedicalSummary(exam);
   }
 
   async upsertMedicalExam(
@@ -1068,7 +1154,7 @@ export class OnboardingService {
       create: { onboardingId, ...values },
       update: values,
     });
-    return this.serializeMedicalExam(exam);
+    return this.serializeFullMedicalExam(exam);
   }
 
   /** Medical officer attaches the actual signed report (optional — the
@@ -1101,15 +1187,9 @@ export class OnboardingService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    // Folder stays private by default — grant read access so whoever opens
-    // the report link (not just hr.recruitment@) can actually view it.
-    this.drive
-      .shareAnyoneWithLink(uploaded.id, 'reader')
-      .catch((err) =>
-        this.logger.warn(
-          `Medical report share failed for ${uploaded.id}: ${(err as Error).message}`,
-        ),
-      );
+    // The Medical Fitness Report is the most sensitive document this system
+    // holds. It stays private to the recruitment Google account and is streamed
+    // only to medical-role holders — see streamMedicalReport() below.
     const createdDoc = await this.prisma.onboardingDoc.create({
       data: {
         onboardingId: ob.id,
@@ -1127,7 +1207,10 @@ export class OnboardingService {
     return {
       id: createdDoc.id,
       label: createdDoc.label,
-      url: createdDoc.url,
+      url:
+        this.files.url(createdDoc.fileId, 'medical-report', {
+          filename: createdDoc.label,
+        }) ?? createdDoc.url,
       mimeType: createdDoc.mimeType,
       createdAt: createdDoc.createdAt.toISOString(),
     };
@@ -1136,8 +1219,8 @@ export class OnboardingService {
   // --- Public (candidate, by token) ----------------------------------------
 
   async publicGet(token: string) {
-    const ob = await this.prisma.onboarding.findUnique({
-      where: { token },
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
@@ -1171,8 +1254,8 @@ export class OnboardingService {
   async publicUpload(token: string, label: string, file?: UploadedDoc) {
     if (!file) throw new BadRequestException('Please attach a file');
     if (!label?.trim()) throw new BadRequestException('Missing document label');
-    const ob = await this.prisma.onboarding.findUnique({
-      where: { token },
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
       include: { candidate: { include: { requisition: true } } },
     });
     if (!ob) throw new NotFoundException('This link is not valid');
@@ -1237,8 +1320,8 @@ export class OnboardingService {
   }
 
   async publicAcceptOffer(token: string) {
-    const ob = await this.prisma.onboarding.findUnique({
-      where: { token },
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
       include: { candidate: { include: { requisition: true } } },
     });
     if (!ob) throw new NotFoundException('This link is not valid');
@@ -1568,7 +1651,43 @@ export class OnboardingService {
     return `${prefix}${String(max + 1).padStart(3, '0')}${suffix}`;
   }
 
-  private serializeMedicalExam(exam: MedicalExam | null) {
+  /**
+   * What a non-medical reader is told about a medical examination.
+   *
+   * Recruitment needs one fact to move a hire along — is this person fit to
+   * join — plus enough provenance to show the check really happened. It does
+   * not need hepatitis B status, liver function, urine results, past illness
+   * or family history of diabetes, and those are exactly the fields this
+   * projection leaves out.
+   *
+   * POLICY: the split between "summary" and "full" is a business decision that
+   * was confirmed by the production-readiness audit (finding P-1). Changing who
+   * is on which side of it is a policy change, not a code change — see
+   * `canReadFullMedical()`.
+   */
+  private serializeMedicalSummary(exam: MedicalExam | null) {
+    const toDateStr = (d: Date | null | undefined) =>
+      d ? d.toISOString().slice(0, 10) : null;
+    return {
+      /** The only clinical conclusion a recruiter needs. */
+      fitToJoin: exam?.fitToJoin ?? null,
+      examDate: toDateStr(exam?.examDate),
+      issueDate: toDateStr(exam?.issueDate),
+      refNo: exam?.refNo ?? '',
+      consultantName: exam?.consultantName ?? '',
+      /** Tells the UI the full record exists without disclosing any of it. */
+      recorded: Boolean(exam),
+      /** Marks the payload so a client cannot mistake it for the full record. */
+      redacted: true as const,
+    };
+  }
+
+  /** May this user see clinical findings, as opposed to fit / not fit? */
+  private async canReadFullMedical(userId: string): Promise<boolean> {
+    return this.hasMedicalRole(userId);
+  }
+
+  private serializeFullMedicalExam(exam: MedicalExam | null) {
     const toDateStr = (d: Date | null | undefined) =>
       d ? d.toISOString().slice(0, 10) : null;
     return {
@@ -1619,8 +1738,8 @@ export class OnboardingService {
       candidateId: ob.candidateId,
       candidateName,
       candidateEmail: candidateEmail ?? '',
-      token: ob.token,
-      submissionLink: this.publicLink(ob.token),
+      token: ob.token ?? '',
+      submissionLink: this.publicLink(ob.token ?? ''),
       status: ob.status,
       docsSkippedAt: ob.docsSkippedAt?.toISOString() ?? null,
       verificationSkippedAt: ob.verificationSkippedAt?.toISOString() ?? null,
@@ -1661,10 +1780,19 @@ export class OnboardingService {
       itEmail: ob.itEmail ?? '',
       itAssetId: ob.itAssetId ?? '',
       itNotifiedAt: ob.itNotifiedAt?.toISOString() ?? null,
+      // Joining documents hold national ID, certificates and photographs, and
+      // the Medical Fitness Report is filed here too. None of them is readable
+      // on Drive any more; each `url` is a short-lived grant into this API,
+      // minted because the caller already passed this record's access check.
       docs: ob.docs.map((d) => ({
         id: d.id,
         label: d.label,
-        url: d.url,
+        url:
+          this.files.url(
+            d.fileId,
+            isMedicalDoc(d.label) ? 'medical-report' : 'onboarding-doc',
+            { filename: d.label },
+          ) ?? d.url,
         mimeType: d.mimeType,
         status: d.status,
         aiExtract: d.aiExtract as {
@@ -1697,4 +1825,16 @@ export class OnboardingService {
       </td></tr></table>
     </body></html>`;
   }
+}
+
+/**
+ * Does this document label identify a clinical record?
+ *
+ * Medical reports are filed as ordinary OnboardingDocs, so the label is what
+ * separates "certificate scan" from "hepatitis B result". Deliberately broad:
+ * a false positive only means a document is guarded more tightly than it
+ * needed to be.
+ */
+export function isMedicalDoc(label: string): boolean {
+  return /medical|health|fitness report|blood|patholog/i.test(label);
 }

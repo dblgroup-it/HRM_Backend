@@ -23,6 +23,8 @@ export interface MasterData {
   meetingRooms: Record<string, string[]>;
   /** Fixed terms HR attaches to an appointment (bonus, salary review, tax). */
   specialNotes: string[];
+  /** DBL office and factory addresses, as printed on offer letters. */
+  jobLocations: string[];
 }
 
 /** Key for the sectionSubSections map — mirrors how the rows are seeded. */
@@ -63,6 +65,7 @@ export class MasterDataService {
     const linesOfBusiness: string[] = [];
     const separationReasons: string[] = [];
     const specialNotes: string[] = [];
+    const jobLocations: string[] = [];
     const meetingRooms: Record<string, string[]> = {};
     const subSections: string[] = [];
     const departmentSections: Record<string, string[]> = {};
@@ -100,6 +103,9 @@ export class MasterDataService {
         case 'special_note':
           specialNotes.push(r.value);
           break;
+        case 'job_location':
+          jobLocations.push(r.value);
+          break;
         case 'meeting_room':
           (meetingRooms[r.parent] ??= []).push(r.value);
           break;
@@ -118,6 +124,7 @@ export class MasterDataService {
       separationReasons,
       meetingRooms,
       specialNotes,
+      jobLocations,
     };
   }
 }

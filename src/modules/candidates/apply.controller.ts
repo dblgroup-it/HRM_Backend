@@ -41,6 +41,7 @@ export class ApplyController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get(':reqId')
   info(@Param('reqId') reqId: string) {
     return this.candidates.publicJobInfo(reqId);

@@ -14,6 +14,8 @@ import {
   Priority,
 } from '@prisma/client';
 
+import { FileGrantService } from '../../common/files/file-grant.service';
+import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sameUnit } from '../../common/util/normalize-unit';
 import { OrganogramService } from '../organogram/organogram.service';
@@ -67,7 +69,19 @@ export class RequisitionService {
     private readonly settings: SettingsService,
     private readonly approvalPaths: ApprovalPathsService,
     private readonly masterData: MasterDataService,
+    private readonly files: FileGrantService,
+    private readonly secureFiles: SecureFileService,
   ) {}
+
+  /**
+   * Serialize a requisition for a client.
+   *
+   * Wraps the module-level `serialize` only to hand it the grant minter, so
+   * attachment links resolve to this API rather than to a public Drive URL.
+   */
+  private ser(req: RequisitionFull) {
+    return serialize(req, this.files);
+  }
 
   private readonly logger = new Logger(RequisitionService.name);
 
@@ -177,7 +191,7 @@ export class RequisitionService {
       include: reqWithRelations,
     });
 
-    const serialized = serialize(created);
+    const serialized = this.ser(created);
     this.notifications.broadcastChange('requisition', created.id, {
       action: 'created',
       record: serialized,
@@ -278,7 +292,7 @@ export class RequisitionService {
     this.notifications.broadcastChange('requisition', id, {
       action: 'resubmitted',
     });
-    return serialize(updated);
+    return this.ser(updated);
   }
 
   /**
@@ -367,7 +381,7 @@ export class RequisitionService {
     ]);
 
     return {
-      items: rows.map(serialize),
+      items: rows.map((r) => this.ser(r)),
       meta: buildMeta(page, pageSize, total),
     };
   }
@@ -484,7 +498,7 @@ export class RequisitionService {
 
   async findOne(id: string, userId: string) {
     const req = await this.load(id, userId);
-    return serialize(req);
+    return this.ser(req);
   }
 
   /** Step 2 — act on the active (first pending) sign-off. */
@@ -546,6 +560,22 @@ export class RequisitionService {
         : '';
 
     await this.prisma.$transaction(async (tx) => {
+      // Claim the step before doing anything else. `load()` read it outside
+      // this transaction, so two approvers (or one approver clicking twice)
+      // can both arrive here believing the same step is still PENDING; the
+      // conditional update lets exactly one of them through and the other is
+      // told the step has moved on, instead of both writing a decision and
+      // both appending to the activity log.
+      const claimed = await tx.approvalStep.updateMany({
+        where: { id: current.id, status: 'PENDING' },
+        data: { status: 'PENDING' },
+      });
+      if (claimed.count !== 1) {
+        throw new BadRequestException(
+          'This sign-off has already been actioned — reload to see its current state.',
+        );
+      }
+
       await tx.requisitionActivity.create({
         data: { requisitionId: id, actor: actorName, action, note },
       });
@@ -644,9 +674,9 @@ export class RequisitionService {
           });
           this.notifications.broadcastChange('requisition', id, {
             action: 'role_profile_generated',
-            record: serialize(regenerated),
+            record: this.ser(regenerated),
           });
-          return serialize(regenerated);
+          return this.ser(regenerated);
         } catch (err) {
           this.logger.warn(
             `Auto role-profile failed: ${(err as Error).message}`,
@@ -654,7 +684,7 @@ export class RequisitionService {
         }
       }
     }
-    return serialize(updated);
+    return this.ser(updated);
   }
 
   /** Live updates + targeted notifications after a sign-off action. */
@@ -666,7 +696,7 @@ export class RequisitionService {
     const req = await this.load(id);
     this.notifications.broadcastChange('requisition', id, {
       action: decision,
-      record: serialize(req),
+      record: this.ser(req),
     });
 
     if (req.status === 'APPROVED') {
@@ -784,7 +814,7 @@ export class RequisitionService {
         include: reqWithRelations,
       });
     });
-    const serialized = serialize(updated);
+    const serialized = this.ser(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'updated',
       record: serialized,
@@ -883,7 +913,7 @@ export class RequisitionService {
     }
 
     // Nothing to write: a repeated decision and an unchanged note list.
-    if (!changes.length && !dto.specialNotes) return serialize(req);
+    if (!changes.length && !dto.specialNotes) return this.ser(req);
 
     // Fixed appointment terms — the bonus share, the salary review, the tax
     // line. Stored beside the facility decisions because they are settled by
@@ -908,7 +938,7 @@ export class RequisitionService {
     }
 
     // Nothing to write: a repeated decision and an unchanged note list.
-    if (!changes.length && !dto.specialNotes) return serialize(req);
+    if (!changes.length && !dto.specialNotes) return this.ser(req);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       for (const c of changes) {
@@ -927,7 +957,7 @@ export class RequisitionService {
         include: reqWithRelations,
       });
     });
-    const serialized = serialize(updated);
+    const serialized = this.ser(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'updated',
       record: serialized,
@@ -1009,7 +1039,7 @@ export class RequisitionService {
       },
       include: reqWithRelations,
     });
-    const serialized = serialize(updated);
+    const serialized = this.ser(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'role_profile_generated',
       record: serialized,
@@ -1063,7 +1093,7 @@ export class RequisitionService {
       },
       include: reqWithRelations,
     });
-    const serialized = serialize(updated);
+    const serialized = this.ser(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'role_profile_updated',
       record: serialized,
@@ -1160,7 +1190,7 @@ export class RequisitionService {
     );
     this.candidates.syncTalentBankMatchesOnRequisitionEvent(id);
 
-    return serialize(updated);
+    return this.ser(updated);
   }
 
   private async setupDriveWorkspace(
@@ -1181,7 +1211,7 @@ export class RequisitionService {
         include: reqWithRelations,
       });
       if (!fresh) return;
-      const serialized = serialize(fresh);
+      const serialized = this.ser(fresh);
       this.notifications.broadcastChange('requisition', updated.id, {
         action: 'posted',
         record: serialized,
@@ -1235,16 +1265,9 @@ export class RequisitionService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    // Same as candidate CVs — the folder itself stays private, so each file
-    // needs its own "anyone with the link" grant to be viewable without
-    // being signed in as the recruitment account.
-    this.drive
-      .shareAnyoneWithLink(uploaded.id, 'reader')
-      .catch((err) =>
-        this.logger.warn(
-          `Attachment share failed for ${uploaded.id}: ${(err as Error).message}`,
-        ),
-      );
+    // The file stays private to the recruitment Google account. Anyone who may
+    // see the requisition streams the attachment through this API instead of
+    // opening a permanent public Drive link.
     const attachments = [
       ...readAttachments(req),
       {
@@ -1261,7 +1284,7 @@ export class RequisitionService {
       data: { attachments: attachments as unknown as Prisma.InputJsonValue },
       include: reqWithRelations,
     });
-    const serialized = serialize(updated);
+    const serialized = this.ser(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'attachment_added',
       record: serialized,
@@ -1290,7 +1313,7 @@ export class RequisitionService {
       data: { attachments: next as unknown as Prisma.InputJsonValue },
       include: reqWithRelations,
     });
-    const serialized = serialize(updated);
+    const serialized = this.ser(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'attachment_removed',
       record: serialized,
@@ -1469,7 +1492,7 @@ export class RequisitionService {
     }
 
     const updated = await this.load(id, actor.id);
-    const serialized = serialize(updated);
+    const serialized = this.ser(updated);
     this.notifications.broadcastChange('requisition', id, {
       action: 'updated',
       record: serialized,
@@ -1524,7 +1547,16 @@ function candidateStats(rows: { stage: string }[]) {
   return s;
 }
 
-function serialize(req: RequisitionFull) {
+/**
+ * `attachments[].url` points at THIS API, not at Google Drive.
+ *
+ * Attachment files stay private to the recruitment Google account; `files`
+ * mints a short-lived signed grant per attachment, which is only reached by
+ * callers who already passed this requisition's visibility check. Rows written
+ * before this change still carry a Drive URL, so those are left as they are
+ * until the revoke sweep runs — see scripts/revoke-public-drive-access.ts.
+ */
+function serialize(req: RequisitionFull, files?: FileGrantService) {
   return {
     id: req.id,
     code: req.code,
@@ -1584,7 +1616,12 @@ function serialize(req: RequisitionFull) {
     roleProfile: req.roleProfile ?? null,
     posting: req.posting ?? null,
     drive: req.drive ?? null,
-    attachments: Array.isArray(req.attachments) ? req.attachments : [],
+    attachments: readAttachments(req).map((a) => ({
+      ...a,
+      url:
+        files?.url(a.fileId, 'requisition-attachment', { filename: a.name }) ??
+        a.url,
+    })),
     candidateStats: candidateStats(req.candidates),
     pipeline: pipelineProgress(req.candidates),
     raisedBy: req.raisedBy ?? '',

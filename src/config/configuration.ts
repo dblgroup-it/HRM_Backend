@@ -9,6 +9,8 @@ export interface AppConfig {
     secret: string;
     expiresIn: string;
   };
+  /** 32-byte key for AES-256-GCM encryption of TOTP secrets at rest. */
+  totpEncryptionKey: string;
   zinghr: {
     baseUrl: string;
     subscriptionName: string;
@@ -57,11 +59,16 @@ export default (): AppConfig => ({
   port: parseInt(process.env.PORT ?? '8000', 10),
   apiPrefix: process.env.API_PREFIX ?? 'api',
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
-  frontendUrl: (process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN?.split(',')[0] ?? 'http://localhost:3000').replace(/\/$/, ''),
+  frontendUrl: (
+    process.env.FRONTEND_URL ??
+    process.env.CORS_ORIGIN?.split(',')[0] ??
+    'http://localhost:3000'
+  ).replace(/\/$/, ''),
   jwt: {
     secret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
     expiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
   },
+  totpEncryptionKey: process.env.TOTP_ENCRYPTION_KEY ?? '',
   zinghr: {
     baseUrl: process.env.ZINGHR_BASE_URL ?? 'https://portal.zinghr.com',
     subscriptionName: process.env.ZINGHR_SUBSCRIPTION_NAME ?? '',

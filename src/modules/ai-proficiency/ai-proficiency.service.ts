@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { tokenLookupWhere } from '../../common/crypto/action-token';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
 
@@ -167,7 +168,7 @@ export class AiProficiencyService {
     if (attempts.length === 0) return null;
     return serializeAttempt(
       attempts[0],
-      this.publicLink(attempts[0].token),
+      this.publicLink(attempts[0].token ?? ''),
       attempts.length,
     );
   }
@@ -298,8 +299,8 @@ export class AiProficiencyService {
   // --- candidate (public, token) -------------------------------------------
 
   async getByToken(token: string) {
-    const attempt = await this.prisma.aiProficiencyAttempt.findUnique({
-      where: { token },
+    const attempt = await this.prisma.aiProficiencyAttempt.findFirst({
+      where: tokenLookupWhere(token),
     });
     if (!attempt) throw new NotFoundException('Test link not found');
 
@@ -338,8 +339,8 @@ export class AiProficiencyService {
    * page refresh mid-test calls this again but the stamp only happens once.
    */
   async startAttempt(token: string) {
-    const attempt = await this.prisma.aiProficiencyAttempt.findUnique({
-      where: { token },
+    const attempt = await this.prisma.aiProficiencyAttempt.findFirst({
+      where: tokenLookupWhere(token),
     });
     if (!attempt) throw new NotFoundException('Test link not found');
     if (attempt.status !== 'pending') {
@@ -356,8 +357,8 @@ export class AiProficiencyService {
   }
 
   async submitByToken(token: string, dto: SubmitAiProficiencyDto) {
-    const attempt = await this.prisma.aiProficiencyAttempt.findUnique({
-      where: { token },
+    const attempt = await this.prisma.aiProficiencyAttempt.findFirst({
+      where: tokenLookupWhere(token),
     });
     if (!attempt) throw new NotFoundException('Test link not found');
     if (attempt.status !== 'pending') {
@@ -404,8 +405,8 @@ export class AiProficiencyService {
    * first violation — so it's surfaced immediately without repeat noise.
    */
   async recordViolation(token: string, dto: RecordViolationDto) {
-    const attempt = await this.prisma.aiProficiencyAttempt.findUnique({
-      where: { token },
+    const attempt = await this.prisma.aiProficiencyAttempt.findFirst({
+      where: tokenLookupWhere(token),
     });
     if (!attempt) throw new NotFoundException('Test link not found');
     if (attempt.status !== 'pending') {

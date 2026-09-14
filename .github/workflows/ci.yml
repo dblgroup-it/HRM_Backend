@@ -1,0 +1,83 @@
+name: CI
+
+# Every gate that used to exist only as "somebody remembers to run it".
+# The production-readiness audit's critical finding was an authorization check
+# that was simply never written — not a hard problem, just one nothing would
+# have caught. This is what catches the next one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (locked)
+        run: npm ci
+
+      # Needed before typecheck: the Prisma client's types are generated.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # The repo has pre-existing formatting drift in files unrelated to the
+      # security work, and `npm run lint` rewrites files (--fix). Check without
+      # writing, and do not fail the build on formatting alone — a failing lint
+      # that everyone learns to ignore protects nothing.
+      - name: Lint (report only)
+        continue-on-error: true
+        run: npx eslint "src/**/*.ts"
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # High/critical only. Moderate advisories in build tooling should not
+      # block a release; a reachable high one should be looked at.
+      - name: Dependency audit (production deps)
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+
+  # A cheap, specific guard against the finding that made this audit necessary.
+  no-public-drive-sharing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse any new public Drive sharing
+        run: |
+          # Sensitive documents must stay private and be streamed by the API.
+          # The only permitted mention is the guarded definition itself.
+          hits=$(grep -rn "shareAnyoneWithLink" src --include='*.ts' \
+                 | grep -v 'integrations/google/drive.service.ts' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::A call to shareAnyoneWithLink was reintroduced."
+            echo "Candidate CVs, joining documents and medical reports must NOT be"
+            echo "published to Drive as 'anyone with the link'. Stream them through"
+            echo "common/files/ instead. Offending lines:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "OK — no sensitive document is published publicly."

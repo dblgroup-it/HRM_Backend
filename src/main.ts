@@ -30,6 +30,16 @@ function validateEnv(): void {
     // Without this, a missing env var silently falls back to a localhost
     // callback (see configuration.ts) — Google would redirect the OAuth
     // consent flow to a URL nobody in production can reach.
+    // TOTP seeds are reversible secrets — they are encrypted at rest, and the
+    // key lives outside the database on purpose. Without it the server would
+    // fall back to a key derived from JWT_SECRET, which is not acceptable for
+    // a second authentication factor in production.
+    const totpKey = process.env.TOTP_ENCRYPTION_KEY;
+    if (!totpKey || totpKey.trim().length < 32) {
+      errors.push(
+        'TOTP_ENCRYPTION_KEY is required in production and must be at least 32 characters (generate with: openssl rand -hex 32)',
+      );
+    }
     if (
       !process.env.GOOGLE_OAUTH_REDIRECT_URI ||
       process.env.GOOGLE_OAUTH_REDIRECT_URI.includes('localhost')
@@ -68,7 +78,15 @@ async function bootstrap(): Promise<void> {
   const corsOrigin = config.get<string>('corsOrigin', '*');
 
   app.setGlobalPrefix(apiPrefix);
-  app.enableCors({ origin: corsOrigin.split(','), credentials: true });
+  app.enableCors({
+    origin: corsOrigin.split(','),
+    credentials: true,
+    // Downloads are served cross-origin (SPA on :3000, API on :4000), and a
+    // browser hides every header from JS unless it is named here — without
+    // this the filename in Content-Disposition is invisible and exports save
+    // under an opaque id.
+    exposedHeaders: ['Content-Disposition'],
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

@@ -1,7 +1,13 @@
 node_modules
 dist
+# --- Environment files -----------------------------------------------------
+# Every .env variant EXCEPT the committed template. The previous rules covered
+# `.env` and `.env.*.local` only, which left `.env.production`, `.env.local`,
+# `.env.bak` and similar committable — the exact files an operator creates on a
+# server or when editing one by hand.
 .env
-.env.*.local
+.env.*
+!.env.example
 *.log
 coverage
 .DS_Store
@@ -9,3 +15,6 @@ coverage
 # Database dumps — real employee data, never commit these
 backups/
 *.sql.gz
+
+# One-time OAuth output — a long-lived Google credential, never commit it
+google-refresh-token.txt

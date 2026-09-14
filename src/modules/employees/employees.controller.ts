@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 
+import {
+  AuthUser,
+  CurrentUser,
+} from '../../common/decorators/current-user.decorator';
 import { EmployeesService } from './employees.service';
 import { QueryEmployeesDto } from './dto/query-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
@@ -20,12 +24,17 @@ export class EmployeesController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.employeesService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.employeesService.findOne(id, user.id);
   }
 
+  /** Correcting the HR master — restricted in the service, not just in the UI. */
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateEmployeeDto) {
-    return this.employeesService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateEmployeeDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.employeesService.update(id, dto, user.id);
   }
 }

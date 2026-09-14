@@ -202,6 +202,15 @@ model User {
   /// Transient one-time code (hashed) for email 2FA + its expiry.
   otpHash           String?        @map("otp_hash") @db.VarChar(100)
   otpExpiresAt      DateTime?      @map("otp_expires_at")
+  /// The account still holds a password someone else chose for it — the
+  /// employee code it was provisioned with, or an administrator's reset.
+  /// Until it is changed the session may only change the password or sign out.
+  mustChangePassword Boolean       @default(false) @map("must_change_password")
+  /// Consecutive failed password attempts; reset to 0 on any success.
+  failedLoginAttempts Int          @default(0) @map("failed_login_attempts")
+  /// Set when `failedLoginAttempts` crosses the threshold; sign-in is refused
+  /// until this passes, regardless of whether the password is correct.
+  lockedUntil        DateTime?     @map("locked_until")
   employee        Employee?
   roleAssignments  RoleAssignment[]
   notifications    Notification[]
@@ -523,6 +532,8 @@ model Candidate {
   /// when the source sent one instead of — or as well as — a document.
   cvProfile     Json?           @map("cv_profile")
   cvProfileAt   DateTime?       @map("cv_profile_at")
+  /// Postal address the AI read off the CV — prefills the offer letter.
+  cvAddress     String?         @map("cv_address") @db.VarChar(300)
   notes         String?
   salaryExpectation Float?      @map("salary_expectation")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
@@ -720,6 +731,16 @@ model InterviewDelegation {
   delegatedById  String?     @map("delegated_by_id")
   delegatedBy    User?       @relation("InterviewDelegatedBy", fields: [delegatedById], references: [id], onDelete: SetNull)
   note           String?
+  /// How many times this candidate has been handed to this person.
+  ///
+  /// The row is upserted, so a re-send used to be invisible: the note changed
+  /// and `createdAt` stayed at the original hand-off. HR could chase the same
+  /// interviewer three times with no record that they had. 1 on the first
+  /// send; anything above that is a nudge somebody should be able to see.
+  sendCount      Int         @default(1) @map("send_count")
+  /// When it was last sent. `createdAt` remains the FIRST hand-off, so the two
+  /// together say "assigned on the 3rd, chased again on the 11th".
+  lastSentAt     DateTime    @default(now()) @map("last_sent_at")
   /// Set instead of deleting, so an audit of who could act survives.
   revokedAt      DateTime?   @map("revoked_at")
   createdAt      DateTime    @default(now()) @map("created_at")
@@ -746,8 +767,11 @@ model InterviewPanelist {
 /// Phase 3 — a one-click secure evaluation link sent to each panelist (no login required).
 model EvaluationToken {
   id             String         @id @default(cuid())
-  /// Unguessable 32-char hex token (16 random bytes).
-  token          String         @unique @db.VarChar(64)
+  /// Legacy raw token. Null on every token issued since hashing was
+  /// introduced — the raw value now lives only in the emailed link.
+  token          String?        @unique @db.VarChar(64)
+  /// SHA-256 of the raw token. What lookups actually match on.
+  tokenHash      String?        @unique @map("token_hash") @db.VarChar(64)
   roundId        String         @map("round_id")
   round          InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
   panelistUserId String         @map("panelist_user_id")
@@ -790,7 +814,10 @@ model AiProficiencyAttempt {
   id          String    @id @default(cuid())
   candidateId String    @map("candidate_id")
   candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  token       String    @unique @db.VarChar(64)
+  /// Legacy raw token; null for anything issued since hashing was introduced.
+  token       String?   @unique @db.VarChar(64)
+  /// SHA-256 of the raw token — what lookups match on.
+  tokenHash   String?   @unique @map("token_hash") @db.VarChar(64)
   jobGrade    String    @map("job_grade") @db.VarChar(10)
   /// Frozen shuffled subset of AiProficiencyQuestion ids, in display order.
   questionIds String[]  @map("question_ids")
@@ -823,8 +850,10 @@ model Onboarding {
   id              String          @id @default(cuid())
   candidateId     String          @unique @map("candidate_id")
   candidate       Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  /// Unguessable token for the candidate's document-submission + offer pages.
-  token           String          @unique @db.VarChar(64)
+  /// Legacy raw token; null for anything issued since hashing was introduced.
+  token           String?         @unique @db.VarChar(64)
+  /// SHA-256 of the raw token — what lookups match on.
+  tokenHash       String?         @unique @map("token_hash") @db.VarChar(64)
   status          OnboardingStatus @default(docs_pending)
   /// HR can skip waiting for the candidate to submit documents.
   docsSkippedAt   DateTime?       @map("docs_skipped_at")
@@ -1224,7 +1253,10 @@ model BoardApprovalVote {
   batch           BoardApprovalBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
   userId          String          @map("user_id")
   user            User            @relation(fields: [userId], references: [id])
-  token           String          @unique @db.VarChar(64)
+  /// Legacy raw token; null for anything issued since hashing was introduced.
+  token           String?         @unique @db.VarChar(64)
+  /// SHA-256 of the raw token — what lookups match on.
+  tokenHash       String?         @unique @map("token_hash") @db.VarChar(64)
   tokenExpiresAt  DateTime        @map("token_expires_at")
   /// Which link in the chain this vote belongs to.
   stage           BoardApprovalStage @default(board)
@@ -1251,7 +1283,10 @@ model FacilityNotification {
   recipientUser   User      @relation("FacilityNotificationRecipient", fields: [recipientUserId], references: [id])
   recipientName   String    @map("recipient_name") @db.VarChar(150)
   recipientEmail  String    @map("recipient_email") @db.VarChar(254)
-  token           String    @unique @db.VarChar(64)
+  /// Legacy raw token; null for anything issued since hashing was introduced.
+  token           String?   @unique @db.VarChar(64)
+  /// SHA-256 of the raw token — what lookups match on.
+  tokenHash       String?   @unique @map("token_hash") @db.VarChar(64)
   tokenExpiresAt  DateTime  @map("token_expires_at")
   sentById        String    @map("sent_by_id")
   sentBy          User      @relation("FacilityNotificationSentBy", fields: [sentById], references: [id])

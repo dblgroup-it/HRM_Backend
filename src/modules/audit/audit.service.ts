@@ -65,8 +65,37 @@ const REDACTED_FIELDS = new Set([
   'familyHistoryDmHtn',
   'familyHistoryDetail',
   'stableNormotensiveNondiabetic',
-  // Credentials
+  // Medical Fitness Report — the doctor's determination and free-text notes
+  'fitToJoin',
+  'remarks',
+  'registrationNo',
+  'consultantName',
+  // Pay. The doc comment above says pay is kept out of this table; without
+  // these entries it was not — SalaryFixation is a tracked model, so every
+  // proposed figure, override and screening mark was being copied here in
+  // cleartext for anyone who can read the activity log.
+  'salaryExpectation',
+  'proposedSalary',
+  'proposedSalaryOverride',
+  'averageScore',
+  'computedBand',
+  'bandOverride',
+  'writtenTestObtained',
+  'writtenTestTotal',
+  'computerTestObtained',
+  'computerTestTotal',
+  'aiTestObtained',
+  'aiTestTotal',
+  'totalScore',
+  'scores',
+  'salaryScores',
+  'salaryTotal',
+  // Credentials. `User` is tracked, so enabling an authenticator app wrote the
+  // TOTP seed itself into this table — a second copy of the second factor,
+  // behind weaker protection than the users table.
   'passwordHash',
+  'twoFactorSecret',
+  'otpHash',
   'token',
   'refreshToken',
 ]);

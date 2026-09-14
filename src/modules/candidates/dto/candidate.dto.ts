@@ -5,6 +5,7 @@ import {
   IsEmail,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -200,4 +201,19 @@ export class PublicApplyDto {
   @IsNumber()
   @Min(0)
   salaryExpectation?: number;
+}
+
+/**
+ * The free-text query for the AI talent search.
+ *
+ * This endpoint previously took an inline `{ query: string }` type, which the
+ * global ValidationPipe cannot see — so the value reached the AI prompt with no
+ * type check and no length limit at all. A bound length keeps a single request
+ * from becoming an unmetered prompt (and an unmetered bill).
+ */
+export class TalentPoolSearchDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  query!: string;
 }

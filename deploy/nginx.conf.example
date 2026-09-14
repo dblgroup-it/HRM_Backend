@@ -31,6 +31,17 @@ http {
     sendfile      on;
     keepalive_timeout  65;
 
+    # Don't advertise the nginx version in responses / error pages.
+    server_tokens off;
+
+    # Uploads. nginx's default is 1 MB, which is SMALLER than what the API
+    # itself accepts (requisition attachments 15 MB, joining documents 10 MB,
+    # CVs 5 MB) — so without this every large attachment fails at the proxy
+    # with a 413 that never reaches the application and never appears in its
+    # logs. Set above the largest limit in common/upload/file-upload.ts.
+    client_max_body_size 20m;
+    client_body_timeout 60s;
+
     server {
         listen 80;
         server_name talenthub.dbl-group.com;
@@ -46,6 +57,49 @@ http {
         ssl_certificate      "C:/nginx/ssl/talenthub.dbl-group.com.crt";
         ssl_certificate_key  "C:/nginx/ssl/talenthub.dbl-group.com.key";
         ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+
+        # --- Security headers ---------------------------------------------
+        # nginx serves the SPA's HTML directly, and helmet on the API sets no
+        # CSP (it is disabled there because the API returns no documents), so
+        # these are the ONLY place the browser is told anything. `always` is
+        # required or the header is dropped on 4xx/5xx responses.
+        #
+        # HSTS: only turn this on once HTTPS is known-good for every hostname
+        # this certificate covers — browsers cache it and it cannot be undone
+        # quickly. Start with a short max-age, raise it after a week.
+        add_header Strict-Transport-Security "max-age=604800" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+        # frame-ancestors replaces X-Frame-Options; both are sent because some
+        # corporate browsers still only honour the older one.
+        add_header X-Frame-Options "DENY" always;
+
+        # CSP. The session JWT lives in localStorage, so any script execution
+        # on this origin can read it — this is what makes that survivable.
+        #
+        #   script-src 'self'      no 'unsafe-inline' and no 'unsafe-eval'.
+        #                          This is the directive that actually stops an
+        #                          injected <script>; do not weaken it.
+        #   style-src  'unsafe-inline'
+        #                          Required, not laziness: the offer and
+        #                          appointment letters and every print view are
+        #                          built as inline-styled HTML (see
+        #                          onboarding/letters.ts) because they are also
+        #                          emailed, where linked stylesheets do not
+        #                          survive. Inline styles cannot execute script.
+        #   img-src    data: blob: Avatars and generated previews.
+        #   connect-src 'self' wss: The API is proxied under /api and the
+        #                          websocket under /socket.io on this same host.
+        #
+        # Google Drive is deliberately ABSENT. Documents used to be opened on
+        # drive.google.com; they are now streamed by this API from private
+        # storage, so nothing should be loading from Drive any more — and if
+        # something tries, this is where you want to find out.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
 
         # --- Frontend SPA — nginx serves the built static files directly ---
         # Must point at HRM_Frontend/dist (see scripts/deploy.sh, which
@@ -96,6 +150,26 @@ http {
         # MUST come after /api/ and /socket.io/ above, or it swallows them. ---
         location / {
             try_files $uri $uri/ /index.html;
+        }
+
+        # --- Cache policy -------------------------------------------------
+        # index.html must never be cached: deploy.sh swaps dist/ atomically and
+        # the new index.html points at new content-hashed asset filenames. A
+        # cached index.html asks for assets that no longer exist, and because
+        # the SPA fallback above answers ANY unmatched path with index.html,
+        # the browser gets HTML where it expected JavaScript — a white screen
+        # with no server-side error. Hashed assets, by contrast, are immutable.
+        location = /index.html {
+            add_header Cache-Control "no-store, must-revalidate" always;
+            try_files $uri =404;
+        }
+
+        location /assets/ {
+            # Content-hashed filenames — safe to cache for a year. `=404` stops
+            # a missing asset falling through to the SPA fallback and being
+            # served as HTML with a 200.
+            add_header Cache-Control "public, max-age=31536000, immutable" always;
+            try_files $uri =404;
         }
     }
 }
