@@ -513,16 +513,29 @@ no `unsafe-inline`), HSTS (short `max-age` to start), `nosniff`,
 **This file is documentation — it is not the live config.** Someone must apply
 it on the server. See §25.
 
-### M-8 — nginx will reject every upload over 1 MB · **FIXED in the reference config**
+### M-8 — nginx body-size limit · **NOT A DEFECT ON THIS SERVER — see resolution**
 
-`client_max_body_size` was not set, so nginx's 1 MB default applies — while the
-API accepts CVs up to 5 MB, joining documents up to 10 MB and requisition
-attachments up to 15 MB. Large uploads fail at the proxy with a 413 that never
-reaches the application and never appears in its logs.
+`client_max_body_size` was not set **in `deploy/nginx.conf.example`**, so this
+finding reasoned that nginx's 1 MB default would apply — while the API accepts
+CVs up to 5 MB, joining documents up to 10 MB and requisition attachments up to
+15 MB.
 
-**Fix applied:** `client_max_body_size 20m`. **Verify this on the live server** —
-if uploads currently work in production, the live config already differs from
-this documented copy, which is itself worth reconciling.
+**Resolution, 2026-09-14.** The premise did not hold. The finding was drawn from
+the reference config in this repository, not from the live server, and the two
+had diverged: `client_max_body_size 20m` was already present in production,
+added 2026-08-12. Measured on the live server, a 2 MB POST returned **500, not
+413**, byte-identical through nginx and sent directly to port 4000 — nginx was
+passing the body through untouched. Retested at 6 MB after the header work: still
+no 413.
+
+So if users report large uploads failing, the cause is in the application, not
+the proxy, and this finding should not be used to point at nginx.
+
+**Standing lesson:** a finding about live infrastructure that was derived from a
+file in this repository is a hypothesis about production, not an observation of
+it. The same mistake produced a wrong server path (`C:\apps\DBL-HRM` for what is
+actually `D:\DBL HRM`) elsewhere in this release. State the evidence, and mark
+anything unverified as unverified.
 
 ### M-9 — `index.html` is served with no cache policy · **FIXED in the reference config**
 
