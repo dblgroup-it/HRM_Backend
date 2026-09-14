@@ -115,6 +115,20 @@ const NEXT_STAGE: Record<string, 'chro' | 'board' | null> = {
   board: null,
 };
 
+/**
+ * How long an emailed board-approval link stays usable.
+ *
+ * Board members are the least available people in the process and act on their
+ * own schedule — travel, leave, a month between sittings. The link is already
+ * narrow in what it can do: it reaches exactly one candidate's papers, and it
+ * stops working the moment that member votes, so a long life costs little and
+ * a short one costs a re-send and an apology.
+ *
+ * Set in three places (initial send, re-send, reminder); one constant so they
+ * cannot drift apart.
+ */
+const BOARD_TOKEN_VALID_MS = 60 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class BoardService {
   private readonly logger = new Logger(BoardService.name);
@@ -425,7 +439,7 @@ export class BoardService {
     });
 
     const salary = await this.fixedSalary(candidate.id);
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + BOARD_TOKEN_VALID_MS);
     const frontendUrl =
       this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
 
@@ -1344,7 +1358,7 @@ export class BoardService {
         }),
       ),
     );
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + BOARD_TOKEN_VALID_MS);
     const frontendUrl =
       this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
 
@@ -1491,7 +1505,7 @@ export class BoardService {
         }),
       ),
     );
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + BOARD_TOKEN_VALID_MS);
     const frontendUrl =
       this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
 

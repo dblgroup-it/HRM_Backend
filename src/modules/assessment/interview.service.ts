@@ -61,6 +61,25 @@ type RoundFull = Prisma.InterviewRoundGetPayload<{
   include: typeof roundInclude;
 }>;
 
+/**
+ * How long an emailed evaluation link stays usable.
+ *
+ * Measured from the interview itself where one is scheduled, so the clock
+ * starts when the panelist actually has something to write up, and from now
+ * when it is not.
+ *
+ * It was 48 hours, which assumed panelists write up the same day or the next.
+ * Senior interviewers write up when they get to it — a Sunday interview
+ * reviewed on Wednesday found a dead link, which reads as a broken system
+ * rather than an expired one. Seven days covers a normal working week off.
+ *
+ * Used in both places an expiry is set: minting the token, and re-dating
+ * pending tokens when a round is rescheduled. Keeping it in one constant is
+ * the point — when these were two literals, changing one silently left the
+ * other, so rescheduling an interview quietly reverted the link to 48 hours.
+ */
+const EVAL_TOKEN_VALID_MS = 7 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class InterviewService {
   private readonly logger = new Logger(InterviewService.name);
@@ -289,7 +308,7 @@ export class InterviewService {
       // scheduledAt changed — update expiry on pending tokens.
       const newDate = toDate(dto.scheduledAt);
       if (newDate) {
-        const newExpiry = new Date(newDate.getTime() + 48 * 60 * 60 * 1000);
+        const newExpiry = new Date(newDate.getTime() + EVAL_TOKEN_VALID_MS);
         await this.prisma.evaluationToken.updateMany({
           where: { roundId, status: { not: 'submitted' } },
           data: { expiresAt: newExpiry },
@@ -670,9 +689,9 @@ export class InterviewService {
     }
 
     const newToken = randomBytes(16).toString('hex');
-    const expiresAt = round.scheduledAt
-      ? new Date(round.scheduledAt.getTime() + 48 * 60 * 60 * 1000)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(
+      (round.scheduledAt?.getTime() ?? Date.now()) + EVAL_TOKEN_VALID_MS,
+    );
 
     await this.prisma.evaluationToken.upsert({
       where: { roundId_panelistUserId: { roundId, panelistUserId } },
@@ -697,9 +716,9 @@ export class InterviewService {
     panelistUserIds: string[],
     scheduledAt: Date | null,
   ) {
-    const expiresAt = scheduledAt
-      ? new Date(scheduledAt.getTime() + 48 * 60 * 60 * 1000)
-      : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(
+      (scheduledAt?.getTime() ?? Date.now()) + EVAL_TOKEN_VALID_MS,
+    );
 
     await Promise.all(
       panelistUserIds.map(async (panelistUserId) => {
