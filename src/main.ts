@@ -62,6 +62,21 @@ function validateEnv(): void {
 async function bootstrap(): Promise<void> {
   validateEnv();
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
+
+  // Trust exactly one proxy hop, so `req.ip` is the real client rather than
+  // nginx.
+  //
+  // Without this, Express reports the proxy's own address for every request and
+  // @nestjs/throttler — whose default tracker is literally `req.ip` — buckets
+  // the entire company together. Every per-route limit then applies to everyone
+  // at once: `@Throttle({ limit: 10 })` on login becomes ten sign-ins per minute
+  // for the whole organisation, not per person, and the eleventh user at 9am
+  // gets a 429 they cannot do anything about.
+  //
+  // `1`, not `true`: trusting every hop lets a client that can reach the API
+  // directly spoof X-Forwarded-For and mint itself a fresh rate-limit bucket per
+  // request. One hop trusts nginx and nothing beyond it.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
   // The SPA on a different origin loads images/files from this API (avatars,
   // Drive proxies), so resources must be cross-origin readable. We also serve
   // no HTML, so helmet's CSP (which governs documents) only gets in the way.
