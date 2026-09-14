@@ -4,6 +4,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  migrateTokenFields,
+  newTokenFields,
+  tokenLookupWhere,
+} from '../../common/crypto/action-token';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 
@@ -192,7 +197,8 @@ export class FacilityProvisioningService {
           recipientUserId,
           recipientName,
           recipientEmail,
-          token,
+          // Hash only — the raw token lives in the emailed confirmation link.
+          ...newTokenFields(token),
           tokenExpiresAt,
           sentById: actor.id,
         },
@@ -228,8 +234,8 @@ export class FacilityProvisioningService {
   // --- Public (token) ------------------------------------------------------
 
   async getByToken(token: string) {
-    const n = await this.prisma.facilityNotification.findUnique({
-      where: { token },
+    const n = await this.prisma.facilityNotification.findFirst({
+      where: tokenLookupWhere(token),
       include: { candidate: { include: { requisition: true } } },
     });
     if (!n)
@@ -256,14 +262,22 @@ export class FacilityProvisioningService {
   }
 
   async confirmByToken(token: string, note?: string) {
-    const n = await this.prisma.facilityNotification.findUnique({
-      where: { token },
+    const n = await this.prisma.facilityNotification.findFirst({
+      where: tokenLookupWhere(token),
       include: { candidate: { include: { requisition: true } } },
     });
     if (!n) throw new NotFoundException('Invalid link.');
     if (new Date() > n.tokenExpiresAt)
       throw new BadRequestException('This link has expired.');
     if (n.confirmedAt) return { ok: true, alreadyConfirmed: true };
+
+    // A link issued before hashing carries the raw value; retire it as it is
+    // used, so the residue drains away without anyone's link breaking.
+    if (!n.tokenHash) {
+      await this.prisma.facilityNotification
+        .update({ where: { id: n.id }, data: migrateTokenFields(token) })
+        .catch(() => undefined);
+    }
 
     await this.prisma.facilityNotification.update({
       where: { id: n.id },

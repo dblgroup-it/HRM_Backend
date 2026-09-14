@@ -7,8 +7,11 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import configuration from './config/configuration';
 import { PrismaModule } from './prisma/prisma.module';
 import { MemoryCacheModule } from './common/cache/memory-cache.module';
+import { SecureFilesModule } from './common/files/secure-files.module';
+import { CryptoModule } from './common/crypto/crypto.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { FirstLoginGuard } from './common/guards/first-login.guard';
 import { HealthController } from './health/health.controller';
 import { AuthModule } from './modules/auth/auth.module';
 import { EmployeesModule } from './modules/employees/employees.module';
@@ -46,6 +49,12 @@ import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.mod
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     PrismaModule,
     MemoryCacheModule,
+    // Streams private Drive documents to authorized callers — replaces the
+    // "anyone with the link" grants that made CVs, joining documents and
+    // medical reports permanently public.
+    SecureFilesModule,
+    // Encrypts TOTP secrets at rest (AES-256-GCM).
+    CryptoModule,
     AuthModule,
     EmployeesModule,
     DashboardModule,
@@ -82,6 +91,9 @@ import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.mod
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // JWT auth applies globally; opt out per-route with @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // After authentication, before any role check: an account still holding
+    // the password it was provisioned with may only change it or sign out.
+    { provide: APP_GUARD, useClass: FirstLoginGuard },
     // Role checks apply where @Roles() is present.
     { provide: APP_GUARD, useClass: RolesGuard },
   ],

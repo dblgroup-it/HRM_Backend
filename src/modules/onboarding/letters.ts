@@ -132,7 +132,11 @@ ${body}
 }
 
 function head(input: LetterInput, showDate: boolean): string {
-  const title = input.salutation?.trim() ? `${input.salutation.trim()} ` : '';
+  // Escaped like every other interpolated value: this lands in HTML that is
+  // rendered with dangerouslySetInnerHTML in the review modal and emailed out.
+  const title = input.salutation?.trim()
+    ? `${esc(input.salutation.trim())} `
+    : '';
   return `
   <p style="${P}">
     Date: ${fmtDate(input.date ?? new Date())}${showDate ? '' : ''}<br>
@@ -340,7 +344,11 @@ export function buildOfferLetter(
  * letter), so it is one document rather than two.
  */
 export function buildAppointmentLetter(input: LetterInput): string {
-  const title = input.salutation?.trim() ? `${input.salutation.trim()} ` : '';
+  // Escaped like every other interpolated value: this lands in HTML that is
+  // rendered with dangerouslySetInnerHTML in the review modal and emailed out.
+  const title = input.salutation?.trim()
+    ? `${esc(input.salutation.trim())} `
+    : '';
   return shell(`
   <p style="${P}">
     Date: ${fmtDate(input.date ?? new Date())}<br>

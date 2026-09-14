@@ -1,3 +1,6 @@
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import { Controller, Get, Logger, Query, Res } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import type { Response } from 'express';
@@ -108,18 +111,26 @@ export class GoogleController {
         return;
       }
 
-      // Token is logged server-side only — never rendered in the browser.
+      // The refresh token is a long-lived credential for the recruitment Google
+      // account — every CV, every joining document. It used to be written to
+      // the application log, which PM2 keeps on disk, rotates, and which anyone
+      // reading logs or shipping them off the box can see. It is now written
+      // once to an owner-only file that the operator reads and deletes.
+      const outFile = join(process.cwd(), 'google-refresh-token.txt');
+      await writeFile(outFile, `GOOGLE_REFRESH_TOKEN=${refresh}\n`, {
+        mode: 0o600,
+      });
       this.logger.log(
-        'Google Drive consent complete. Add the following line to HRM_Backend/.env then restart:',
+        `Google Drive consent complete. Refresh token written to ${outFile} (delete it after copying into .env).`,
       );
-      this.logger.log(`GOOGLE_REFRESH_TOKEN=${refresh}`);
 
       res.type('html').send(
         page(
           'Google Drive connected ✓',
-          `<p>The refresh token has been printed to the <strong>backend server console / terminal</strong>.</p>
-           <p>Copy the <code>GOOGLE_REFRESH_TOKEN=…</code> line from the terminal into
-           <code>HRM_Backend/.env</code>, then restart the backend.</p>
+          `<p>The refresh token has been written to
+           <code>HRM_Backend/google-refresh-token.txt</code> on the server (owner-readable only).</p>
+           <p>Copy the <code>GOOGLE_REFRESH_TOKEN=…</code> line into
+           <code>HRM_Backend/.env</code>, <strong>delete that file</strong>, then restart the backend.</p>
            <p>After restarting, recruitment folders will be created automatically when a requisition is posted.</p>`,
         ),
       );

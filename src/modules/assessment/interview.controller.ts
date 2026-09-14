@@ -1,5 +1,6 @@
 import {
   Body,
+  HttpCode,
   Controller,
   Delete,
   Get,
@@ -16,6 +17,7 @@ import { InterviewService } from './interview.service';
 import {
   BulkScheduleInterviewDto,
   DelegateInterviewsDto,
+  DelegateWorkloadDto,
   FirstInterviewOutcomeDto,
   ScheduleInterviewDto,
   SubmitEvaluationDto,
@@ -40,6 +42,30 @@ export class InterviewController {
   }
 
   /** Candidates handed to me, with whether a round exists yet. */
+  /**
+   * What each named interviewer is currently carrying.
+   *
+   * POST because the list of people can be long enough to strain a query
+   * string, and because it reads as "tell me about these people".
+   */
+  @Post('interview-delegations/workload')
+  @HttpCode(200)
+  delegateWorkload(
+    @Body() dto: DelegateWorkloadDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.delegateWorkload(dto.userIds, user.id);
+  }
+
+  /** The scoreboard: every delegation on a requisition and where it stands. */
+  @Get('requisitions/:reqId/interview-delegations')
+  delegationBoard(
+    @Param('reqId') reqId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.requisitionDelegationBoard(reqId, user.id);
+  }
+
   @Get('my-delegated-candidates')
   myDelegated(@CurrentUser() user: AuthUser) {
     return this.interviews.myDelegatedCandidates(user.id);

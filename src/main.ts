@@ -30,6 +30,16 @@ function validateEnv(): void {
     // Without this, a missing env var silently falls back to a localhost
     // callback (see configuration.ts) — Google would redirect the OAuth
     // consent flow to a URL nobody in production can reach.
+    // TOTP seeds are reversible secrets — they are encrypted at rest, and the
+    // key lives outside the database on purpose. Without it the server would
+    // fall back to a key derived from JWT_SECRET, which is not acceptable for
+    // a second authentication factor in production.
+    const totpKey = process.env.TOTP_ENCRYPTION_KEY;
+    if (!totpKey || totpKey.trim().length < 32) {
+      errors.push(
+        'TOTP_ENCRYPTION_KEY is required in production and must be at least 32 characters (generate with: openssl rand -hex 32)',
+      );
+    }
     if (
       !process.env.GOOGLE_OAUTH_REDIRECT_URI ||
       process.env.GOOGLE_OAUTH_REDIRECT_URI.includes('localhost')

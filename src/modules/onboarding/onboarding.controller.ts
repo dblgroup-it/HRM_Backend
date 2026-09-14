@@ -5,9 +5,11 @@ import {
   Param,
   Patch,
   Post,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 
@@ -81,6 +83,29 @@ export class OnboardingController {
   @Post('onboarding/docs/:docId/summarize')
   summarizeDoc(@Param('docId') docId: string, @CurrentUser() user: AuthUser) {
     return this.onboarding.summarizeDoc(docId, user.id);
+  }
+
+  /**
+   * The document itself. Ordinary joining documents need recruitment access;
+   * anything clinical needs a medical role — enforced in the service.
+   */
+  @Get('onboarding/docs/:docId/file')
+  docFile(
+    @Param('docId') docId: string,
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ) {
+    return this.onboarding.streamDoc(docId, user.id, res);
+  }
+
+  /** The Medical Fitness Report — medical roles only. */
+  @Get('onboarding/:id/medical-report/file')
+  medicalReportFile(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ) {
+    return this.onboarding.streamMedicalReport(id, user.id, res);
   }
 
   @Patch('onboarding/docs/:docId/verify')

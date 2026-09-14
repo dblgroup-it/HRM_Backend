@@ -28,6 +28,7 @@ import {
   CreateCandidateDto,
   EmailCandidateDto,
   FlagCandidateDto,
+  TalentPoolSearchDto,
   UpdateCandidateDto,
 } from './dto/candidate.dto';
 
@@ -52,7 +53,7 @@ export class CandidatesController {
 
   @Post('candidates/talent-pool/search')
   searchTalentPool(
-    @Body() body: { query: string },
+    @Body() body: TalentPoolSearchDto,
     @CurrentUser() user: AuthUser,
   ) {
     return this.candidates.aiSearchTalentPool(body.query, user.id);
@@ -87,8 +88,11 @@ export class CandidatesController {
   }
 
   @Get('requisitions/:reqId/candidates/screening-status')
-  screeningStatus(@Param('reqId') reqId: string) {
-    return this.candidates.getScreeningStatus(reqId);
+  screeningStatus(
+    @Param('reqId') reqId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.candidates.getScreeningStatus(reqId, user.id);
   }
 
   @Get('requisitions/:reqId/candidates/export')
@@ -172,6 +176,21 @@ export class CandidatesController {
     return this.candidates.cv(id, user.id);
   }
 
+  /**
+   * The CV document itself, streamed from private storage.
+   *
+   * The file is no longer readable on Google Drive by anyone with a link; this
+   * route re-runs the candidate's authorization check and streams the bytes.
+   */
+  @Get('candidates/:id/cv/file')
+  cvFile(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ) {
+    return this.candidates.streamCv(id, user.id, res);
+  }
+
   /** The whole lifecycle of this hire, oldest first — feeds the printed summary. */
   @Get('candidates/:id/timeline')
   timeline(@Param('id') id: string, @CurrentUser() user: AuthUser) {
@@ -240,9 +259,15 @@ export class CandidatesController {
     );
   }
 
-  /** One-time admin fix: share all existing private CV files as "anyone with link". */
+  /**
+   * Sweep: take "anyone with the link" back off every CV.
+   *
+   * The path is unchanged so an operator's bookmark still works, but it now
+   * does the opposite of what it used to — CVs are streamed by this API, not
+   * served from a permanent public Drive URL.
+   */
   @Post('admin/candidates/fix-cv-sharing')
-  fixCvSharing(@CurrentUser() user: AuthUser) {
-    return this.candidates.backfillCvSharing(user.id);
+  revokePublicCvAccess(@CurrentUser() user: AuthUser) {
+    return this.candidates.revokePublicCvAccess(user.id);
   }
 }

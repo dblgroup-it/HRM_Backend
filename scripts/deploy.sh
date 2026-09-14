@@ -193,7 +193,7 @@ cat <<SUMMARY
  in the target database with the backup's contents; take a fresh backup
  of the current state first if you might need it):
    dropdb --if-exists <db_name> && createdb <db_name> && \\
-     "$PSQL" "$DATABASE_URL" < "$BACKUP_FILE"
+     "$PSQL" "<DATABASE_URL from $BACKEND_DIR/.env>" < "$BACKUP_FILE"
  (confirm <db_name> matches DATABASE_URL in $BACKEND_DIR/.env before running this)
 
  Backend code (previous commit):

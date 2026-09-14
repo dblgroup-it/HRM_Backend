@@ -1,4 +1,10 @@
 import { randomBytes } from 'node:crypto';
+import { tokenLookupWhere } from '../../common/crypto/action-token';
+import {
+  daysSince,
+  delegationProgress,
+  type DelegationStage,
+} from './delegation-progress';
 
 import {
   BadRequestException,
@@ -16,6 +22,10 @@ import {
   Prisma,
 } from '@prisma/client';
 
+import type { Response } from 'express';
+
+import { FileGrantService } from '../../common/files/file-grant.service';
+import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { sameUnit } from '../../common/util/normalize-unit';
@@ -62,6 +72,8 @@ export class InterviewService {
     private readonly mail: MailService,
     private readonly calendar: CalendarService,
     private readonly settings: SettingsService,
+    private readonly files: FileGrantService,
+    private readonly secureFiles: SecureFileService,
   ) {}
 
   async listForRequisition(reqId: string, userId: string) {
@@ -339,6 +351,7 @@ export class InterviewService {
             email: true,
             phone: true,
             cvUrl: true,
+            cvFileId: true,
           },
         },
         requisition: {
@@ -369,7 +382,11 @@ export class InterviewService {
           name: r.candidate.name,
           email: r.candidate.email ?? '',
           phone: r.candidate.phone ?? '',
-          cvUrl: r.candidate.cvUrl,
+          // Streamed by this API, not a public Drive link.
+          cvUrl:
+            this.files.url(r.candidate.cvFileId, 'cv', {
+              filename: `${r.candidate.name} — CV`,
+            }) ?? r.candidate.cvUrl,
         },
         requisition: {
           id: r.requisition.id,
@@ -450,16 +467,50 @@ export class InterviewService {
   // --- secure one-click evaluation (no login) --------------------------------
 
   /** Public: return the eval form data for a token. Marks as opened on first access. */
+  /**
+   * The CV of the candidate this evaluation link is for.
+   *
+   * A panelist marking an interview has no login; the evaluation token is their
+   * credential. The candidate is resolved from the token, so the URL cannot be
+   * edited to read anyone else's CV, and it stops working when the token
+   * expires or the evaluation is submitted.
+   */
+  async streamEvalCv(token: string, res: Response): Promise<void> {
+    const et = await this.prisma.evaluationToken.findFirst({
+      where: tokenLookupWhere(token),
+      include: {
+        round: {
+          include: { candidate: { select: { name: true, cvFileId: true } } },
+        },
+      },
+    });
+    if (!et) throw new NotFoundException('This evaluation link is invalid.');
+    if (et.expiresAt < new Date()) {
+      throw new BadRequestException('This evaluation link has expired.');
+    }
+    const candidate = et.round.candidate;
+    if (!candidate.cvFileId) {
+      throw new NotFoundException(
+        'No CV document is on file for this candidate.',
+      );
+    }
+    await this.secureFiles.stream(res, candidate.cvFileId, {
+      filename: `${candidate.name} — CV`,
+    });
+  }
+
   async getEvalByToken(token: string) {
-    const et = await this.prisma.evaluationToken.findUnique({
-      where: { token },
+    const et = await this.prisma.evaluationToken.findFirst({
+      where: tokenLookupWhere(token),
       include: {
         round: {
           include: {
             // The CV goes with the marks: a panelist scoring someone needs to
             // read their background, and on the token path they have no other
             // way in — there is no login and no candidate page for them.
-            candidate: { select: { name: true, cvUrl: true } },
+            candidate: {
+              select: { id: true, name: true, cvUrl: true, cvFileId: true },
+            },
             requisition: {
               select: {
                 designation: true,
@@ -509,7 +560,12 @@ export class InterviewService {
       panelistName: et.panelistUser.name,
       candidate: {
         name: et.round.candidate.name,
-        cvUrl: et.round.candidate.cvUrl,
+        // Scoped to this evaluation token. The panelist has no login, so the
+        // token is their credential — and it only ever reaches the CV of the
+        // candidate they were asked to mark.
+        cvUrl: et.round.candidate.cvFileId
+          ? `/api/eval/${et.token}/cv`
+          : et.round.candidate.cvUrl,
       },
       interview: {
         kind: et.round.kind.toLowerCase(),
@@ -532,8 +588,8 @@ export class InterviewService {
 
   /** Public: submit marks via a one-click token (no login). */
   async submitEvalByToken(token: string, dto: SubmitEvaluationDto) {
-    const et = await this.prisma.evaluationToken.findUnique({
-      where: { token },
+    const et = await this.prisma.evaluationToken.findFirst({
+      where: tokenLookupWhere(token),
       include: { round: { select: { id: true, requisitionId: true } } },
     });
 
@@ -851,11 +907,16 @@ export class InterviewService {
             delegatedById: actor.id,
             note: note?.trim() || null,
           },
-          // Re-sending a previously revoked delegation restores it.
+          // Re-sending a previously revoked delegation restores it — and is
+          // now recorded. `createdAt` stays at the first hand-off while
+          // `lastSentAt` moves, so the pair reads "assigned on the 3rd, chased
+          // again on the 11th" instead of quietly looking like one send.
           update: {
             revokedAt: null,
             delegatedById: actor.id,
             note: note?.trim() || null,
+            sendCount: { increment: 1 },
+            lastSentAt: new Date(),
           },
         });
       }
@@ -1084,6 +1145,13 @@ export class InterviewService {
   }
 
   /** Who a candidate is currently delegated to. */
+  /**
+   * Who this candidate is with, and what has happened since.
+   *
+   * Previously this returned only who and when, which left the person who sent
+   * the work unable to answer the two questions they actually have: have I sent
+   * this before, and has anything happened?
+   */
   async listDelegations(candidateId: string, userId: string) {
     const cand = await this.loadCandidate(candidateId, userId);
     const rows = await this.prisma.interviewDelegation.findMany({
@@ -1094,13 +1162,254 @@ export class InterviewService {
       },
       orderBy: { createdAt: 'asc' },
     });
+
+    // The candidate's rounds are shared by every delegation on them — one read.
+    const progress = await this.progressFor([candidateId]);
+    const p = progress.get(candidateId);
+
     return rows.map((r) => ({
       id: r.id,
       note: r.note,
       createdAt: r.createdAt.toISOString(),
       delegatedTo: r.delegatedTo,
       delegatedBy: r.delegatedBy,
+      /** 1 on the first send; above that it has been chased. */
+      sendCount: r.sendCount,
+      lastSentAt: r.lastSentAt.toISOString(),
+      resent: r.sendCount > 1,
+      /** Whole days since the most recent send — "waiting 9 days". */
+      waitingDays: daysSince(r.lastSentAt),
+      stage: p?.stage ?? 'sent',
+      stageLabel: p?.label ?? 'No action yet',
+      complete: p?.complete ?? false,
+      scheduledAt: p?.scheduledAt ?? null,
     }));
+  }
+
+  /**
+   * Derive the delegation stage for a set of candidates in one pass.
+   *
+   * Shared by the per-candidate view, the requisition board and the workload
+   * roll-up so all three agree; and batched because the board asks about every
+   * candidate on a requisition at once.
+   */
+  private async progressFor(candidateIds: string[]) {
+    if (candidateIds.length === 0) {
+      return new Map<string, ReturnType<typeof delegationProgress>>();
+    }
+    const candidates = await this.prisma.candidate.findMany({
+      where: { id: { in: candidateIds } },
+      select: {
+        id: true,
+        stage: true,
+        rejectedAt: true,
+        interviews: {
+          select: {
+            status: true,
+            scheduledAt: true,
+            _count: { select: { evaluations: true } },
+          },
+        },
+      },
+    });
+    const now = new Date();
+    return new Map(
+      candidates.map((c) => [
+        c.id,
+        delegationProgress(
+          {
+            candidateStage: c.stage,
+            rejectedAt: c.rejectedAt,
+            rounds: c.interviews.map((r) => ({
+              status: r.status,
+              scheduledAt: r.scheduledAt,
+              evaluationCount: r._count.evaluations,
+            })),
+          },
+          now,
+        ),
+      ]),
+    );
+  }
+
+  /**
+   * What each interviewer is currently carrying.
+   *
+   * Feeds the send dialog. Before this, picking someone to hand five CVs to
+   * told you nothing about the twenty they were already sitting on, so work
+   * piled onto whoever came first alphabetically.
+   *
+   * Counts every open delegation the person holds — not only on this
+   * requisition — because their capacity is their whole load, not the slice
+   * you happen to be looking at.
+   */
+  async delegateWorkload(userIds: string[], actorId: string) {
+    if (userIds.length === 0) return [];
+
+    // The caller is already inside a recruitment surface; this returns
+    // workload counts for named people, never candidate detail.
+    await this.requireAnyRecruitmentRole(actorId);
+
+    const rows = await this.prisma.interviewDelegation.findMany({
+      where: { delegatedToId: { in: userIds }, revokedAt: null },
+      select: {
+        delegatedToId: true,
+        candidateId: true,
+        lastSentAt: true,
+        sendCount: true,
+      },
+    });
+    if (rows.length === 0) {
+      return userIds.map((id) => emptyWorkload(id));
+    }
+
+    const progress = await this.progressFor([
+      ...new Set(rows.map((r) => r.candidateId)),
+    ]);
+
+    const byUser = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const list = byUser.get(r.delegatedToId) ?? [];
+      list.push(r);
+      byUser.set(r.delegatedToId, list);
+    }
+
+    return userIds.map((userId) => {
+      const mine = byUser.get(userId) ?? [];
+      if (mine.length === 0) return emptyWorkload(userId);
+
+      let waiting = 0;
+      let scheduled = 0;
+      let done = 0;
+      let oldestWaitingDays = 0;
+
+      for (const d of mine) {
+        const stage: DelegationStage =
+          progress.get(d.candidateId)?.stage ?? 'sent';
+        if (stage === 'sent') {
+          waiting++;
+          // "Oldest waiting" counts from the last send, not the first: a chase
+          // resets the clock on the person being chased.
+          oldestWaitingDays = Math.max(
+            oldestWaitingDays,
+            daysSince(d.lastSentAt),
+          );
+        } else if (stage === 'scheduled' || stage === 'interviewed') {
+          scheduled++;
+        } else {
+          done++;
+        }
+      }
+
+      return {
+        userId,
+        holds: mine.length,
+        /** Handed over and nothing arranged yet — the number that matters. */
+        waiting,
+        /** Arranged or already held, marks not in. */
+        inProgress: scheduled,
+        done,
+        oldestWaitingDays,
+        /** Anything chased at least once. */
+        resent: mine.filter((d) => d.sendCount > 1).length,
+      };
+    });
+  }
+
+  /**
+   * Every delegation on a requisition, with where each candidate has reached.
+   *
+   * The scoreboard: one place where whoever sent the work can see what came of
+   * it, rather than opening candidates one at a time.
+   */
+  async requisitionDelegationBoard(reqId: string, userId: string) {
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+      select: { id: true, unitFactory: true, recruiterId: true },
+    });
+    if (!req) throw new NotFoundException('Requisition not found');
+    await this.requireRecruitmentAccess(req, userId);
+
+    const rows = await this.prisma.interviewDelegation.findMany({
+      where: { requisitionId: reqId, revokedAt: null },
+      include: {
+        delegatedTo: { select: { id: true, name: true, employeeCode: true } },
+        delegatedBy: { select: { id: true, name: true } },
+        candidate: { select: { id: true, name: true, stage: true } },
+      },
+      orderBy: [{ lastSentAt: 'desc' }],
+    });
+
+    const progress = await this.progressFor([
+      ...new Set(rows.map((r) => r.candidateId)),
+    ]);
+
+    const items = rows.map((r) => {
+      const p = progress.get(r.candidateId);
+      return {
+        id: r.id,
+        candidate: {
+          id: r.candidate.id,
+          name: r.candidate.name,
+          stage: r.candidate.stage.toLowerCase(),
+        },
+        delegatedTo: r.delegatedTo,
+        delegatedBy: r.delegatedBy,
+        note: r.note,
+        firstSentAt: r.createdAt.toISOString(),
+        lastSentAt: r.lastSentAt.toISOString(),
+        sendCount: r.sendCount,
+        resent: r.sendCount > 1,
+        waitingDays: daysSince(r.lastSentAt),
+        stage: p?.stage ?? 'sent',
+        stageLabel: p?.label ?? 'No action yet',
+        complete: p?.complete ?? false,
+        scheduledAt: p?.scheduledAt ?? null,
+      };
+    });
+
+    // A roll-up per interviewer, so the board reads as "who owes what".
+    const byDelegate = new Map<string, (typeof items)[number][]>();
+    for (const i of items) {
+      const list = byDelegate.get(i.delegatedTo.id) ?? [];
+      list.push(i);
+      byDelegate.set(i.delegatedTo.id, list);
+    }
+
+    return {
+      total: items.length,
+      waiting: items.filter((i) => i.stage === 'sent').length,
+      inProgress: items.filter(
+        (i) => i.stage === 'scheduled' || i.stage === 'interviewed',
+      ).length,
+      done: items.filter((i) => i.complete).length,
+      delegates: [...byDelegate.entries()].map(([id, list]) => ({
+        delegate: list[0].delegatedTo,
+        holds: list.length,
+        waiting: list.filter((i) => i.stage === 'sent').length,
+        done: list.filter((i) => i.complete).length,
+        oldestWaitingDays: list
+          .filter((i) => i.stage === 'sent')
+          .reduce((max, i) => Math.max(max, i.waitingDays), 0),
+        candidates: list,
+        delegateId: id,
+      })),
+      items,
+    };
+  }
+
+  /** Any recruitment-side role. Used where the answer names people, not data. */
+  private async requireAnyRecruitmentRole(userId: string): Promise<void> {
+    if (await this.permissions.isSuperUser(userId)) return;
+    const perms = await this.permissions.getUserPermissions(userId);
+    const ok = perms.roles.some((r) =>
+      ['corporate_hr', 'chro', 'corporate_recruiter'].includes(r.key),
+    );
+    if (!ok) {
+      throw new ForbiddenException(
+        'Only Head of Talent Acquisition, CHRO, a recruiter or a super user can see interviewer workload',
+      );
+    }
   }
 
   /** Candidates handed to me — the delegate's own worklist. */
@@ -1237,7 +1546,10 @@ export class InterviewService {
         email: r.candidate.email,
         phone: r.candidate.phone,
         stage: r.candidate.stage.toLowerCase(),
-        cvUrl: r.candidate.cvUrl,
+        cvUrl:
+          this.files.url(r.candidate.cvFileId, 'cv', {
+            filename: `${r.candidate.name} — CV`,
+          }) ?? r.candidate.cvUrl,
         rejectedAt: r.candidate.rejectedAt?.toISOString() ?? null,
         rejectionStage: r.candidate.rejectionStage,
         rejectionReason: r.candidate.rejectionReason,
@@ -1351,7 +1663,7 @@ function serializeRound(r: RoundFull) {
         designation: p.user.employee?.designation ?? null,
         hasMarked: evaluated.has(p.userId),
         tokenStatus: tok?.status ?? null,
-        evalLink: tok ? evalLink(tok.token) : null,
+        evalLink: tok?.token ? evalLink(tok.token) : null,
       };
     }),
     evaluations: r.evaluations.map((e) => ({
@@ -1378,4 +1690,17 @@ function toDate(value?: string): Date | null {
   if (!value) return null;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** A person carrying nothing — still returned, so the picker shows a zero. */
+function emptyWorkload(userId: string) {
+  return {
+    userId,
+    holds: 0,
+    waiting: 0,
+    inProgress: 0,
+    done: 0,
+    oldestWaitingDays: 0,
+    resent: 0,
+  };
 }

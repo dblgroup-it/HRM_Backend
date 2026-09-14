@@ -88,10 +88,28 @@ export class DriveService {
     return this.ensureFolder(name);
   }
 
+  /**
+   * Publish a file or folder as "anyone with the link".
+   *
+   * **Do not call this for anything containing personal data.** A CV, a medical
+   * report, a national ID or a certificate published this way gets a permanent,
+   * unauthenticated, non-expiring, unlogged URL that cannot be recalled once it
+   * has been forwarded. Every such call site was removed; documents are now
+   * streamed by this API instead (see `common/files/`).
+   *
+   * The method is kept for the one thing that legitimately needs it: the
+   * "01 All CVs" *drop-box folder*, whose whole purpose is that an external
+   * applicant can put a CV into it. Callers must pass `reason` so an
+   * inappropriate use is visible in review and in the log.
+   */
   async shareAnyoneWithLink(
     fileId: string,
-    role: 'reader' | 'writer' = 'writer',
+    role: 'reader' | 'writer',
+    reason: 'cv-dropbox-folder',
   ) {
+    this.logger.log(
+      `Publishing Drive object ${fileId} as anyone-with-link (${role}) — reason: ${reason}`,
+    );
     await this.api().permissions.create({
       fileId,
       requestBody: { type: 'anyone', role },
@@ -178,15 +196,42 @@ export class DriveService {
   /** Stream a file's bytes + its real mime type (used by the avatar proxy). */
   async getFileMedia(
     fileId: string,
-  ): Promise<{ stream: Readable; mimeType: string }> {
+  ): Promise<{ stream: Readable; mimeType: string; name?: string }> {
     const api = this.api();
-    const meta = await api.files.get({ fileId, fields: 'mimeType' });
-    const mimeType = meta.data.mimeType ?? 'application/octet-stream';
+    // `name` comes back too so the API can offer a sensible download filename
+    // — files are streamed through this server now rather than opened on
+    // drive.google.com, and without it every document saves as "download".
+    const meta = await api.files.get({ fileId, fields: 'mimeType,name' });
+    const sourceMime = meta.data.mimeType ?? 'application/octet-stream';
+    const name = meta.data.name ?? undefined;
+
+    // Google-native files (Docs, Sheets, Slides) hold no binary content, so
+    // `alt: 'media'` fails on them outright. They reach us because
+    // `syncFromDrive` imports whatever is sitting in the "01 All CVs" folder,
+    // and somebody can drop a Google Doc CV there. Export converts one to a
+    // real document instead of failing the download.
+    const exportMime = GOOGLE_NATIVE_EXPORT[sourceMime];
+    if (exportMime) {
+      const exported = await api.files.export(
+        { fileId, mimeType: exportMime },
+        { responseType: 'stream' },
+      );
+      return {
+        stream: exported.data as unknown as Readable,
+        mimeType: exportMime,
+        name: name ? `${name}${EXPORT_EXTENSION[exportMime] ?? ''}` : undefined,
+      };
+    }
+
     const res = await api.files.get(
       { fileId, alt: 'media' },
       { responseType: 'stream' },
     );
-    return { stream: res.data as unknown as Readable, mimeType };
+    return {
+      stream: res.data as unknown as Readable,
+      mimeType: sourceMime,
+      name,
+    };
   }
 
   /** Download a file's full bytes + real mime type (used by AI doc extraction). */
@@ -310,3 +355,27 @@ export class DriveService {
     }
   }
 }
+
+/**
+ * What to convert a Google-native file into when someone asks to view it.
+ *
+ * PDF for anything document-shaped: it renders in the browser, preserves the
+ * layout, and is what a reader of a CV or a certificate expects. Sheets export
+ * as XLSX because a spreadsheet flattened to PDF loses the thing that makes it
+ * a spreadsheet.
+ */
+const GOOGLE_NATIVE_EXPORT: Record<string, string> = {
+  'application/vnd.google-apps.document': 'application/pdf',
+  'application/vnd.google-apps.presentation': 'application/pdf',
+  'application/vnd.google-apps.drawing': 'application/pdf',
+  'application/vnd.google-apps.script': 'application/json',
+  'application/vnd.google-apps.spreadsheet':
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+/** Extension to append to an exported file's name, so it saves sensibly. */
+const EXPORT_EXTENSION: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/json': '.json',
+};

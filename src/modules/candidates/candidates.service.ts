@@ -11,6 +11,7 @@ import { CandidateStage, Prisma } from '@prisma/client';
 import { Cron } from '@nestjs/schedule';
 import * as ExcelJS from 'exceljs';
 
+import type { Response } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
@@ -20,6 +21,8 @@ import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
 import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { RecruitmentService } from './recruitment.service';
+import { FileGrantService } from '../../common/files/file-grant.service';
+import { SecureFileService } from '../../common/files/secure-file.service';
 import type { CvProfile } from './cv/cv-profile.types';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import {
@@ -65,6 +68,8 @@ export class CandidatesService {
     private readonly ai: AiGraderService,
     private readonly settings: SettingsService,
     private readonly recruitment: RecruitmentService,
+    private readonly files: FileGrantService,
+    private readonly secureFiles: SecureFileService,
   ) {}
 
   // --- workspace -----------------------------------------------------------
@@ -209,7 +214,7 @@ export class CandidatesService {
 
     return {
       items: rows.map((r) => ({
-        ...serializeCandidate(r),
+        ...serializeCandidate(r, this.files),
         applyCount: r.email ? (countMap.get(r.email) ?? 1) : 1,
         proposedSalary: fixationMap.get(r.id)?.proposedSalary ?? null,
         salaryJobGrade: fixationMap.get(r.id)?.jobGrade ?? null,
@@ -235,12 +240,23 @@ export class CandidatesService {
     };
   }
 
-  getScreeningStatus(reqId: string): {
+  /**
+   * Progress of the background AI screening run for a requisition.
+   *
+   * Gated like every other read on this requisition — the counters say how
+   * many CVs it has and how many the AI shortlisted, which is not something
+   * an unrelated signed-in user should be able to poll for any requisition id.
+   */
+  async getScreeningStatus(
+    reqId: string,
+    userId: string,
+  ): Promise<{
     done: number;
     total: number;
     shortlisted: number;
     active: boolean;
-  } {
+  }> {
+    await this.requireReq(reqId, userId);
     return (
       this.screeningJobs.get(reqId) ?? {
         done: 0,
@@ -447,10 +463,43 @@ export class CandidatesService {
     return {
       candidateId: cand.id,
       name: cand.name,
-      url: cand.cvUrl,
+      // A grant into this API, not the Drive link — see serializeCandidate.
+      url:
+        this.files.url(cand.cvFileId, 'cv', {
+          filename: `${cand.name} — CV`,
+        }) ?? cand.cvUrl,
       capturedAt: cand.cvProfileAt?.toISOString() ?? null,
       profile: (cand.cvProfile as unknown as CvProfile | null) ?? null,
     };
+  }
+
+  /**
+   * Stream the candidate's CV document to an authorized caller.
+   *
+   * Runs the same authorization as `cv()` — recruitment access, or an
+   * interview delegation on this candidate — and re-checks it at the moment of
+   * download rather than trusting a link. Used by API clients; the UI follows
+   * the signed grant in `cvUrl`, which is minted behind the same check.
+   */
+  async streamCv(id: string, userId: string, res: Response): Promise<void> {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id },
+      include: { requisition: true },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    if (
+      !(await this.permissions.hasInterviewDelegation(userId, {
+        candidateId: id,
+      }))
+    ) {
+      await this.requireRecruitmentAccess(cand.requisition, userId);
+    }
+    if (!cand.cvFileId) {
+      throw new NotFoundException('This candidate has no CV document on file');
+    }
+    await this.secureFiles.stream(res, cand.cvFileId, {
+      filename: `${cand.name} — CV`,
+    });
   }
 
   /**
@@ -758,7 +807,7 @@ export class CandidatesService {
       orderBy: { updatedAt: 'desc' },
     });
     return rows.map((c) => ({
-      ...serializeCandidate(c),
+      ...serializeCandidate(c, this.files),
       requisition: {
         id: c.requisition.id,
         code: c.requisition.code,
@@ -812,7 +861,7 @@ export class CandidatesService {
         const c = byId.get(r.id);
         if (!c) return null;
         return {
-          ...serializeCandidate(c),
+          ...serializeCandidate(c, this.files),
           requisition: {
             id: c.requisition.id,
             code: c.requisition.code,
@@ -880,7 +929,10 @@ export class CandidatesService {
       where: { requisitionId: reqId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
-    return { imported: fresh.length, candidates: rows.map(serializeCandidate) };
+    return {
+      imported: fresh.length,
+      candidates: rows.map((r) => serializeCandidate(r, this.files)),
+    };
   }
 
   async create(
@@ -902,11 +954,9 @@ export class CandidatesService {
         mimeType: file.mimetype,
         buffer: file.buffer,
       });
-      this.drive
-        .shareAnyoneWithLink(uploaded.id, 'reader')
-        .catch((e) =>
-          this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
-        );
+      // Stays private to the recruitment Google account. Authorized users
+      // stream it through this API (common/files/); a Drive
+      // "anyone with the link" grant would be permanent and unrecallable.
       cvFileId = uploaded.id;
       cvUrl = uploaded.url;
     }
@@ -936,7 +986,7 @@ export class CandidatesService {
       action: 'created',
     });
     if (cvFileId) this.autoScreen(created.id);
-    return serializeCandidate(created);
+    return serializeCandidate(created, this.files);
   }
 
   /**
@@ -970,11 +1020,9 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    this.drive
-      .shareAnyoneWithLink(uploaded.id, 'reader')
-      .catch((e) =>
-        this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
-      );
+    // Stays private to the recruitment Google account. Authorized users
+    // stream it through this API (common/files/); a Drive
+    // "anyone with the link" grant would be permanent and unrecallable.
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
@@ -1065,7 +1113,7 @@ export class CandidatesService {
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'updated',
     });
-    return serializeCandidate(updated);
+    return serializeCandidate(updated, this.files);
   }
 
   async uploadCv(id: string, userId: string, file: UploadedCv) {
@@ -1085,11 +1133,9 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    this.drive
-      .shareAnyoneWithLink(uploaded.id, 'reader')
-      .catch((e) =>
-        this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
-      );
+    // Stays private to the recruitment Google account. Authorized users
+    // stream it through this API (common/files/); a Drive
+    // "anyone with the link" grant would be permanent and unrecallable.
 
     const updated = await this.prisma.candidate.update({
       where: { id },
@@ -1104,7 +1150,7 @@ export class CandidatesService {
     });
     // A CV just arrived — screen it in the background (if still at Applied).
     if (updated.stage === 'APPLIED') this.autoScreen(updated.id);
-    return serializeCandidate(updated);
+    return serializeCandidate(updated, this.files);
   }
 
   async remove(id: string, userId: string) {
@@ -1201,7 +1247,7 @@ export class CandidatesService {
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'screened',
     });
-    return serializeCandidate(updated ?? cand);
+    return serializeCandidate(updated ?? cand, this.files);
   }
 
   /** Screen every un-screened applied candidate in a requisition (runs in background). */
@@ -1627,11 +1673,9 @@ export class CandidatesService {
       mimeType: file.mimetype,
       buffer: file.buffer,
     });
-    this.drive
-      .shareAnyoneWithLink(uploaded.id, 'reader')
-      .catch((e) =>
-        this.logger.warn(`CV share failed for ${uploaded.id}: ${e?.message}`),
-      );
+    // Stays private to the recruitment Google account. Authorized users
+    // stream it through this API (common/files/); a Drive
+    // "anyone with the link" grant would be permanent and unrecallable.
     const flagEntry = await this.checkRegistry(dto.email, dto.phone);
     const created = await this.prisma.candidate.create({
       data: {
@@ -1762,7 +1806,7 @@ export class CandidatesService {
       },
     });
 
-    return serializeCandidate(copy);
+    return serializeCandidate(copy, this.files);
   }
 
   /** Global recruitment role check (for cross-requisition views like talent pool). */
@@ -1864,7 +1908,7 @@ export class CandidatesService {
     }
 
     return deduped.map((m) => ({
-      ...serializeCandidate(m.candidate),
+      ...serializeCandidate(m.candidate, this.files),
       requisition: {
         id: m.candidate.requisition.id,
         code: m.candidate.requisition.code,
@@ -2132,26 +2176,40 @@ export class CandidatesService {
   }
 
   /** Retroactively share every existing CV file as "anyone with link → reader". */
-  async backfillCvSharing(userId: string) {
+  /**
+   * Take public access back off every CV.
+   *
+   * This method used to do the opposite: it published every CV in the database
+   * as "anyone with the link". CVs are now streamed by this API to authorized
+   * users only, so the sweep runs the other way — it revokes the grants that
+   * earlier uploads left behind. Idempotent: a file that is already private
+   * costs one no-op call.
+   *
+   * `scripts/revoke-public-drive-access.ts` does the same for every other
+   * document class (joining docs, medical reports, attachments) and has a
+   * dry-run mode; prefer it for the full sweep.
+   */
+  async revokePublicCvAccess(userId: string) {
     await this.requireRecruitmentRole(userId);
     const candidates = await this.prisma.candidate.findMany({
-      where: { cvFileId: { not: null }, deletedAt: null },
+      where: { cvFileId: { not: null } },
       select: { id: true, cvFileId: true },
     });
-    let fixed = 0;
+    let revoked = 0;
     let failed = 0;
     for (const c of candidates) {
       try {
-        await this.drive.shareAnyoneWithLink(c.cvFileId!, 'reader');
-        fixed++;
+        await this.drive.revokeAnyoneAccess(c.cvFileId!);
+        revoked++;
       } catch (e) {
+        // Log the ids only — never the candidate's name.
         this.logger.warn(
-          `Backfill share failed for candidate ${c.id} file ${c.cvFileId}: ${(e as Error)?.message}`,
+          `Revoke failed for candidate ${c.id} file ${c.cvFileId}: ${(e as Error)?.message}`,
         );
         failed++;
       }
     }
-    return { total: candidates.length, fixed, failed };
+    return { total: candidates.length, revoked, failed };
   }
 }
 
@@ -2220,7 +2278,15 @@ function dedupeByEmail<T>(rows: T[], getEmail: (row: T) => string | null): T[] {
   return out;
 }
 
-function serializeCandidate(c: CandidateRow) {
+/**
+ * `cvUrl` is a link into THIS API, not into Google Drive.
+ *
+ * The CV file is private to the recruitment Google account; the caller gets a
+ * short-lived signed grant, minted only because they have already passed the
+ * authorization check that produced this row. A candidate whose CV lives
+ * somewhere else entirely (an external link with no Drive file) keeps that URL.
+ */
+function serializeCandidate(c: CandidateRow, files: FileGrantService) {
   return {
     id: c.id,
     requisitionId: c.requisitionId,
@@ -2230,7 +2296,8 @@ function serializeCandidate(c: CandidateRow) {
     source: c.source,
     stage: c.stage.toLowerCase(),
     cvFileId: c.cvFileId,
-    cvUrl: c.cvUrl,
+    cvUrl:
+      files.url(c.cvFileId, 'cv', { filename: `${c.name} — CV` }) ?? c.cvUrl,
     notes: c.notes ?? '',
     salaryExpectation: c.salaryExpectation ?? null,
     matchScore: c.matchScore,

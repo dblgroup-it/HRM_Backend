@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PermissionsService } from '../../rbac/permissions.service';
@@ -532,7 +532,7 @@ export class BdJobsService {
     const expected = createHash('sha256')
       .update(`${settings.authToken}&^^${settings.decodeId}*&*${dto.ts}`)
       .digest('hex');
-    if (!incomingSignature || incomingSignature !== expected) {
+    if (!incomingSignature || !signatureMatches(incomingSignature, expected)) {
       // Never echo the expected hash — that would let anyone forge one. The
       // template, the length and their own ts are enough to find the mistake,
       // and none of them are secret.
@@ -713,4 +713,18 @@ export class BdJobsService {
       ...(warnings.length ? { warnings } : {}),
     };
   }
+}
+
+/**
+ * Compare a supplied signature with the expected one in constant time.
+ *
+ * `!==` returns as soon as two bytes differ, so response time leaks how much
+ * of a guessed signature was correct — enough, with sampling, to recover a
+ * valid one byte by byte without ever knowing the shared secret.
+ */
+function signatureMatches(supplied: string, expected: string): boolean {
+  const a = Buffer.from(supplied.trim(), 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }

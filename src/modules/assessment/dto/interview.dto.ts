@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -162,4 +163,17 @@ export class SubmitEvaluationDto {
   @IsString()
   @MaxLength(2000)
   comments?: string;
+}
+
+/**
+ * The people whose workload the send dialog wants to show.
+ *
+ * Bounded: the dialog shows a page of search results, not the whole directory,
+ * and an unbounded list would turn one click into a 4,600-row aggregation.
+ */
+export class DelegateWorkloadDto {
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  userIds!: string[];
 }

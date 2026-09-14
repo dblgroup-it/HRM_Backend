@@ -6,6 +6,8 @@ export interface AuthUser {
   employeeCode: string;
   name: string;
   role: UserRole;
+  /** True while the account still holds a password somebody else chose for it. */
+  mustChangePassword?: boolean;
 }
 
 /** Injects the authenticated user (set by JwtStrategy) into a handler. */
