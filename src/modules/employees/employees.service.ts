@@ -100,9 +100,11 @@ export class EmployeesService {
    * returned only by `findOne`, and only to someone who may administer
    * employee records.
    *
-   * POLICY: which roles see personal contact details on the detail view is a
-   * business decision (audit finding P-2). It is expressed in one place,
-   * `canSeePersonalDetails()`.
+   * The detail view (`findOne`) returns those three fields to any signed-in
+   * user. They stay out of THIS response regardless: it is unpaginated in
+   * practice for pickers and returns every employee at once, so including them
+   * would turn an autocomplete into a bulk export of ~4,600 people's personal
+   * contact details on a single request.
    */
   async findAll(
     query: QueryEmployeesDto,
@@ -223,7 +225,28 @@ export class EmployeesService {
    * else gets the organisational profile, which is what the "Reports to" chain
    * and the people pickers actually need.
    */
-  async findOne(id: string, actorId?: string): Promise<EmployeeView> {
+  /**
+   * One employee's full record, including personal phone, personal email and
+   * date of birth.
+   *
+   * These were redacted for everyone outside Corporate HR / CHRO / super
+   * (audit finding P-2). That was reversed on 2026-09-15 at the business's
+   * explicit instruction: the directory is treated as internal, and any
+   * signed-in employee may look up a colleague's contact details.
+   *
+   * Note what this does NOT change. Editing these fields is still restricted
+   * to Corporate HR, CHRO and super users (`requireEmployeeAdmin`) — that was
+   * the critical finding, an unauthenticated-in-practice PATCH that let any
+   * signed-in user rewrite any of ~4,600 HR master records, and it stays shut.
+   *
+   * `actorId` is kept on the signature: callers pass it, and a future rule
+   * about who sees what belongs here rather than in a new code path.
+   */
+  async findOne(
+    id: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    actorId?: string,
+  ): Promise<EmployeeView> {
     const row = await this.prisma.employee.findUnique({
       where: { id },
       include: employeeInclude,
@@ -241,21 +264,7 @@ export class EmployeesService {
       });
       view.lineManagerId = manager?.id ?? null;
     }
-    if (actorId && !(await this.canSeePersonalDetails(actorId))) {
-      view.dateOfBirth = null;
-      view.phone = null;
-      view.email = null;
-    }
     return view;
-  }
-
-  /** May this user see an employee's personal contact details and DOB? */
-  private async canSeePersonalDetails(userId: string): Promise<boolean> {
-    if (await this.permissions.isSuperUser(userId)) return true;
-    const perms = await this.permissions.getUserPermissions(userId);
-    return perms.roles.some(
-      (r) => r.key === 'corporate_hr' || r.key === 'chro',
-    );
   }
 
   async update(

@@ -754,6 +754,25 @@ the dropdowns and people-pickers that are the directory's main consumer.
 Recommendation: drop `dateOfBirth` from the list projection and return it only
 on `GET /employees/:id` for HR roles. Flagged, not applied.
 
+**RESOLVED 2026-09-15 — deliberately, and not as recommended.** The list
+projection no longer carries the three fields, which stands: `GET /employees`
+backs autocompletes and returns every employee at once, so including them would
+make an ordinary picker request a bulk export of ~4,600 people's personal
+contact details.
+
+The detail view went the other way. `GET /employees/:id` briefly restricted
+those fields to Corporate HR / CHRO / super, and the business instructed that
+the restriction be removed: the directory is internal, and a colleague's number
+is something any employee may look up. Any signed-in user now sees personal
+phone, personal email and date of birth on one employee at a time.
+
+Anyone reading this finding later and "restoring" the check would be removing a
+decision, not fixing a regression — `employees.service.spec.ts` asserts the
+current behaviour for exactly that reason. Changing it back is a business call.
+
+What did NOT change: editing those fields is still restricted to Corporate HR,
+CHRO and super users. That was C-1, the critical finding, and it stays shut.
+
 ### Logging redaction
 
 `REDACTED_FIELDS` now covers medical findings, credentials and pay (H-1, H-2).
