@@ -19,7 +19,7 @@ const LIVE_PAYLOAD = {
   candidate: {
     name: 'Test Applicant',
     email: 'test.applicant@example.invalid',
-    phone: '+880000000000',
+    phone: '01722121628,01914055355',
   },
   profile: {
     currentEmployer: 'Alpha Ltd',
@@ -170,7 +170,7 @@ describe('bdjobsProfileToCandidateData', () => {
     // ISO in, ISO out — the flat variant does not use dd/MM/yyyy here.
     expect(cv.personal.dateOfBirth).toBe('1988-01-01');
     expect(cv.contact.email).toBe('test.applicant@example.invalid');
-    expect(cv.contact.phone).toBe('+880000000000');
+    expect(cv.contact.phone).toBe('01722121628,01914055355');
     expect(cv.contact.currentLocation).toBe('Dhaka');
   });
 

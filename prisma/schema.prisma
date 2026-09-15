@@ -559,7 +559,7 @@ model Candidate {
   requisition           Requisition            @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   name                  String                 @db.VarChar(150)
   email                 String?                @db.VarChar(254)
-  phone                 String?                @db.VarChar(20)
+  phone                 String?                @db.VarChar(40)
   source                CandidateSource        @default(manual)
   stage                 CandidateStage         @default(APPLIED)
   /// Google Drive file id + view link for the CV document.
@@ -712,7 +712,7 @@ model RedFlagRegistry {
   /// Normalised lowercase email (may be null if only phone was known).
   email       String?  @unique @db.VarChar(254)
   /// Phone digits only (may be null if only email was known).
-  phone       String?  @unique @db.VarChar(20)
+  phone       String?  @unique @db.VarChar(40)
   reason      String
   flaggedById String   @map("flagged_by_id")
   createdAt   DateTime @default(now()) @map("created_at")

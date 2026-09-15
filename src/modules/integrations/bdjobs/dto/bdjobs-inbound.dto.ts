@@ -17,7 +17,7 @@ import {
 class InboundCandidateDto {
   @IsOptional() @IsString() @MaxLength(150) name?: string;
   @IsOptional() @IsString() @MaxLength(254) email?: string;
-  @IsOptional() @IsString() @MaxLength(30) phone?: string;
+  @IsOptional() @IsString() @MaxLength(40) phone?: string;
 }
 
 /**

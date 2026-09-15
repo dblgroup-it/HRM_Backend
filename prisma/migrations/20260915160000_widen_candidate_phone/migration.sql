@@ -1,0 +1,2 @@
+ALTER TABLE "candidates" ALTER COLUMN "phone" TYPE VARCHAR(40);
+ALTER TABLE "red_flag_registry" ALTER COLUMN "phone" TYPE VARCHAR(40);
