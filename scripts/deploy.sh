@@ -280,7 +280,11 @@ step "swapping dist/ (previous build kept as dist.old for one deploy cycle)"
 #
 # So: wait a fixed minimum regardless of what `ps` reports, then keep waiting
 # while esbuild is still visible. Tunable if a slower box needs longer.
-SWAP_SETTLE_SECONDS="${SWAP_SETTLE_SECONDS:-3}"
+# 6s, from measurement rather than taste. Two deploys with a 3s settle both
+# succeeded on attempt 4 — delays 1+1+2 after the settle, so the handle frees
+# around 6-7s after the build finishes. Starting at 6 puts the first attempt
+# where the handle actually becomes free instead of three attempts before it.
+SWAP_SETTLE_SECONDS="${SWAP_SETTLE_SECONDS:-6}"
 step "letting build children exit and release their handles (${SWAP_SETTLE_SECONDS}s)"
 sleep "$SWAP_SETTLE_SECONDS"
 
