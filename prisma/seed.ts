@@ -114,6 +114,7 @@ async function main() {
     { key: 'sbu_head', name: 'SBU Head', scope: 'UNIT', description: 'Strategic Business Unit head.' },
     { key: 'medical_officer', name: 'Medical Officer', scope: 'GLOBAL', description: 'Records onboarding medical clearance (all units).' },
     { key: 'corporate_recruiter', name: 'Corporate Recruiter', scope: 'GLOBAL', description: 'Runs a requisition’s hiring lifecycle once Corporate HR assigns it to them.' },
+    { key: 'central_medical_officer', name: 'Central Medical Officer', scope: 'GLOBAL', description: 'Confirms every medical finding before a candidate is cleared. Approves singly or in bulk; may overturn or return a submission.' },
   ] as const;
   for (const r of ROLES) {
     await prisma.role.upsert({

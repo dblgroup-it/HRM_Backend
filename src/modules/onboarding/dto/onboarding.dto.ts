@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -263,6 +264,23 @@ export class OfferLetterDto {
   /** Junior format only. */
   @IsOptional() @IsInt() @Min(0) @Max(24) probationMonths?: number;
   @IsOptional() @IsInt() @Min(0) @Max(180) noticeDays?: number;
+}
+
+/** The Central Medical Officer's verdict on a submitted medical finding. */
+export class MedicalDecisionDto {
+  @IsIn(['approve', 'reject', 'return'])
+  decision!: 'approve' | 'reject' | 'return';
+
+  /** Required for reject and return — enforced in the service, with wording. */
+  @IsOptional() @IsString() @MaxLength(1000) note?: string;
+}
+
+/** The same verdict applied to a selection from the queue. */
+export class MedicalDecisionBulkDto extends MedicalDecisionDto {
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(200)
+  onboardingIds!: string[];
 }
 
 /** Settle which of the requisition's designations a candidate is hired at. */

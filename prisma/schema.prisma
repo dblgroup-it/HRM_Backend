@@ -157,6 +157,11 @@ enum OnboardingStatus {
 
 enum MedicalStatus {
   pending
+  /// The examining officer has recorded a finding and it is waiting on the
+  /// Central Medical Officer. NOT cleared: every downstream gate reads
+  /// `cleared`, so a candidate sitting here cannot progress, which is the
+  /// point of the layer.
+  submitted
   cleared
   rejected
 }
@@ -191,6 +196,16 @@ model User {
   status                        UserStatus             @default(ACTIVE)
   /// Bumped on logout / password change to invalidate previously-issued JWTs.
   tokenVersion                  Int                    @default(0) @map("token_version")
+  /// E-signature: a roughly 3:1 image, served via the signature proxy.
+  signatureFileId               String?                @map("signature_file_id") @db.VarChar(100)
+  /// Who put the signature there.
+  ///
+  /// Deliberately a plain id and not a relation: it is an audit marker, and the
+  /// only question ever asked of it is "is this the user's own id" — which
+  /// decides whether HR may replace the signature. A person's own signature is
+  /// theirs; once they have uploaded it, nobody else overwrites it.
+  signatureUploadedById         String?                @map("signature_uploaded_by_id") @db.VarChar(60)
+  signatureUploadedAt           DateTime?              @map("signature_uploaded_at")
   /// Google Drive file id of the user's profile picture (served via the avatar proxy).
   avatarFileId                  String?                @map("avatar_file_id") @db.VarChar(100)
   /// Per-user toggle: also send notifications to this user's email.
@@ -231,6 +246,10 @@ model User {
   candidatesCreated             Candidate[]            @relation("CandidateCreatedBy")
   candidatesRejected            Candidate[]            @relation("CandidateRejectedBy")
   medicalClearances             Onboarding[]           @relation("OnboardingMedicalClearedBy")
+  /// Medicals this user submitted for central approval (examining officer).
+  medicalSubmissions            Onboarding[]           @relation("OnboardingMedicalSubmittedBy")
+  /// Medicals this user signed off centrally (Central Medical Officer).
+  medicalApprovals              Onboarding[]           @relation("OnboardingMedicalApprovedBy")
   boardBatchesCreated           BoardApprovalBatch[]   @relation("BoardBatchCreatedBy")
   boardBatchesAsChro            BoardApprovalBatch[]   @relation("BoardBatchChro")
   auditLogs                     AuditLog[]             @relation("AuditLogActor")
@@ -911,27 +930,44 @@ model Onboarding {
 
   /// Recorded from a paper/offline check rather than the structured form, so
   /// the completeness gate on MedicalExam was deliberately bypassed.
-  medicalManual      Boolean         @default(false) @map("medical_manual")
+  medicalManual        Boolean         @default(false) @map("medical_manual")
   /// When the medical team was told this candidate is waiting on them, so the
   /// alert fires once rather than on every document verified.
-  medicalNotifiedAt  DateTime?       @map("medical_notified_at")
-  medicalClearedById String?         @map("medical_cleared_by_id")
-  medicalClearedBy   User?           @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
-  hrVerifiedAt       DateTime?       @map("hr_verified_at")
+  medicalNotifiedAt    DateTime?       @map("medical_notified_at")
+  /// What the examining officer submitted for approval — `cleared` or
+  /// `rejected`. Kept separately from `medicalStatus` so the Central Medical
+  /// Officer can see what they are being asked to confirm while the candidate's
+  /// actual state is still `submitted`.
+  medicalProposed      MedicalStatus?  @map("medical_proposed")
+  medicalSubmittedAt   DateTime?       @map("medical_submitted_at")
+  medicalSubmittedById String?         @map("medical_submitted_by_id")
+  medicalSubmittedBy   User?           @relation("OnboardingMedicalSubmittedBy", fields: [medicalSubmittedById], references: [id], onDelete: SetNull)
+  /// Who signed it off centrally, and when. Null on a result HR recorded by
+  /// hand, which is deliberately immediate and therefore never CMO-approved —
+  /// the distinction is shown wherever the clearance is displayed.
+  medicalApprovedAt    DateTime?       @map("medical_approved_at")
+  medicalApprovedById  String?         @map("medical_approved_by_id")
+  medicalApprovedBy    User?           @relation("OnboardingMedicalApprovedBy", fields: [medicalApprovedById], references: [id], onDelete: SetNull)
+  /// The Central Medical Officer's note — required when overturning or
+  /// returning a submission, because those reverse a clinician's finding.
+  medicalCmoNote       String?         @map("medical_cmo_note")
+  medicalClearedById   String?         @map("medical_cleared_by_id")
+  medicalClearedBy     User?           @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
+  hrVerifiedAt         DateTime?       @map("hr_verified_at")
   /// AI cross-verification of submitted docs vs the candidate's profile:
   /// { verdict, overview, findings: [{doc, severity, detail}] }
-  crossCheck         Json?           @map("cross_check")
-  crossCheckedAt     DateTime?       @map("cross_checked_at")
-  archivedAt         DateTime?       @map("archived_at")
+  crossCheck           Json?           @map("cross_check")
+  crossCheckedAt       DateTime?       @map("cross_checked_at")
+  archivedAt           DateTime?       @map("archived_at")
   /// Drive folder the joining docs were moved into on archive.
-  archiveFolderUrl   String?         @map("archive_folder_url")
-  itEmail            String?         @map("it_email") @db.VarChar(254)
-  itAssetId          String?         @map("it_asset_id") @db.VarChar(50)
-  itNotifiedAt       DateTime?       @map("it_notified_at")
-  docs               OnboardingDoc[]
-  medicalExam        MedicalExam?
-  createdAt          DateTime        @default(now()) @map("created_at")
-  updatedAt          DateTime        @updatedAt @map("updated_at")
+  archiveFolderUrl     String?         @map("archive_folder_url")
+  itEmail              String?         @map("it_email") @db.VarChar(254)
+  itAssetId            String?         @map("it_asset_id") @db.VarChar(50)
+  itNotifiedAt         DateTime?       @map("it_notified_at")
+  docs                 OnboardingDoc[]
+  medicalExam          MedicalExam?
+  createdAt            DateTime        @default(now()) @map("created_at")
+  updatedAt            DateTime        @updatedAt @map("updated_at")
 
   @@map("onboardings")
 }

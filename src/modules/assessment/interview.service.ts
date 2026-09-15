@@ -814,15 +814,38 @@ export class InterviewService {
     const modeLabel = round.mode.toLowerCase();
 
     if (dto.notifyPanel !== false) {
-      await this.notifications.notifyMany(
-        round.panelists.map((p) => p.userId),
-        {
+      // Each panelist gets THEIR OWN evaluation link, not a link to the app.
+      //
+      // Every notification is mirrored to email, and the emailed copy turns
+      // `link` into a URL. Pointing that at /my-interviews sends a panelist to
+      // a sign-in page — but the whole point of the evaluation token is that it
+      // already identifies them and needs no login. Panels routinely include
+      // people who have never signed into this system.
+      //
+      // Notified one at a time because the link differs per person; notifyMany
+      // would send everyone the same one, which would be worse than useless —
+      // it would file their marks against another panelist.
+      const tokens = await this.prisma.evaluationToken.findMany({
+        where: {
+          roundId: round.id,
+          panelistUserId: { in: round.panelists.map((p) => p.userId) },
+        },
+        select: { panelistUserId: true, token: true },
+      });
+      const tokenFor = new Map(tokens.map((t) => [t.panelistUserId, t.token]));
+
+      for (const p of round.panelists) {
+        const token = tokenFor.get(p.userId);
+        await this.notifications.notify(p.userId, {
           type: 'interview_assigned',
           title: 'Interview to conduct',
           message: `${round.candidate.name} · ${designation} — ${kindLabel} interview on ${when}.`,
-          link: '/my-interviews',
-        },
-      );
+          // Falls back to the in-app list only if no token was minted, which
+          // would itself be a bug — but a link to something is better than a
+          // notification with nowhere to go.
+          link: token ? `/evaluate/${token}` : '/my-interviews',
+        });
+      }
     }
 
     if (

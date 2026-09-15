@@ -41,7 +41,19 @@ describe('AuthService.login', () => {
         k === 'totpEncryptionKey' ? 'a'.repeat(64) : 'development',
     } as never);
     const audit = { record: jest.fn().mockResolvedValue(undefined) };
-    return new AuthService(prisma, jwt, mail, perms, secrets, audit as never);
+    // Signatures are serialized as signed grants; these tests never read one.
+    const grants = {
+      url: jest.fn(() => null),
+    };
+    return new AuthService(
+      prisma,
+      jwt,
+      mail,
+      perms,
+      secrets,
+      audit as never,
+      grants as never,
+    );
   }
 
   const user = (over: Record<string, unknown> = {}) => ({

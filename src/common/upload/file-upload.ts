@@ -44,6 +44,23 @@ export const IMAGE_MIME = [
   'image/webp',
 ];
 
+/**
+ * E-signatures: PNG and JPEG only.
+ *
+ * Narrower than IMAGE_MIME on purpose. A signature is cropped in the browser
+ * and re-encoded to PNG before it is sent, so nothing legitimate arrives as
+ * WebP — and a signature ends up printed on offer letters and approval sheets,
+ * where the formats every viewer and printer handles without surprise are the
+ * two oldest ones.
+ */
+export const SIGNATURE_MIME = ['image/png', 'image/jpeg', 'image/jpg'];
+
+/** E-signature upload — 2 MB, PNG/JPEG only. */
+export const SIGNATURE_UPLOAD = {
+  limits: { fileSize: 2 * MB, files: 1 },
+  fileFilter: allow(SIGNATURE_MIME),
+};
+
 /** CVs / joining documents — 10 MB, PDF/Word/images. */
 export const DOC_UPLOAD = {
   limits: { fileSize: 10 * MB, files: 1 },

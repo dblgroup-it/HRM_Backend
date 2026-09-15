@@ -46,6 +46,21 @@ const LEGACY_STEP_ROLE_BY_KEY: Record<string, string> = {
 const PERMS_PREFIX = 'perms:';
 const PERMS_TTL = 60_000; // 60s — invalidated immediately on any role change.
 
+/**
+ * The roles that may administer an employee's record.
+ *
+ * Editing the HR master and placing an e-signature on someone's profile are the
+ * same kind of act — changing a person's record on their behalf — so both read
+ * this list rather than each keeping its own copy and drifting.
+ *
+ * Super users bypass it, as they bypass every scope check.
+ */
+export const EMPLOYEE_ADMIN_ROLES = [
+  'corporate_hr',
+  'chro',
+  'corporate_recruiter',
+] as const;
+
 @Injectable()
 export class PermissionsService {
   constructor(
@@ -207,6 +222,21 @@ export class PermissionsService {
    * Does the user hold `roleKey` for the given unit (by name)? Super users
    * always do. Answered from the cached permission set — no extra queries.
    */
+  /**
+   * May this user administer employee records — edit the HR master, or place a
+   * signature on someone's profile?
+   *
+   * Global, not unit-scoped: the employee directory is a group-wide master and
+   * these roles are held globally.
+   */
+  async isEmployeeAdmin(userId: string): Promise<boolean> {
+    if (await this.isSuperUser(userId)) return true;
+    const perms = await this.getUserPermissions(userId);
+    return perms.roles.some((r) =>
+      (EMPLOYEE_ADMIN_ROLES as readonly string[]).includes(r.key),
+    );
+  }
+
   async hasRoleForUnitName(
     userId: string,
     roleKey: string,

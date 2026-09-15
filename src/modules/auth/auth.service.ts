@@ -19,6 +19,7 @@ import { AuditService } from '../audit/audit.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { buildAvatarUrl } from '../../common/avatar.util';
+import { FileGrantService } from '../../common/files/file-grant.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
@@ -58,6 +59,10 @@ export interface UserResponse {
   department: string | null;
   unit: string | null;
   avatarUrl: string | null;
+  /** The user's e-signature, if they have one. */
+  signatureUrl: string | null;
+  /** True when they uploaded it themselves — HR may not then replace it. */
+  signatureSelfUploaded: boolean;
 }
 
 @Injectable()
@@ -69,6 +74,7 @@ export class AuthService {
     private readonly permissions: PermissionsService,
     private readonly secrets: SecretEncryptionService,
     private readonly audit: AuditService,
+    private readonly grants: FileGrantService,
   ) {}
 
   /**
@@ -685,6 +691,11 @@ export class AuthService {
       department: profile?.department ?? null,
       unit: profile?.unitName ?? null,
       avatarUrl: buildAvatarUrl(user.id, user.avatarFileId),
+      // A signed, expiring grant rather than an open route — see FilePurpose.
+      signatureUrl: this.grants.url(user.signatureFileId, 'signature', {
+        filename: `${user.name} signature`,
+      }),
+      signatureSelfUploaded: user.signatureUploadedById === user.id,
     };
   }
 

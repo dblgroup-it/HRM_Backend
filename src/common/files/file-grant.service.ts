@@ -13,7 +13,17 @@ export type FilePurpose =
   | 'onboarding-doc'
   | 'medical-report'
   | 'requisition-attachment'
-  | 'board-attachment';
+  | 'board-attachment'
+  /**
+   * A user's e-signature.
+   *
+   * Served through a grant rather than an open route like the avatar proxy.
+   * An avatar leaking is a privacy nuisance; a signature is forgery material,
+   * and user ids appear in ordinary API responses, so "you need to know the id"
+   * is not a control. The grant is minted into a response the caller was
+   * already entitled to receive, names one file, and expires.
+   */
+  | 'signature';
 
 interface GrantPayload {
   /** Google Drive file id. Signed in, never taken from the request. */

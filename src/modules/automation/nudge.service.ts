@@ -76,7 +76,11 @@ export class NudgeService {
     const days = Number(this.config.get('nudge.approvalDays') ?? 3);
     const cutoff = new Date(Date.now() - days * DAY_MS);
     const rows = await this.prisma.requisition.findMany({
-      where: { status: 'PENDING_APPROVAL', updatedAt: { lt: cutoff }, deletedAt: null },
+      where: {
+        status: 'PENDING_APPROVAL',
+        updatedAt: { lt: cutoff },
+        deletedAt: null,
+      },
       include: {
         approvalSteps: {
           where: { status: 'PENDING' },
@@ -132,6 +136,8 @@ export class NudgeService {
       include: {
         panelists: true,
         evaluations: { select: { evaluatorId: true } },
+        // Each panelist's own evaluation link — see the notify call below.
+        evaluationTokens: { select: { panelistUserId: true, token: true } },
         candidate: { select: { name: true } },
         requisition: { select: { designation: true } },
       },
@@ -150,12 +156,24 @@ export class NudgeService {
         'nudges',
         `⚙ ${round.candidate.name} (${round.kind.toLowerCase()} interview) — ${pending.length} panelist(s) yet to mark`,
       );
-      await this.notifications.notifyMany(pending, {
-        type: 'interview_assigned',
-        title: 'Interview marks pending',
-        message: `Your marks for ${round.candidate.name} (${round.requisition.designation}, ${round.kind.toLowerCase()} interview) are still pending — please submit them.`,
-        link: '/my-interviews',
-      });
+      // Each panelist gets THEIR OWN evaluation link, not a link to the app.
+      //
+      // This reminder is mirrored to email, and a panelist who has not marked
+      // yet is exactly the person least likely to have an account — a chase
+      // that lands them on a sign-in page is a chase they cannot act on.
+      // Sent individually because the link differs per person.
+      const tokenFor = new Map(
+        round.evaluationTokens.map((t) => [t.panelistUserId, t.token]),
+      );
+      for (const userId of pending) {
+        const token = tokenFor.get(userId);
+        await this.notifications.notify(userId, {
+          type: 'interview_assigned',
+          title: 'Interview marks pending',
+          message: `Your marks for ${round.candidate.name} (${round.requisition.designation}, ${round.kind.toLowerCase()} interview) are still pending — please submit them.`,
+          link: token ? `/evaluate/${token}` : '/my-interviews',
+        });
+      }
       nudged += pending.length;
     }
     return [interviews, nudged];

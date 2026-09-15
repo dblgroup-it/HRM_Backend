@@ -36,9 +36,25 @@ import {
   OfferLetterDto,
   AppointmentLetterDto,
 } from './dto/onboarding.dto';
+import {
+  applyCmoDecision,
+  decisionNoteError,
+  submissionBlocker,
+  type CmoDecision,
+  type ProposedMedical,
+} from './medical-approval';
 
 /** Role keys allowed to record medical clearance (configurable / either name). */
 export const MEDICAL_ROLE_KEYS = ['medical_officer', 'medical_team'];
+
+/**
+ * The second pair of eyes on every medical finding.
+ *
+ * Global: one CMO reviews the whole group. Holding it does NOT imply the
+ * examining role — a CMO confirms findings, they do not record them, and
+ * letting one person do both would collapse the layer back into one signature.
+ */
+export const CENTRAL_MEDICAL_ROLE_KEY = 'central_medical_officer';
 
 /**
  * When a candidate's medical is actually due.
@@ -1138,19 +1154,62 @@ export class OnboardingService {
       }
     }
 
+    // A structured finding is a SUBMISSION, not a clearance: it waits for the
+    // Central Medical Officer. A by-hand result stays immediate by explicit
+    // business decision — the exam happened at a clinic outside this system and
+    // holding the candidate for a second review of a typed-up slip was judged
+    // not worth the delay. It is recorded as manual and never carries a CMO
+    // name, so the two are always distinguishable.
+    const awaitsCmo = dto.status !== 'pending' && !dto.manual;
+
     await this.prisma.onboarding.update({
       where: { id: onboardingId },
       data: {
-        medicalStatus: dto.status,
+        medicalStatus: awaitsCmo ? 'submitted' : dto.status,
+        medicalProposed: awaitsCmo ? dto.status : null,
+        medicalSubmittedAt: awaitsCmo ? new Date() : null,
+        medicalSubmittedById: awaitsCmo ? userId : null,
+        // Any new finding clears a previous central decision — otherwise a
+        // resubmission would still be wearing the last CMO's sign-off.
+        medicalApprovedAt: null,
+        medicalApprovedById: null,
+        medicalCmoNote: null,
         medicalNote: dto.note ?? null,
-        medicalClearedAt: dto.status === 'cleared' ? new Date() : null,
+        medicalClearedAt:
+          !awaitsCmo && dto.status === 'cleared' ? new Date() : null,
         // A rejection recorded on paper is just as manual as a clearance, and
         // the badge should say so either way.
         medicalManual: dto.status === 'pending' ? false : Boolean(dto.manual),
+        // The examining officer of record, whichever way it goes — the person
+        // who made the finding, not whoever later confirms it.
         medicalClearedById: dto.status === 'pending' ? null : userId,
         status: ob.status === 'offer_accepted' ? 'medical' : ob.status,
       },
     });
+
+    if (awaitsCmo) {
+      // The queue is the CMO's; HR is told once there is an outcome, not that
+      // one is pending, or every submission becomes two notifications.
+      // The unit is passed because the lookup takes one; the role is GLOBAL,
+      // and holderAssignments matches `unitId: null` regardless — so every CMO
+      // is reached, and a unit-scoped one would still behave sensibly.
+      const cmoIds = await this.permissions.roleHolderUserIds(
+        CENTRAL_MEDICAL_ROLE_KEY,
+        ob.candidate.requisition.unitFactory,
+      );
+      await this.notifications.notifyMany(cmoIds, {
+        type: 'onboarding',
+        title: 'Medical awaiting your approval',
+        message: `${ob.candidate.name} (${ob.candidate.requisition.designation}) — examining officer recorded "${dto.status}".`,
+        link: `/medical-approvals`,
+      });
+      this.notifications.broadcastChange(
+        'candidate',
+        ob.candidate.requisitionId,
+        { action: 'medical_updated' },
+      );
+      return { ok: true, awaitingApproval: true };
+    }
 
     // Tell Head of Talent Acquisition the candidate cleared (or didn't).
     const hrIds = await this.permissions.recruitmentRecipients(
@@ -1173,6 +1232,207 @@ export class OnboardingService {
       },
     );
     return { ok: true };
+  }
+
+  // ── Central Medical Officer ───────────────────────────────────────────────
+
+  /** Only a Central Medical Officer (or a super user) may decide a submission. */
+  private async requireCentralMedicalOfficer(userId: string): Promise<void> {
+    if (await this.permissions.isSuperUser(userId)) return;
+    const holds = await this.prisma.roleAssignment.findFirst({
+      where: { userId, role: { key: CENTRAL_MEDICAL_ROLE_KEY } },
+      select: { id: true },
+    });
+    if (!holds) {
+      throw new ForbiddenException(
+        'Only the Central Medical Officer can approve medical findings',
+      );
+    }
+  }
+
+  /**
+   * Everything waiting on the Central Medical Officer.
+   *
+   * Oldest first: a queue worked newest-first leaves the people who have waited
+   * longest waiting longer, and these are candidates whose start date is
+   * already booked.
+   */
+  async medicalApprovalQueue(userId: string) {
+    await this.requireCentralMedicalOfficer(userId);
+    const rows = await this.prisma.onboarding.findMany({
+      where: { medicalStatus: 'submitted', archivedAt: null },
+      orderBy: { medicalSubmittedAt: 'asc' },
+      include: {
+        medicalExam: true,
+        medicalSubmittedBy: { select: { id: true, name: true } },
+        candidate: {
+          include: {
+            requisition: {
+              select: {
+                id: true,
+                code: true,
+                designation: true,
+                unitFactory: true,
+                department: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return rows.map((ob) => ({
+      onboardingId: ob.id,
+      candidateId: ob.candidateId,
+      candidateName: ob.candidate.name,
+      requisition: ob.candidate.requisition,
+      /** What the examining officer put forward — what is being confirmed. */
+      proposed: ob.medicalProposed,
+      note: ob.medicalNote ?? null,
+      submittedAt: ob.medicalSubmittedAt?.toISOString() ?? null,
+      submittedBy: ob.medicalSubmittedBy?.name ?? null,
+      /** The clinical findings. The CMO is medical; they read the full record. */
+      exam: this.serializeFullMedicalExam(ob.medicalExam),
+    }));
+  }
+
+  /**
+   * Decide one submission.
+   *
+   * Returns the outcome rather than throwing on a record someone else has
+   * already handled — see decideMedicalMany, which is the same call in a loop.
+   */
+  async decideMedical(
+    onboardingId: string,
+    userId: string,
+    dto: { decision: CmoDecision; note?: string },
+  ) {
+    await this.requireCentralMedicalOfficer(userId);
+    const result = await this.decideOne(onboardingId, userId, dto);
+    if (result.error) throw new BadRequestException(result.error);
+    return { ok: true, status: result.status };
+  }
+
+  /**
+   * Decide many at once.
+   *
+   * Each record is judged on its own: one candidate handled by another CMO a
+   * moment earlier must not fail the other forty. The reply says exactly what
+   * happened to each, so the panel can show which rows did not go through
+   * instead of claiming a clean sweep.
+   */
+  async decideMedicalMany(
+    userId: string,
+    dto: { onboardingIds: string[]; decision: CmoDecision; note?: string },
+  ) {
+    await this.requireCentralMedicalOfficer(userId);
+
+    const noteProblem = decisionNoteError(dto.decision, dto.note);
+    if (noteProblem) throw new BadRequestException(noteProblem);
+
+    const results: {
+      onboardingId: string;
+      ok: boolean;
+      status?: string;
+      error?: string;
+    }[] = [];
+    // Sequential on purpose: each decision writes a row, sends notifications
+    // and is independently auditable. Forty at once is a person clicking a
+    // button, not a throughput problem worth a transaction for.
+    for (const id of dto.onboardingIds) {
+      const r = await this.decideOne(id, userId, dto);
+      results.push({
+        onboardingId: id,
+        ok: !r.error,
+        status: r.status,
+        error: r.error,
+      });
+    }
+    return {
+      decided: results.filter((r) => r.ok).length,
+      skipped: results.filter((r) => !r.ok).length,
+      results,
+    };
+  }
+
+  /** One decision, applied. Never throws for a record-level problem. */
+  private async decideOne(
+    onboardingId: string,
+    userId: string,
+    dto: { decision: CmoDecision; note?: string },
+  ): Promise<{ status?: string; error?: string }> {
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) return { error: 'Onboarding not found' };
+
+    const blocker = submissionBlocker({
+      medicalStatus: ob.medicalStatus,
+      medicalProposed: ob.medicalProposed,
+    });
+    if (blocker) return { error: blocker };
+
+    const noteProblem = decisionNoteError(dto.decision, dto.note);
+    if (noteProblem) return { error: noteProblem };
+
+    const next = applyCmoDecision(
+      dto.decision,
+      ob.medicalProposed as ProposedMedical,
+    );
+    const note = dto.note?.trim() || null;
+
+    await this.prisma.onboarding.update({
+      where: { id: onboardingId },
+      data: {
+        medicalStatus: next.status,
+        medicalCmoNote: note,
+        // Returned to the officer: the finding is withdrawn, so the proposal
+        // and the submission stamp go with it. Anything else would leave the
+        // record looking like it is still in the queue.
+        medicalProposed: next.decided ? ob.medicalProposed : null,
+        medicalSubmittedAt: next.decided ? ob.medicalSubmittedAt : null,
+        medicalSubmittedById: next.decided ? ob.medicalSubmittedById : null,
+        medicalApprovedAt: next.decided ? new Date() : null,
+        medicalApprovedById: next.decided ? userId : null,
+        medicalClearedAt: next.status === 'cleared' ? new Date() : null,
+        medicalClearedById: next.decided ? ob.medicalClearedById : null,
+      },
+    });
+
+    // The examining officer hears every outcome — including agreement, because
+    // silence on approval makes a return or an overturn feel like a reprimand.
+    if (ob.medicalSubmittedById) {
+      await this.notifications.notifyMany([ob.medicalSubmittedById], {
+        type: 'onboarding',
+        title: `Medical ${next.decided ? next.status : 'returned'}`,
+        message: `${ob.candidate.name}: ${next.summary}${note ? ` — ${note}` : ''}`,
+        link: `/requisitions/${ob.candidate.requisitionId}`,
+      });
+    }
+
+    // Recruitment is told only once there is an outcome to act on.
+    if (next.decided) {
+      const hrIds = await this.permissions.recruitmentRecipients(
+        ob.candidate.requisition.unitFactory,
+        ob.candidate.requisition.recruiterId,
+      );
+      await this.notifications.notifyMany(hrIds, {
+        type: 'onboarding',
+        title: `Medical ${next.status}`,
+        message: `${ob.candidate.name} (${ob.candidate.requisition.designation}) — ${next.summary}`,
+        link: `/requisitions/${ob.candidate.requisitionId}`,
+      });
+    }
+
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      {
+        action: 'medical_updated',
+      },
+    );
+    return { status: next.status };
   }
 
   /** Medical exam form data is readable by the medical team (who fill it in)
@@ -1860,6 +2120,18 @@ export class OnboardingService {
       medicalStatus: ob.medicalStatus,
       medicalNote: ob.medicalNote ?? '',
       medicalClearedAt: ob.medicalClearedAt?.toISOString() ?? null,
+      /** What the examining officer put forward while it waits centrally. */
+      medicalProposed: ob.medicalProposed ?? null,
+      medicalSubmittedAt: ob.medicalSubmittedAt?.toISOString() ?? null,
+      /**
+       * The Central Medical Officer's note.
+       *
+       * Shown to the examining officer: a candidate reappearing in their queue
+       * with no explanation is the most confusing thing this layer could do,
+       * and this is the only record of why it came back.
+       */
+      medicalCmoNote: ob.medicalCmoNote ?? null,
+      medicalApprovedAt: ob.medicalApprovedAt?.toISOString() ?? null,
       // Whether the clearance came from a paper check rather than the
       // structured report, and who put their name to it.
       // Offer & appointment letters

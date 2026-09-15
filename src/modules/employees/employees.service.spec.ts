@@ -3,6 +3,15 @@ import { ForbiddenException, BadRequestException } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { PermissionsService } from '../rbac/permissions.service';
+import type { FileGrantService } from '../../common/files/file-grant.service';
+
+/** Signatures are serialized as signed grants; the value is irrelevant here. */
+const grants = () =>
+  ({
+    url: jest.fn((fileId: string | null) =>
+      fileId ? `/api/files/grant-for-${fileId}` : null,
+    ),
+  }) as unknown as FileGrantService;
 
 /**
  * Regression cover for the authorization gap on `PATCH /employees/:id`.
@@ -27,21 +36,37 @@ describe('EmployeesService.update — authorization', () => {
       user: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn() },
       $transaction: jest.fn().mockResolvedValue([]),
     } as unknown as PrismaService;
-    const service = new EmployeesService(prisma, perms as PermissionsService);
+    const service = new EmployeesService(
+      prisma,
+      perms as PermissionsService,
+      grants(),
+    );
     // findOne re-reads after a successful write; stub it out.
     jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
     return { service, prisma };
   }
 
-  const noRoles = {
+  /**
+   * `isEmployeeAdmin` is the single question the service asks — one definition
+   * shared with signature uploads (EMPLOYEE_ADMIN_ROLES). These fixtures answer
+   * it directly rather than restating how it is computed, so a change to the
+   * role list does not need every test rewritten.
+   */
+  const denies = {
+    isEmployeeAdmin: jest.fn().mockResolvedValue(false),
     isSuperUser: jest.fn().mockResolvedValue(false),
     getUserPermissions: jest
       .fn()
       .mockResolvedValue({ isSuperUser: false, roles: [], unitIds: [] }),
   };
+  const allows = {
+    isEmployeeAdmin: jest.fn().mockResolvedValue(true),
+    isSuperUser: jest.fn().mockResolvedValue(false),
+    getUserPermissions: jest.fn(),
+  };
 
   it('refuses a signed-in user who holds no administrative role', async () => {
-    const { service, prisma } = build(noRoles);
+    const { service, prisma } = build(denies);
     await expect(
       service.update('emp-1', { name: 'Attacker' }, 'user-2'),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -49,14 +74,7 @@ describe('EmployeesService.update — authorization', () => {
   });
 
   it('refuses a unit-scoped approver — holding any role is not enough', async () => {
-    const { service } = build({
-      isSuperUser: jest.fn().mockResolvedValue(false),
-      getUserPermissions: jest.fn().mockResolvedValue({
-        isSuperUser: false,
-        roles: [{ key: 'unit_approver', unitId: 'u1', unitName: 'Unit A' }],
-        unitIds: ['u1'],
-      }),
-    });
+    const { service } = build(denies);
     await expect(
       service.update('emp-1', { phone: '000' }, 'approver'),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -64,6 +82,7 @@ describe('EmployeesService.update — authorization', () => {
 
   it('allows a super user', async () => {
     const { service, prisma } = build({
+      isEmployeeAdmin: jest.fn().mockResolvedValue(true),
       isSuperUser: jest.fn().mockResolvedValue(true),
       getUserPermissions: jest.fn(),
     });
@@ -72,20 +91,22 @@ describe('EmployeesService.update — authorization', () => {
   });
 
   it('allows Head of Talent Acquisition', async () => {
-    const { service, prisma } = build({
-      isSuperUser: jest.fn().mockResolvedValue(false),
-      getUserPermissions: jest.fn().mockResolvedValue({
-        isSuperUser: false,
-        roles: [{ key: 'corporate_hr', unitId: null, unitName: null }],
-        unitIds: [],
-      }),
-    });
+    const { service, prisma } = build(allows);
     await service.update('emp-1', { name: 'Corrected Name' }, 'hr');
+    expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('allows a Corporate Recruiter', async () => {
+    // Added to the list on 2026-09-15: recruiters correct contact details in
+    // the course of hiring, and were previously bounced to HR to do it.
+    const { service, prisma } = build(allows);
+    await service.update('emp-1', { phone: '+880000000000' }, 'recruiter');
     expect(prisma.$transaction).toHaveBeenCalled();
   });
 
   it('refuses an email already registered to another account', async () => {
     const { service, prisma } = build({
+      isEmployeeAdmin: jest.fn().mockResolvedValue(true),
       isSuperUser: jest.fn().mockResolvedValue(true),
       getUserPermissions: jest.fn(),
     });
@@ -141,7 +162,7 @@ describe('EmployeesService.findOne — personal details', () => {
         .fn()
         .mockResolvedValue({ isSuperUser: false, roles: [], unitIds: [] }),
     } as unknown as PermissionsService;
-    return new EmployeesService(prisma, perms);
+    return new EmployeesService(prisma, perms, grants());
   }
 
   it('returns phone, email and date of birth to a user holding no role', async () => {

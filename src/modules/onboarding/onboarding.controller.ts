@@ -28,6 +28,8 @@ import {
   OfferLetterDto,
   AppointmentLetterDto,
   SetFixedDesignationDto,
+  MedicalDecisionDto,
+  MedicalDecisionBulkDto,
 } from './dto/onboarding.dto';
 
 /** Phase 4 & 5 — document verification, offer & onboarding (authenticated HR). */
@@ -116,6 +118,45 @@ export class OnboardingController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.onboarding.verifyDoc(docId, dto.status, user.id);
+  }
+
+  // ── Central Medical Officer ───────────────────────────────────────────────
+
+  /**
+   * Everything waiting on the Central Medical Officer, oldest first.
+   *
+   * Distinct from `onboarding/medical-queue`, which is the examining officer's
+   * list of candidates still needing an exam. This one is findings already
+   * made, waiting to be confirmed.
+   */
+  @Get('medical-approvals')
+  medicalApprovalQueue(@CurrentUser() user: AuthUser) {
+    return this.onboarding.medicalApprovalQueue(user.id);
+  }
+
+  /** Confirm, overturn or return one submitted finding. */
+  @Post('medical-approvals/:onboardingId/decide')
+  decideMedical(
+    @Param('onboardingId') onboardingId: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: MedicalDecisionDto,
+  ) {
+    return this.onboarding.decideMedical(onboardingId, user.id, dto);
+  }
+
+  /**
+   * The same verdict across a selection.
+   *
+   * Always 200 with a per-record result: a bulk approval is a list of
+   * independent decisions, and one row another CMO handled a moment earlier
+   * must not fail the rest.
+   */
+  @Post('medical-approvals/decide')
+  decideMedicalMany(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: MedicalDecisionBulkDto,
+  ) {
+    return this.onboarding.decideMedicalMany(user.id, dto);
   }
 
   // Per-candidate lifecycle.

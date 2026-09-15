@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import { FileGrantService } from '../../common/files/file-grant.service';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import { QueryEmployeesDto } from './dto/query-employees.dto';
 import { buildAvatarUrl } from '../../common/avatar.util';
@@ -38,6 +39,10 @@ export interface EmployeeView {
   employeeCode: string;
   name: string;
   avatarUrl: string | null;
+  /** The person's e-signature, or null when they have none. */
+  signatureUrl: string | null;
+  /** True when they uploaded it themselves; HR may not then replace it. */
+  signatureSelfUploaded: boolean;
   email: string | null;
   phone: string | null;
   designation: string | null;
@@ -66,6 +71,7 @@ export class EmployeesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
+    private readonly grants: FileGrantService,
   ) {}
 
   /**
@@ -78,16 +84,11 @@ export class EmployeesService {
    * every other administrative surface is.
    */
   private async requireEmployeeAdmin(userId: string): Promise<void> {
-    if (await this.permissions.isSuperUser(userId)) return;
-    const perms = await this.permissions.getUserPermissions(userId);
-    const allowed = perms.roles.some(
-      (r) => r.key === 'corporate_hr' || r.key === 'chro',
+    // One definition, shared with signature uploads — see EMPLOYEE_ADMIN_ROLES.
+    if (await this.permissions.isEmployeeAdmin(userId)) return;
+    throw new ForbiddenException(
+      'Only a super user, CHRO, Head of Talent Acquisition or Corporate Recruiter can edit employee records',
     );
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Head of Talent Acquisition, CHRO or a super user can edit employee records',
-      );
-    }
   }
 
   /**
@@ -350,6 +351,18 @@ export class EmployeesService {
       avatarUrl: buildAvatarUrl(row.user.id, row.user.avatarFileId),
       email: row.user.email,
       phone: row.user.phone,
+      /** Their e-signature, shown and managed on the employee detail page. */
+      signatureUrl: this.grants.url(row.user.signatureFileId, 'signature', {
+        filename: `${row.user.name} signature`,
+      }),
+      /**
+       * True when the person uploaded it themselves. The detail page uses this
+       * to stop HR replacing a signature that is not theirs to change — the
+       * rule is enforced server-side in UsersService either way.
+       */
+      signatureSelfUploaded:
+        row.user.signatureUploadedById != null &&
+        row.user.signatureUploadedById === row.user.id,
       designation: row.designation,
       department: row.department,
       section: row.section,
