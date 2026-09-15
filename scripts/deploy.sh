@@ -272,11 +272,22 @@ step "swapping dist/ (previous build kept as dist.old for one deploy cycle)"
 # 2026-09-06 (dist.new.1242) and 2026-09-07 (dist.new.234) — both times leaving
 # dist/ ABSENT and nginx returning 500 for every visitor until someone reran the
 # mv by hand. Failing here is strictly worse than never having deployed.
-step "waiting for build child processes to release $TMP_DIST"
+# Windows releases a file handle a moment AFTER the process holding it exits,
+# so waiting for esbuild to disappear returns too early — and if `ps -W` does
+# not list it at all, the loop below breaks on its first pass and we go straight
+# into the retry backoff. Five consecutive deploys have then needed three or
+# four attempts, costing a fixed 1+2+4 = 7s each time.
+#
+# So: wait a fixed minimum regardless of what `ps` reports, then keep waiting
+# while esbuild is still visible. Tunable if a slower box needs longer.
+SWAP_SETTLE_SECONDS="${SWAP_SETTLE_SECONDS:-3}"
+step "letting build children exit and release their handles (${SWAP_SETTLE_SECONDS}s)"
+sleep "$SWAP_SETTLE_SECONDS"
+
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  # `ps -W` lists Windows processes under Git Bash. If ps is unavailable the
-  # grep simply never matches and we fall through to the retry loop below,
-  # which is the real safety net.
+  # `ps -W` lists Windows processes under Git Bash. Where it is unavailable the
+  # grep never matches and this simply falls through — the settle above and the
+  # retry loop below are the real safety nets.
   ps -W 2>/dev/null | grep -iq '[e]sbuild' || break
   sleep 1
 done
@@ -287,11 +298,17 @@ rm -rf dist.old
 # the failure trap even though nothing had gone wrong.
 if [ -d dist ]; then mv dist dist.old; fi
 
-# Retry with backoff: 1s, 2s, 4s, 8s between five attempts. Each `mv` is inside
-# an `if` condition so a failure does not trip `set -e` before we can recover.
+# Retry with a gentle-then-backing-off schedule: 1s, 1s, 2s, 3s, 5s, 8s between
+# seven attempts, 20s in total. The early steps are short on purpose — the
+# handle frees a few seconds after the build, and a coarse 1-2-4 schedule
+# overshoots it and waits 7s to discover what a 1s retry would have found in 3.
+# Each `mv` sits inside an `if` so a failure does not trip `set -e` before we
+# can recover.
+SWAP_DELAYS="1 1 2 3 5 8"
 swapped=0
-delay=1
-for attempt in 1 2 3 4 5; do
+attempt=0
+for delay in $SWAP_DELAYS _final; do
+  attempt=$((attempt + 1))
   if mv "$TMP_DIST" dist 2>/dev/null; then
     swapped=1
     # Spelled as an if, not `[ ... ] && step ...` — see the dist-swap comment
@@ -299,10 +316,11 @@ for attempt in 1 2 3 4 5; do
     if [ "$attempt" -gt 1 ]; then step "swap succeeded on attempt $attempt"; fi
     break
   fi
-  if [ "$attempt" -lt 5 ]; then
-    step "swap attempt $attempt/5 failed (a build child still holds $TMP_DIST) — retrying in ${delay}s"
+  # `_final` is a sentinel, not a delay: the last pass is an attempt with no
+  # sleep after it, so the loop ends on a try rather than on a wait.
+  if [ "$delay" != "_final" ]; then
+    step "swap attempt $attempt/7 failed (a build child still holds $TMP_DIST) — retrying in ${delay}s"
     sleep "$delay"
-    delay=$(( delay * 2 ))
   fi
 done
 
