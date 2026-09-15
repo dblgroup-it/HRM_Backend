@@ -24,6 +24,7 @@ import { RecruitmentService } from './recruitment.service';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import type { CvProfile } from './cv/cv-profile.types';
+import { buildCvDocument } from './cv/cv-document';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import {
   BulkRejectDto,
@@ -471,6 +472,41 @@ export class CandidatesService {
       capturedAt: cand.cvProfileAt?.toISOString() ?? null,
       profile: (cand.cvProfile as unknown as CvProfile | null) ?? null,
     };
+  }
+
+  /**
+   * A printable CV rendered from the structured profile.
+   *
+   * Bdjobs applications arrive as fields and no file, so there is nothing to
+   * open, print or hand an interviewer. Everything needed is already stored on
+   * the candidate; this renders it as the document it should have been.
+   *
+   * Runs the same authorization check as every other CV route — a generated CV
+   * carries exactly the personal data the uploaded one would.
+   */
+  async cvDocument(candidateId: string, userId: string): Promise<string> {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: {
+        id: true,
+        name: true,
+        cvProfile: true,
+        cvProfileAt: true,
+        requisition: {
+          select: { unitFactory: true, recruiterId: true },
+        },
+      },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(cand.requisition, userId);
+
+    const profile = cand.cvProfile as unknown as CvProfile | null;
+    if (!profile) {
+      throw new NotFoundException(
+        'No structured CV is stored for this candidate, so there is nothing to render. Upload a CV file instead.',
+      );
+    }
+    return buildCvDocument(profile);
   }
 
   /**

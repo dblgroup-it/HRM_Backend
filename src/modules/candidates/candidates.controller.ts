@@ -177,6 +177,28 @@ export class CandidatesController {
   }
 
   /**
+   * A printable CV rendered from the structured profile.
+   *
+   * For candidates who applied through Bdjobs there is no file to stream — the
+   * application is fields, not a document. Returned as HTML so it opens in a
+   * tab, prints, and can be pasted into mail.
+   */
+  @Get('candidates/:id/cv/document')
+  async cvDocument(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ) {
+    const html = await this.candidates.cvDocument(id, user.id);
+    // Served as a document, not wrapped in the API's { success, data }
+    // envelope — the browser has to render it.
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // A CV is personal data; it must not sit in a shared or disk cache.
+    res.setHeader('Cache-Control', 'no-store, private');
+    res.send(html);
+  }
+
+  /**
    * The CV document itself, streamed from private storage.
    *
    * The file is no longer readable on Google Drive by anyone with a link; this

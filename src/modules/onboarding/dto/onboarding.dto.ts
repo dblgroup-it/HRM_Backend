@@ -238,6 +238,18 @@ export class OfferLetterDto {
   @IsIn(['junior', 'senior'])
   format!: 'junior' | 'senior';
 
+  /**
+   * Which of the requisition's designations this person is hired at.
+   *
+   * A requisition may offer several levels because the level depends on who is
+   * found; this settles it for this candidate and is what the letter prints.
+   * Omitted on a single-designation requisition, where the primary applies.
+   * Rejected server-side if it is not one the requisition actually offers —
+   * a letter is signed, and a typo in a job title is not correctable after it
+   * has gone out.
+   */
+  @IsOptional() @IsString() @MaxLength(150) fixedDesignation?: string;
+
   /** "Mr." / "Ms." — omitted rather than guessed when unknown. */
   @IsOptional() @IsString() @MaxLength(10) salutation?: string;
   @IsOptional() @IsString() @MaxLength(300) address?: string;
@@ -255,6 +267,8 @@ export class OfferLetterDto {
 
 /** The appointment letter, issued after joining. */
 export class AppointmentLetterDto {
+  /** See OfferLetterDto.fixedDesignation — the appointment letter prints the same. */
+  @IsOptional() @IsString() @MaxLength(150) fixedDesignation?: string;
   @IsOptional() @IsString() @MaxLength(60) reference?: string;
   @IsOptional() @IsString() joiningDate?: string;
   @IsOptional() @IsString() @MaxLength(300) address?: string;

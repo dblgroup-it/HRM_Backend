@@ -80,10 +80,59 @@ export class SignatoriesDto {
   factoryHRName?: string;
 }
 
+/**
+ * One person this requisition replaces.
+ *
+ * A requisition can refill several seats at once — three leavers, one
+ * requisition — and each carries their own reason and vacancy date, because
+ * people rarely leave on the same day for the same reason.
+ */
+export class ReplacedEmployeeDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  employeeName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  employeeCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  separationReason?: string;
+
+  /** ISO date — when their seat actually became free. */
+  @IsOptional()
+  @IsString()
+  vacantDate?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  remarks?: string;
+}
+
 export class CreateRequisitionDto {
   @IsString()
   @MinLength(2)
   designation!: string;
+
+  /**
+   * Other levels this post may be filled at, e.g. "Senior Executive" raised
+   * alongside "Assistant Manager" when the level depends on who is found.
+   *
+   * `designation` remains the primary — the organogram lookup and approval
+   * routing read it — and an empty list is an ordinary single-designation
+   * requisition. Which level a candidate is actually hired at is settled per
+   * person during onboarding.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(150, { each: true })
+  alternateDesignations?: string[];
 
   @Type(() => Number)
   @IsInt()
@@ -123,6 +172,18 @@ export class CreateRequisitionDto {
    */
   @IsIn(['new', 'existing'])
   requirementType!: 'new' | 'existing';
+
+  /**
+   * Everyone this requisition replaces. Preferred over the four single fields
+   * below, which are kept because existing clients still send them and several
+   * reports still read the columns they map to. When this list is sent, the
+   * first entry is mirrored into those columns so nothing downstream changes.
+   */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReplacedEmployeeDto)
+  replacements?: ReplacedEmployeeDto[];
 
   /** Replacement details — required when requirementType is 'existing'. */
   @IsOptional()

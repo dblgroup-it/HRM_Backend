@@ -447,7 +447,7 @@ export class OnboardingService {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
     return {
-      html: buildOfferLetter(dto.format, await this.letterInput(cand, ob, dto)),
+      html: await this.renderOffer(cand, ob, dto),
     };
   }
 
@@ -466,6 +466,7 @@ export class OnboardingService {
       );
     }
 
+    await this.resolveFixedDesignation(cand, ob, dto.fixedDesignation);
     const input = await this.letterInput(cand, ob, dto);
     const letter = buildOfferLetter(dto.format, input);
     const link = this.publicLink(ob.token ?? '');
@@ -521,10 +522,12 @@ export class OnboardingService {
   ) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
+    await this.resolveFixedDesignation(cand, ob, dto.fixedDesignation);
     return {
       html: buildAppointmentLetter(
         await this.letterInput(cand, ob, {
           format: 'junior',
+          fixedDesignation: dto.fixedDesignation,
           reference: dto.reference,
           joiningDate: dto.joiningDate,
           address: dto.address,
@@ -551,9 +554,11 @@ export class OnboardingService {
       );
     }
 
+    await this.resolveFixedDesignation(cand, ob, dto.fixedDesignation);
     const letter = buildAppointmentLetter(
       await this.letterInput(cand, ob, {
         format: 'junior',
+        fixedDesignation: dto.fixedDesignation,
         reference: dto.reference,
         joiningDate: dto.joiningDate,
         address: dto.address,
@@ -619,12 +624,73 @@ export class OnboardingService {
     return cand.cvAddress?.trim() || null;
   }
 
+  /**
+   * Settle which designation this candidate is hired at, and remember it.
+   *
+   * Validated against what the requisition actually offers rather than taken on
+   * trust: the letter is signed and sent, and a job title typed by hand into a
+   * document that becomes someone's employment contract is not something to
+   * discover later. Stored so the offer letter, the appointment letter and
+   * anything printed afterwards agree without the choice being made twice.
+   */
+  /** Preview an offer letter — same guard as sending one, nothing emailed. */
+  private async renderOffer(
+    cand: Parameters<OnboardingService['letterInput']>[0] & {
+      requisition: { alternateDesignations?: string[] | null };
+    },
+    ob: Parameters<OnboardingService['letterInput']>[1] & { id: string },
+    dto: OfferLetterDto,
+  ): Promise<string> {
+    await this.resolveFixedDesignation(cand, ob, dto.fixedDesignation);
+    return buildOfferLetter(dto.format, await this.letterInput(cand, ob, dto));
+  }
+
+  private async resolveFixedDesignation(
+    cand: {
+      requisition: {
+        designation: string;
+        alternateDesignations?: string[] | null;
+      };
+    },
+    ob: { id: string; fixedDesignation?: string | null },
+    chosen?: string | null,
+  ): Promise<string | null> {
+    const picked = chosen?.trim();
+    if (!picked) return ob.fixedDesignation?.trim() || null;
+
+    const offered = [
+      cand.requisition.designation,
+      ...(cand.requisition.alternateDesignations ?? []),
+    ].map((d) => d.trim());
+
+    const match = offered.find((d) => d.toLowerCase() === picked.toLowerCase());
+    if (!match) {
+      throw new BadRequestException(
+        `"${picked}" is not one of the designations this requisition was raised for (${offered.join(', ')}).`,
+      );
+    }
+
+    // Store the requisition's own spelling, not the caller's casing.
+    if (ob.fixedDesignation !== match) {
+      await this.prisma.onboarding.update({
+        where: { id: ob.id },
+        data: { fixedDesignation: match },
+      });
+    }
+    return match;
+  }
+
   private async letterInput(
     cand: {
       name: string;
       cvProfile?: unknown;
       cvAddress?: string | null;
-      requisition: { designation: string; unitFactory: string };
+      requisition: {
+        designation: string;
+        alternateDesignations?: string[] | null;
+        department?: string | null;
+        unitFactory: string;
+      };
     },
     ob: {
       offerRef: string | null;
@@ -634,9 +700,14 @@ export class OnboardingService {
       offerNoticeDays: number | null;
       offerBenefits: string[];
       candidateAddress: string | null;
+      fixedDesignation?: string | null;
     },
     dto: Partial<OfferLetterDto> & { format: LetterFormat },
   ): Promise<LetterInput> {
+    // Already validated and stored by resolveFixedDesignation before any
+    // letter is rendered; read here so every format prints the same title.
+    const fixedDesignation =
+      dto.fixedDesignation?.trim() || ob.fixedDesignation?.trim() || null;
     const chro = await this.prisma.roleAssignment.findFirst({
       where: { role: { key: 'chro' } },
       select: { user: { select: { name: true } } },
@@ -645,7 +716,11 @@ export class OnboardingService {
       candidateName: cand.name,
       salutation: dto.salutation ?? null,
       address: this.resolveAddress(dto.address, ob.candidateAddress, cand),
-      designation: cand.requisition.designation,
+      // The level this person is actually hired at. Falls back to the
+      // requisition's primary designation, which is every candidate on a
+      // single-designation requisition.
+      designation: fixedDesignation ?? cand.requisition.designation,
+      department: cand.requisition.department ?? null,
       unitFactory: cand.requisition.unitFactory,
       reference: dto.reference ?? ob.offerRef,
       date: new Date(),

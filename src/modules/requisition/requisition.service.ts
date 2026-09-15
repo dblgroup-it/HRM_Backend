@@ -28,6 +28,11 @@ import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
 import { ApprovalPathsService } from '../approval-paths/approval-paths.service';
 import { MasterDataService } from '../master-data/master-data.service';
+import {
+  designationLabel,
+  normaliseAlternateDesignations,
+  normaliseReplacements,
+} from './requisition-inputs';
 import { buildMeta, Paginated } from '../../common/dto/pagination.dto';
 import {
   CreateRequisitionDto,
@@ -44,6 +49,7 @@ import { synthesizeRoleProfile } from './requisition.workflow';
 
 const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
+  replacements: { orderBy: { orderIndex: 'asc' } },
   recruiter: { select: { id: true, name: true, employeeCode: true } },
   activities: { orderBy: { createdAt: 'asc' } },
   candidates: {
@@ -105,20 +111,42 @@ export class RequisitionService {
 
     // A replacement has to say who left and why — otherwise "Replacement" is
     // an unauditable label. Trimmed here so whitespace can't satisfy it.
-    const replaceOfName = dto.replaceOfName?.trim() || null;
-    const separationReason = dto.separationReason?.trim() || null;
+    //
+    // A requisition can refill several seats at once, so the form sends a list.
+    // Older clients send the four single fields instead; normaliseReplacements
+    // accepts either and yields one shape. The first entry is mirrored back
+    // into those columns below, because the approval sheet, the board export
+    // and several reports still read them directly.
+    const replacements =
+      requirementType === 'EXISTING' ? normaliseReplacements(dto) : [];
+    const first = replacements[0] ?? null;
+    const replaceOfName = first?.employeeName ?? null;
+    const separationReason = first?.separationReason ?? null;
+
     if (requirementType === 'EXISTING') {
       if (!replaceOfName) {
         throw new BadRequestException(
           'Name the employee being replaced — a replacement requisition must say who left.',
         );
       }
-      if (!separationReason) {
+      // Required of everyone listed, not only the first: a sheet naming three
+      // leavers with one reason between them is not auditable.
+      const missing = replacements.filter((r) => !r.separationReason);
+      if (missing.length) {
         throw new BadRequestException(
-          'Give the reason the employee being replaced left.',
+          replacements.length === 1
+            ? 'Give the reason the employee being replaced left.'
+            : `Give a separation reason for ${missing.map((r) => r.employeeName).join(', ')}.`,
         );
       }
     }
+
+    // Other levels this post may be filled at. Which one a candidate is
+    // actually hired at is settled per person during onboarding.
+    const alternateDesignations = normaliseAlternateDesignations(
+      dto.designation,
+      dto.alternateDesignations,
+    );
 
     // This raiser's own chain for this unit — an ordered list of named
     // approvers with a Head of Talent Acquisition step appended — snapshotted here so later
@@ -138,6 +166,7 @@ export class RequisitionService {
       data: {
         code: await this.nextCode(),
         designation: dto.designation,
+        alternateDesignations,
         requirementType,
         requiredPosts: dto.requiredPosts,
         totalVacantPosts: dto.totalVacantPosts,
@@ -149,16 +178,13 @@ export class RequisitionService {
         // Only meaningful on a replacement; cleared on a NEW headcount so a
         // later edit from Replace to New can't leave a stale name behind.
         replaceOfName: requirementType === 'EXISTING' ? replaceOfName : null,
-        replaceOfEmployeeCode:
-          requirementType === 'EXISTING'
-            ? dto.replaceOfEmployeeCode?.trim() || null
-            : null,
+        replaceOfEmployeeCode: first?.employeeCode ?? null,
         separationReason:
           requirementType === 'EXISTING' ? separationReason : null,
-        replacementRemarks:
-          requirementType === 'EXISTING'
-            ? dto.replacementRemarks?.trim() || null
-            : null,
+        replacementRemarks: first?.remarks ?? null,
+        // The full list. Empty on a NEW headcount, so switching a requisition
+        // from Replace to New cannot leave orphaned names behind.
+        replacements: { create: replacements },
         placeOfPosting: dto.placeOfPosting,
         vacantDate: toDate(dto.vacantDate),
         neededDate: toDate(dto.neededDate),
@@ -1561,9 +1587,29 @@ function serialize(req: RequisitionFull, files?: FileGrantService) {
     id: req.id,
     code: req.code,
     designation: req.designation,
+    alternateDesignations: req.alternateDesignations ?? [],
+    /**
+     * Every level this post may be filled at, primary first, as one string:
+     * "Senior Executive / Assistant Manager". Sent so a list, a sheet and a
+     * notification cannot each join it differently.
+     */
+    designationLabel: designationLabel(
+      req.designation,
+      req.alternateDesignations,
+    ),
     grade: req.grade ?? null,
     requirementType: low(req.requirementType),
     lineOfBusiness: req.lineOfBusiness ?? null,
+    /** Everyone this requisition replaces. Empty on a NEW headcount. */
+    replacements: (req.replacements ?? []).map((r) => ({
+      id: r.id,
+      employeeName: r.employeeName,
+      employeeCode: r.employeeCode ?? null,
+      separationReason: r.separationReason ?? null,
+      vacantDate: r.vacantDate?.toISOString() ?? null,
+      remarks: r.remarks ?? null,
+    })),
+    // The first replaced employee, kept because existing readers expect it.
     replaceOfName: req.replaceOfName ?? null,
     replaceOfEmployeeCode: req.replaceOfEmployeeCode ?? null,
     separationReason: req.separationReason ?? null,

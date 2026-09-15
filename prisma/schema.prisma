@@ -181,91 +181,91 @@ model Setting {
 }
 
 model User {
-  id              String           @id @default(cuid())
-  employeeCode    String           @unique @map("employee_code") @db.VarChar(20)
-  name            String           @db.VarChar(150)
-  email           String?          @db.VarChar(254)
-  phone           String?          @db.VarChar(20)
-  passwordHash    String           @map("password_hash") @db.VarChar(100)
-  role            UserRole         @default(EMPLOYEE)
-  status          UserStatus       @default(ACTIVE)
+  id                            String                 @id @default(cuid())
+  employeeCode                  String                 @unique @map("employee_code") @db.VarChar(20)
+  name                          String                 @db.VarChar(150)
+  email                         String?                @db.VarChar(254)
+  phone                         String?                @db.VarChar(20)
+  passwordHash                  String                 @map("password_hash") @db.VarChar(100)
+  role                          UserRole               @default(EMPLOYEE)
+  status                        UserStatus             @default(ACTIVE)
   /// Bumped on logout / password change to invalidate previously-issued JWTs.
-  tokenVersion    Int              @default(0) @map("token_version")
+  tokenVersion                  Int                    @default(0) @map("token_version")
   /// Google Drive file id of the user's profile picture (served via the avatar proxy).
-  avatarFileId    String?          @map("avatar_file_id") @db.VarChar(100)
+  avatarFileId                  String?                @map("avatar_file_id") @db.VarChar(100)
   /// Per-user toggle: also send notifications to this user's email.
-  emailNotifications Boolean       @default(true) @map("email_notifications")
+  emailNotifications            Boolean                @default(true) @map("email_notifications")
   /// Two-factor auth: enabled flag, method ('email' | 'totp'), and TOTP secret.
-  twoFactorEnabled  Boolean        @default(false) @map("two_factor_enabled")
-  twoFactorMethod   String?        @map("two_factor_method") @db.VarChar(10)
-  twoFactorSecret   String?        @map("two_factor_secret") @db.VarChar(100)
+  twoFactorEnabled              Boolean                @default(false) @map("two_factor_enabled")
+  twoFactorMethod               String?                @map("two_factor_method") @db.VarChar(10)
+  twoFactorSecret               String?                @map("two_factor_secret") @db.VarChar(100)
   /// Transient one-time code (hashed) for email 2FA + its expiry.
-  otpHash           String?        @map("otp_hash") @db.VarChar(100)
-  otpExpiresAt      DateTime?      @map("otp_expires_at")
+  otpHash                       String?                @map("otp_hash") @db.VarChar(100)
+  otpExpiresAt                  DateTime?              @map("otp_expires_at")
   /// The account still holds a password someone else chose for it — the
   /// employee code it was provisioned with, or an administrator's reset.
   /// Until it is changed the session may only change the password or sign out.
-  mustChangePassword Boolean       @default(false) @map("must_change_password")
+  mustChangePassword            Boolean                @default(false) @map("must_change_password")
   /// Consecutive failed password attempts; reset to 0 on any success.
-  failedLoginAttempts Int          @default(0) @map("failed_login_attempts")
+  failedLoginAttempts           Int                    @default(0) @map("failed_login_attempts")
   /// Set when `failedLoginAttempts` crosses the threshold; sign-in is refused
   /// until this passes, regardless of whether the password is correct.
-  lockedUntil        DateTime?     @map("locked_until")
-  employee        Employee?
-  roleAssignments  RoleAssignment[]
-  notifications    Notification[]
-  committeeRoles   CommitteeMember[]
-  interviewPanels  InterviewPanelist[]
-  evaluations      Evaluation[]
-  evaluationTokens EvaluationToken[]
-  unitsCreated     Unit[]             @relation("UnitCreatedBy")
-  unitsUpdated     Unit[]             @relation("UnitUpdatedBy")
-  departmentsCreated Department[]     @relation("DepartmentCreatedBy")
-  departmentsUpdated Department[]     @relation("DepartmentUpdatedBy")
-  positionsCreated Position[]         @relation("PositionCreatedBy")
-  positionsUpdated Position[]         @relation("PositionUpdatedBy")
-  rolesCreated         Role[]             @relation("RoleCreatedBy")
-  rolesUpdated         Role[]             @relation("RoleUpdatedBy")
-  roleAssignmentsGiven RoleAssignment[]   @relation("RoleAssignedBy")
-  interviewRoundsCreated   InterviewRound[]    @relation("InterviewRoundCreatedBy")
-  candidatesCreated        Candidate[]         @relation("CandidateCreatedBy")
-  candidatesRejected       Candidate[]         @relation("CandidateRejectedBy")
-  medicalClearances        Onboarding[]        @relation("OnboardingMedicalClearedBy")
-  boardBatchesCreated      BoardApprovalBatch[] @relation("BoardBatchCreatedBy")
-  boardBatchesAsChro       BoardApprovalBatch[] @relation("BoardBatchChro")
-  auditLogs                AuditLog[]           @relation("AuditLogActor")
-  boardGroupMemberships    BoardGroupMember[]
-  boardApprovalsRequested  BoardApproval[]     @relation("BoardApprovalRequester")
-  boardApprovalsHrApproved BoardApproval[]     @relation("BoardApprovalHrApprover")
-  boardApprovalsAsCorporateHr BoardApproval[]  @relation("BoardApprovalCorporateHr")
-  boardApprovalsAsChro     BoardApproval[]     @relation("BoardApprovalChro")
-  interviewDelegationsHeld     InterviewDelegation[] @relation("InterviewDelegatedTo")
-  interviewDelegationsMade     InterviewDelegation[] @relation("InterviewDelegatedBy")
-  boardApprovalVotes       BoardApprovalVote[]
+  lockedUntil                   DateTime?              @map("locked_until")
+  employee                      Employee?
+  roleAssignments               RoleAssignment[]
+  notifications                 Notification[]
+  committeeRoles                CommitteeMember[]
+  interviewPanels               InterviewPanelist[]
+  evaluations                   Evaluation[]
+  evaluationTokens              EvaluationToken[]
+  unitsCreated                  Unit[]                 @relation("UnitCreatedBy")
+  unitsUpdated                  Unit[]                 @relation("UnitUpdatedBy")
+  departmentsCreated            Department[]           @relation("DepartmentCreatedBy")
+  departmentsUpdated            Department[]           @relation("DepartmentUpdatedBy")
+  positionsCreated              Position[]             @relation("PositionCreatedBy")
+  positionsUpdated              Position[]             @relation("PositionUpdatedBy")
+  rolesCreated                  Role[]                 @relation("RoleCreatedBy")
+  rolesUpdated                  Role[]                 @relation("RoleUpdatedBy")
+  roleAssignmentsGiven          RoleAssignment[]       @relation("RoleAssignedBy")
+  interviewRoundsCreated        InterviewRound[]       @relation("InterviewRoundCreatedBy")
+  candidatesCreated             Candidate[]            @relation("CandidateCreatedBy")
+  candidatesRejected            Candidate[]            @relation("CandidateRejectedBy")
+  medicalClearances             Onboarding[]           @relation("OnboardingMedicalClearedBy")
+  boardBatchesCreated           BoardApprovalBatch[]   @relation("BoardBatchCreatedBy")
+  boardBatchesAsChro            BoardApprovalBatch[]   @relation("BoardBatchChro")
+  auditLogs                     AuditLog[]             @relation("AuditLogActor")
+  boardGroupMemberships         BoardGroupMember[]
+  boardApprovalsRequested       BoardApproval[]        @relation("BoardApprovalRequester")
+  boardApprovalsHrApproved      BoardApproval[]        @relation("BoardApprovalHrApprover")
+  boardApprovalsAsCorporateHr   BoardApproval[]        @relation("BoardApprovalCorporateHr")
+  boardApprovalsAsChro          BoardApproval[]        @relation("BoardApprovalChro")
+  interviewDelegationsHeld      InterviewDelegation[]  @relation("InterviewDelegatedTo")
+  interviewDelegationsMade      InterviewDelegation[]  @relation("InterviewDelegatedBy")
+  boardApprovalVotes            BoardApprovalVote[]
   facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
   facilityNotificationsReceived FacilityNotification[] @relation("FacilityNotificationRecipient")
-  approvalPathsUpdated     ApprovalPath[]      @relation("ApprovalPathUpdatedBy")
-  approvalPathsAsRaiser    ApprovalPath[]      @relation("ApprovalPathRaiser")
-  approvalPathLevels       ApprovalPathLevel[] @relation("ApprovalPathLevelUser")
-  approvalStepsAssigned    ApprovalStep[]      @relation("ApprovalStepApprover")
-  requisitionsRecruiting   Requisition[]       @relation("RequisitionRecruiter")
-  requisitionRecruitersSet Requisition[]       @relation("RequisitionRecruiterAssignedBy")
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
+  approvalPathsUpdated          ApprovalPath[]         @relation("ApprovalPathUpdatedBy")
+  approvalPathsAsRaiser         ApprovalPath[]         @relation("ApprovalPathRaiser")
+  approvalPathLevels            ApprovalPathLevel[]    @relation("ApprovalPathLevelUser")
+  approvalStepsAssigned         ApprovalStep[]         @relation("ApprovalStepApprover")
+  requisitionsRecruiting        Requisition[]          @relation("RequisitionRecruiter")
+  requisitionRecruitersSet      Requisition[]          @relation("RequisitionRecruiterAssignedBy")
+  createdAt                     DateTime               @default(now()) @map("created_at")
+  updatedAt                     DateTime               @updatedAt @map("updated_at")
 
   @@map("users")
 }
 
 /// In-app notification, delivered live over websockets and persisted for the bell.
 model Notification {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String   @db.VarChar(50)
-  title     String   @db.VarChar(200)
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String    @db.VarChar(50)
+  title     String    @db.VarChar(200)
   message   String
   /// Optional frontend route to open, e.g. /requisitions/:id
-  link      String?  @db.VarChar(500)
+  link      String?   @db.VarChar(500)
   read      Boolean   @default(false)
   seenAt    DateTime? @map("seen_at")
   createdAt DateTime  @default(now()) @map("created_at")
@@ -297,16 +297,16 @@ model Role {
 
 /// Grants a user a role, optionally scoped to a unit (null = all units / global).
 model RoleAssignment {
-  id          String   @id @default(cuid())
-  roleId      String   @map("role_id")
-  role        Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  userId      String   @map("user_id")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  unitId      String?  @map("unit_id")
-  unit        Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  assignedById String? @map("assigned_by_id")
-  assignedBy  User?    @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now()) @map("created_at")
+  id           String   @id @default(cuid())
+  roleId       String   @map("role_id")
+  role         Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  userId       String   @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  unitId       String?  @map("unit_id")
+  unit         Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  assignedById String?  @map("assigned_by_id")
+  assignedBy   User?    @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@unique([roleId, userId, unitId])
   @@index([userId])
@@ -417,76 +417,94 @@ model Position {
 // ---------------------------------------------------------------------------
 
 model Requisition {
-  id                 String                @id @default(cuid())
-  code               String                @unique @db.VarChar(20)
-  designation        String                @db.VarChar(150)
+  id                    String                   @id @default(cuid())
+  code                  String                   @unique @db.VarChar(20)
+  designation           String                   @db.VarChar(150)
+  /// Other designations this post may be filled at — "Senior Executive" raised
+  /// alongside "Assistant Manager" when the level depends on who is found.
+  ///
+  /// `designation` stays the primary: the organogram lookup, approval routing
+  /// and every existing report read it, and an empty array here means the
+  /// requisition behaves exactly as a single-designation one always has. The
+  /// level a candidate is actually hired at is fixed per person during
+  /// onboarding — see Onboarding.fixedDesignation.
+  alternateDesignations String[]                 @map("alternate_designations")
   /// Confirmed job grade for this post — one of JOB_GRADES (salary-fixation.constants.ts).
   /// Not set by the requisitioner; the current pending approver (Factory HR /
   /// SBU Head / Corporate HR, whoever's turn it is) confirms it during sign-off,
   /// informed by the organogram seat's grade + the ZingHR grade reference.
-  grade              String?               @db.VarChar(20)
-  requirementType    RequirementType       @map("requirement_type")
-  requiredPosts      Int                   @map("required_posts")
-  totalVacantPosts   Int                   @map("total_vacant_posts")
-  unitFactory        String                @map("unit_factory") @db.VarChar(200)
+  grade                 String?                  @db.VarChar(20)
+  requirementType       RequirementType          @map("requirement_type")
+  requiredPosts         Int                      @map("required_posts")
+  totalVacantPosts      Int                      @map("total_vacant_posts")
+  unitFactory           String                   @map("unit_factory") @db.VarChar(200)
   /// DBL business vertical (Garments, Pharma, Telecom…) — fixed list in master_options.
-  lineOfBusiness     String?               @map("line_of_business") @db.VarChar(150)
-  department         String                @db.VarChar(150)
-  section            String?               @db.VarChar(150)
+  lineOfBusiness        String?                  @map("line_of_business") @db.VarChar(150)
+  department            String                   @db.VarChar(150)
+  section               String?                  @db.VarChar(150)
   /// Sub-section within the section (ZingHR vocabulary, cascades from department+section).
-  subSection         String?               @map("sub_section") @db.VarChar(150)
-  placeOfPosting     String                @map("place_of_posting") @db.VarChar(200)
-  vacantDate         DateTime?             @map("vacant_date") @db.Date
-  neededDate         DateTime?             @map("needed_date") @db.Date
-  priority           Priority              @default(MODERATE)
-  employmentNature   EmploymentNature      @default(PERMANENT) @map("employment_nature")
-  contractualPurpose String?               @map("contractual_purpose")
+  subSection            String?                  @map("sub_section") @db.VarChar(150)
+  placeOfPosting        String                   @map("place_of_posting") @db.VarChar(200)
+  vacantDate            DateTime?                @map("vacant_date") @db.Date
+  neededDate            DateTime?                @map("needed_date") @db.Date
+  priority              Priority                 @default(MODERATE)
+  employmentNature      EmploymentNature         @default(PERMANENT) @map("employment_nature")
+  contractualPurpose    String?                  @map("contractual_purpose")
   /// Replacement details — required when requirementType is EXISTING (Replace),
   /// null on a NEW headcount. `replaceOfName` is a snapshot: the person may
   /// have already left by the time anyone reads it.
-  replaceOfName         String?            @map("replace_of_name") @db.VarChar(150)
-  replaceOfEmployeeCode String?            @map("replace_of_employee_code") @db.VarChar(50)
-  separationReason      String?            @map("separation_reason")
-  replacementRemarks    String?            @map("replacement_remarks")
-  jobDescription     String                @map("job_description")
-  education          String
-  experience         String
-  others             String?
+  ///
+  /// These four hold the FIRST replaced employee only. A requisition can now
+  /// replace several people at once (three leavers, one requisition), and the
+  /// full list lives in `replacements`. They are kept, and kept in step with
+  /// replacements[0], because the approval sheet, the board export and several
+  /// reports read them directly — changing those is a separate job from
+  /// letting the form take more than one name.
+  replaceOfName         String?                  @map("replace_of_name") @db.VarChar(150)
+  replaceOfEmployeeCode String?                  @map("replace_of_employee_code") @db.VarChar(50)
+  separationReason      String?                  @map("separation_reason")
+  replacementRemarks    String?                  @map("replacement_remarks")
+  jobDescription        String                   @map("job_description")
+  education             String
+  experience            String
+  others                String?
   /// Requisitioner's requests (Laptop/Desktop, Transport, Dormitory, Seating)
   /// + each facility's HR confirm/skip decision — see FacilityDecision on the frontend.
-  facilities         Json?
-  preferredSources   String[]              @map("preferred_sources")
-  status             RequisitionStatus     @default(PENDING_APPROVAL)
-  roleProfile        Json?                 @map("role_profile")
-  posting            Json?
+  /// Everyone this requisition replaces. Empty on a NEW headcount.
+  replacements          RequisitionReplacement[]
+  facilities            Json?
+  preferredSources      String[]                 @map("preferred_sources")
+  status                RequisitionStatus        @default(PENDING_APPROVAL)
+  roleProfile           Json?                    @map("role_profile")
+  posting               Json?
   /// Corporate HR committee deliberation / final recommendation notes.
-  deliberationNotes  String?               @map("deliberation_notes")
-  raisedBy           String?               @map("raised_by") @db.VarChar(150)
-  raisedById         String?               @map("raised_by_id")
+  deliberationNotes     String?                  @map("deliberation_notes")
+  raisedBy              String?                  @map("raised_by") @db.VarChar(150)
+  raisedById            String?                  @map("raised_by_id")
   /// Corporate Recruiter who owns this requisition's post-approval lifecycle
   /// (candidates → assessment → salary → onboarding). Nominated by Corporate
   /// HR once approved. Additive: Corporate HR / CHRO keep their access.
-  recruiterId           String?            @map("recruiter_id")
-  recruiter             User?              @relation("RequisitionRecruiter", fields: [recruiterId], references: [id], onDelete: SetNull)
-  recruiterAssignedAt   DateTime?          @map("recruiter_assigned_at")
-  recruiterAssignedById String?            @map("recruiter_assigned_by_id")
-  recruiterAssignedBy   User?              @relation("RequisitionRecruiterAssignedBy", fields: [recruiterAssignedById], references: [id], onDelete: SetNull)
+  recruiterId           String?                  @map("recruiter_id")
+  recruiter             User?                    @relation("RequisitionRecruiter", fields: [recruiterId], references: [id], onDelete: SetNull)
+  recruiterAssignedAt   DateTime?                @map("recruiter_assigned_at")
+  recruiterAssignedById String?                  @map("recruiter_assigned_by_id")
+  recruiterAssignedBy   User?                    @relation("RequisitionRecruiterAssignedBy", fields: [recruiterAssignedById], references: [id], onDelete: SetNull)
   /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.
-  drive              Json?
+  drive                 Json?
   /// Optional supporting files (JD, approvals, etc.) — array of { name, fileId, url, size, uploadedAt }.
-  attachments        Json?
-  approvalSteps      ApprovalStep[]
-  activities         RequisitionActivity[]
-  candidates         Candidate[]
-  committeeMembers   CommitteeMember[]
-  interviewRounds    InterviewRound[]
-  interviewDelegations InterviewDelegation[]
-  bdJobsPost         BdJobsPost?
-  talentBankMatches  TalentBankMatch[]
-  createdAt          DateTime              @default(now()) @map("created_at")
-  updatedAt          DateTime              @updatedAt @map("updated_at")
+  attachments           Json?
+  approvalSteps         ApprovalStep[]
+  activities            RequisitionActivity[]
+  candidates            Candidate[]
+  committeeMembers      CommitteeMember[]
+  interviewRounds       InterviewRound[]
+  interviewDelegations  InterviewDelegation[]
+  bdJobsPost            BdJobsPost?
+  talentBankMatches     TalentBankMatch[]
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
   /// Soft delete — null means active; set to timestamp when "deleted".
-  deletedAt          DateTime?             @map("deleted_at")
+  deletedAt             DateTime?                @map("deleted_at")
 
   @@index([status])
   @@index([unitFactory])
@@ -517,66 +535,66 @@ model BdJobsPost {
 
 /// A CV / applicant against a requisition (Phase 2 — CV collection).
 model Candidate {
-  id            String         @id @default(cuid())
-  requisitionId String         @map("requisition_id")
-  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  name          String         @db.VarChar(150)
-  email         String?        @db.VarChar(254)
-  phone         String?        @db.VarChar(20)
-  source        CandidateSource @default(manual)
-  stage         CandidateStage  @default(APPLIED)
+  id                    String                 @id @default(cuid())
+  requisitionId         String                 @map("requisition_id")
+  requisition           Requisition            @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  name                  String                 @db.VarChar(150)
+  email                 String?                @db.VarChar(254)
+  phone                 String?                @db.VarChar(20)
+  source                CandidateSource        @default(manual)
+  stage                 CandidateStage         @default(APPLIED)
   /// Google Drive file id + view link for the CV document.
-  cvFileId      String?         @map("cv_file_id") @db.VarChar(100)
-  cvUrl         String?         @map("cv_url")
+  cvFileId              String?                @map("cv_file_id") @db.VarChar(100)
+  cvUrl                 String?                @map("cv_url")
   /// The CV as structured data in the system's common format (`CvProfile`),
   /// when the source sent one instead of — or as well as — a document.
-  cvProfile     Json?           @map("cv_profile")
-  cvProfileAt   DateTime?       @map("cv_profile_at")
+  cvProfile             Json?                  @map("cv_profile")
+  cvProfileAt           DateTime?              @map("cv_profile_at")
   /// Postal address the AI read off the CV — prefills the offer letter.
-  cvAddress     String?         @map("cv_address") @db.VarChar(300)
-  notes         String?
-  salaryExpectation Float?      @map("salary_expectation")
+  cvAddress             String?                @map("cv_address") @db.VarChar(300)
+  notes                 String?
+  salaryExpectation     Float?                 @map("salary_expectation")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
-  matchScore    Float?          @map("match_score")
-  matchSummary  String?        @map("match_summary")
-  matchDetails  Json?          @map("match_details")
-  screenedAt    DateTime?      @map("screened_at")
-  viewedAt      DateTime?      @map("viewed_at")
+  matchScore            Float?                 @map("match_score")
+  matchSummary          String?                @map("match_summary")
+  matchDetails          Json?                  @map("match_details")
+  screenedAt            DateTime?              @map("screened_at")
+  viewedAt              DateTime?              @map("viewed_at")
   /// Phase 3: suitable-but-not-selected candidates kept for future recall.
-  talentPool    Boolean        @default(false) @map("talent_pool")
+  talentPool            Boolean                @default(false) @map("talent_pool")
   /// Red flag: set by Corp HR / CHRO when this candidate is barred from future roles.
-  isRedFlagged    Boolean      @default(false) @map("is_red_flagged")
-  redFlagReason   String?      @map("red_flag_reason")
-  redFlaggedAt    DateTime?    @map("red_flagged_at")
-  redFlaggedById  String?      @map("red_flagged_by_id")
+  isRedFlagged          Boolean                @default(false) @map("is_red_flagged")
+  redFlagReason         String?                @map("red_flag_reason")
+  redFlaggedAt          DateTime?              @map("red_flagged_at")
+  redFlaggedById        String?                @map("red_flagged_by_id")
   /// Rejection record. `rejectionStage` says where it happened — notably
   /// 'first_interview', which is a factory-side interviewer's call, as opposed
   /// to a CV screening rejection by Corporate HR.
-  rejectedAt      DateTime?    @map("rejected_at")
-  rejectedById    String?      @map("rejected_by_id")
-  rejectedBy      User?        @relation("CandidateRejectedBy", fields: [rejectedById], references: [id], onDelete: SetNull)
-  rejectionStage  String?      @map("rejection_stage") @db.VarChar(30)
-  rejectionReason String?      @map("rejection_reason")
-  createdById   String?         @map("created_by_id")
-  createdBy     User?           @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  rejectedAt            DateTime?              @map("rejected_at")
+  rejectedById          String?                @map("rejected_by_id")
+  rejectedBy            User?                  @relation("CandidateRejectedBy", fields: [rejectedById], references: [id], onDelete: SetNull)
+  rejectionStage        String?                @map("rejection_stage") @db.VarChar(30)
+  rejectionReason       String?                @map("rejection_reason")
+  createdById           String?                @map("created_by_id")
+  createdBy             User?                  @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Bdjobs inbound: unique per Bdjobs application — used for deduplication.
-  bdjobsApplicationId  String?  @unique @map("bdjobs_application_id") @db.VarChar(100)
+  bdjobsApplicationId   String?                @unique @map("bdjobs_application_id") @db.VarChar(100)
   /// Bdjobs inbound: the applicant's Bdjobs profile ID.
-  bdjobsApplicantId    String?  @map("bdjobs_applicant_id") @db.VarChar(100)
+  bdjobsApplicantId     String?                @map("bdjobs_applicant_id") @db.VarChar(100)
   /// Bdjobs inbound: the Bdjobs job listing ID this candidate applied to.
-  bdjobsJobId          String?  @map("bdjobs_job_id") @db.VarChar(100)
-  interviews      InterviewRound[]
-  interviewDelegations InterviewDelegation[]
-  onboarding      Onboarding?
-  boardApprovals  BoardApproval[]
-  salaryFixation  SalaryFixation?
+  bdjobsJobId           String?                @map("bdjobs_job_id") @db.VarChar(100)
+  interviews            InterviewRound[]
+  interviewDelegations  InterviewDelegation[]
+  onboarding            Onboarding?
+  boardApprovals        BoardApproval[]
+  salaryFixation        SalaryFixation?
   aiProficiencyAttempts AiProficiencyAttempt[]
   facilityNotifications FacilityNotification[]
   talentBankMatches     TalentBankMatch[]
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
   /// Soft delete — null means active; set to timestamp when "deleted".
-  deletedAt     DateTime?      @map("deleted_at")
+  deletedAt             DateTime?              @map("deleted_at")
 
   @@index([requisitionId, stage])
   @@index([stage])
@@ -627,17 +645,17 @@ model SalaryFixation {
   jobGrade String? @map("job_grade") @db.VarChar(10)
 
   // Pre-interview screening tests (each gated at its own pass mark, default 50%).
-  writtenTestEnabled  Boolean @default(false) @map("written_test_enabled")
-  writtenTestTotal    Float?  @map("written_test_total")
-  writtenTestObtained Float?  @map("written_test_obtained")
+  writtenTestEnabled   Boolean @default(false) @map("written_test_enabled")
+  writtenTestTotal     Float?  @map("written_test_total")
+  writtenTestObtained  Float?  @map("written_test_obtained")
   /// Computer Literacy — hand-marked like the Written Test, off unless enabled.
   computerTestEnabled  Boolean @default(false) @map("computer_test_enabled")
   computerTestTotal    Float?  @map("computer_test_total")
   computerTestObtained Float?  @map("computer_test_obtained")
   /// HR can skip Step 2 per candidate; defaults on since it was mandatory-only before this field existed.
-  aiTestEnabled       Boolean @default(true) @map("ai_test_enabled")
-  aiTestTotal         Float?  @map("ai_test_total")
-  aiTestObtained      Float?  @map("ai_test_obtained")
+  aiTestEnabled        Boolean @default(true) @map("ai_test_enabled")
+  aiTestTotal          Float?  @map("ai_test_total")
+  aiTestObtained       Float?  @map("ai_test_obtained")
 
   // Committee scoring lives on Evaluation.salaryScores/salaryTotal — panelists
   // mark it themselves from their own interview-evaluation link. Nothing to
@@ -645,11 +663,11 @@ model SalaryFixation {
   // live from those Evaluation rows (and snapshotted at finalize time).
 
   // Derived — recomputed server-side on every save, never client-supplied.
-  averageScore  Float? @map("average_score")
-  computedBand  Int?   @map("computed_band")
+  averageScore           Float? @map("average_score")
+  computedBand           Int?   @map("computed_band")
   /// HR manual override of the computed band, per policy's "Management reserves the right to deviation".
-  bandOverride  Int?   @map("band_override")
-  proposedSalary Float? @map("proposed_salary")
+  bandOverride           Int?   @map("band_override")
+  proposedSalary         Float? @map("proposed_salary")
   /// HR manual override of the auto-computed proposed salary — takes precedence when set.
   proposedSalaryOverride Float? @map("proposed_salary_override")
 
@@ -671,15 +689,15 @@ model SalaryFixation {
 
 /// Registry of red-flagged identities (email + phone) for auto-flagging future applications.
 model RedFlagRegistry {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   /// Normalised lowercase email (may be null if only phone was known).
-  email       String?   @unique @db.VarChar(254)
+  email       String?  @unique @db.VarChar(254)
   /// Phone digits only (may be null if only email was known).
-  phone       String?   @unique @db.VarChar(20)
+  phone       String?  @unique @db.VarChar(20)
   reason      String
-  flaggedById String    @map("flagged_by_id")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  flaggedById String   @map("flagged_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@index([email])
   @@index([phone])
@@ -721,29 +739,29 @@ model InterviewRound {
 /// one candidate — schedule the round, form the committee, read the marks —
 /// and nothing else in the unit.
 model InterviewDelegation {
-  id             String      @id @default(cuid())
-  candidateId    String      @map("candidate_id")
-  candidate      Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  requisitionId  String      @map("requisition_id")
-  requisition    Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  delegatedToId  String      @map("delegated_to_id")
-  delegatedTo    User        @relation("InterviewDelegatedTo", fields: [delegatedToId], references: [id], onDelete: Cascade)
-  delegatedById  String?     @map("delegated_by_id")
-  delegatedBy    User?       @relation("InterviewDelegatedBy", fields: [delegatedById], references: [id], onDelete: SetNull)
-  note           String?
+  id            String      @id @default(cuid())
+  candidateId   String      @map("candidate_id")
+  candidate     Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requisitionId String      @map("requisition_id")
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  delegatedToId String      @map("delegated_to_id")
+  delegatedTo   User        @relation("InterviewDelegatedTo", fields: [delegatedToId], references: [id], onDelete: Cascade)
+  delegatedById String?     @map("delegated_by_id")
+  delegatedBy   User?       @relation("InterviewDelegatedBy", fields: [delegatedById], references: [id], onDelete: SetNull)
+  note          String?
   /// How many times this candidate has been handed to this person.
   ///
   /// The row is upserted, so a re-send used to be invisible: the note changed
   /// and `createdAt` stayed at the original hand-off. HR could chase the same
   /// interviewer three times with no record that they had. 1 on the first
   /// send; anything above that is a nudge somebody should be able to see.
-  sendCount      Int         @default(1) @map("send_count")
+  sendCount     Int         @default(1) @map("send_count")
   /// When it was last sent. `createdAt` remains the FIRST hand-off, so the two
   /// together say "assigned on the 3rd, chased again on the 11th".
-  lastSentAt     DateTime    @default(now()) @map("last_sent_at")
+  lastSentAt    DateTime    @default(now()) @map("last_sent_at")
   /// Set instead of deleting, so an audit of who could act survives.
-  revokedAt      DateTime?   @map("revoked_at")
-  createdAt      DateTime    @default(now()) @map("created_at")
+  revokedAt     DateTime?   @map("revoked_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
 
   @@unique([candidateId, delegatedToId])
   @@index([delegatedToId, revokedAt])
@@ -766,22 +784,22 @@ model InterviewPanelist {
 
 /// Phase 3 — a one-click secure evaluation link sent to each panelist (no login required).
 model EvaluationToken {
-  id             String         @id @default(cuid())
+  id             String          @id @default(cuid())
   /// Legacy raw token. Null on every token issued since hashing was
   /// introduced — the raw value now lives only in the emailed link.
-  token          String?        @unique @db.VarChar(64)
+  token          String?         @unique @db.VarChar(64)
   /// SHA-256 of the raw token. What lookups actually match on.
-  tokenHash      String?        @unique @map("token_hash") @db.VarChar(64)
-  roundId        String         @map("round_id")
-  round          InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
-  panelistUserId String         @map("panelist_user_id")
-  panelistUser   User           @relation(fields: [panelistUserId], references: [id], onDelete: Cascade)
+  tokenHash      String?         @unique @map("token_hash") @db.VarChar(64)
+  roundId        String          @map("round_id")
+  round          InterviewRound  @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  panelistUserId String          @map("panelist_user_id")
+  panelistUser   User            @relation(fields: [panelistUserId], references: [id], onDelete: Cascade)
   status         EvalTokenStatus @default(sent)
-  openedAt       DateTime?      @map("opened_at")
-  submittedAt    DateTime?      @map("submitted_at")
+  openedAt       DateTime?       @map("opened_at")
+  submittedAt    DateTime?       @map("submitted_at")
   /// 48h after the interview date, or 7 days from creation when no scheduledAt.
-  expiresAt      DateTime       @map("expires_at")
-  createdAt      DateTime       @default(now()) @map("created_at")
+  expiresAt      DateTime        @map("expires_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
 
   @@unique([roundId, panelistUserId])
   @@index([roundId])
@@ -811,34 +829,34 @@ model AiProficiencyQuestion {
 /// frozen random subset of AiProficiencyQuestion chosen at assignment time,
 /// token-linked (no login), auto-graded on submit.
 model AiProficiencyAttempt {
-  id          String    @id @default(cuid())
-  candidateId String    @map("candidate_id")
-  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id                String    @id @default(cuid())
+  candidateId       String    @map("candidate_id")
+  candidate         Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   /// Legacy raw token; null for anything issued since hashing was introduced.
-  token       String?   @unique @db.VarChar(64)
+  token             String?   @unique @db.VarChar(64)
   /// SHA-256 of the raw token — what lookups match on.
-  tokenHash   String?   @unique @map("token_hash") @db.VarChar(64)
-  jobGrade    String    @map("job_grade") @db.VarChar(10)
+  tokenHash         String?   @unique @map("token_hash") @db.VarChar(64)
+  jobGrade          String    @map("job_grade") @db.VarChar(10)
   /// Frozen shuffled subset of AiProficiencyQuestion ids, in display order.
-  questionIds String[]  @map("question_ids")
+  questionIds       String[]  @map("question_ids")
   /// { questionId: selectedOption }
-  answers     Json?
-  totalScore  Float?    @map("total_score")
-  maxScore    Float     @map("max_score")
+  answers           Json?
+  totalScore        Float?    @map("total_score")
+  maxScore          Float     @map("max_score")
   /// pending | submitted
-  status      String    @default("pending") @db.VarChar(20)
+  status            String    @default("pending") @db.VarChar(20)
   /// Minutes the candidate gets once they open the test; null = no limit.
-  timeLimitMinutes Int? @map("time_limit_minutes")
+  timeLimitMinutes  Int?      @map("time_limit_minutes")
   /// Stamped the first time the candidate opens the test — the countdown
   /// runs from here, not from assignment, so an unopened link doesn't burn time.
-  startedAt   DateTime? @map("started_at")
+  startedAt         DateTime? @map("started_at")
   /// Focus-lock log — array of { leftAt, returnedAt, endedTest }, one entry
   /// per time the candidate left the test tab/window or exited fullscreen.
-  violations  Json?
+  violations        Json?
   /// Why the attempt ended: candidate | time_up | violation. Null while pending.
-  terminationReason String? @map("termination_reason") @db.VarChar(20)
-  submittedAt DateTime? @map("submitted_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  terminationReason String?   @map("termination_reason") @db.VarChar(20)
+  submittedAt       DateTime? @map("submitted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
 
   @@index([candidateId])
   @@map("ai_proficiency_attempts")
@@ -847,65 +865,73 @@ model AiProficiencyAttempt {
 /// Phase 4 & 5 — document collection, verification, offer & onboarding for a
 /// selected candidate. One per candidate.
 model Onboarding {
-  id              String          @id @default(cuid())
-  candidateId     String          @unique @map("candidate_id")
-  candidate       Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id                    String           @id @default(cuid())
+  candidateId           String           @unique @map("candidate_id")
+  candidate             Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   /// Legacy raw token; null for anything issued since hashing was introduced.
-  token           String?         @unique @db.VarChar(64)
+  token                 String?          @unique @db.VarChar(64)
   /// SHA-256 of the raw token — what lookups match on.
-  tokenHash       String?         @unique @map("token_hash") @db.VarChar(64)
-  status          OnboardingStatus @default(docs_pending)
+  tokenHash             String?          @unique @map("token_hash") @db.VarChar(64)
+  status                OnboardingStatus @default(docs_pending)
   /// HR can skip waiting for the candidate to submit documents.
-  docsSkippedAt   DateTime?       @map("docs_skipped_at")
+  docsSkippedAt         DateTime?        @map("docs_skipped_at")
   /// HR can skip individually verifying every submitted document.
-  verificationSkippedAt DateTime? @map("verification_skipped_at")
-  offerSentAt     DateTime?       @map("offer_sent_at")
-  offerAcceptedAt DateTime?       @map("offer_accepted_at")
-  medicalStatus   MedicalStatus   @default(pending) @map("medical_status")
-  medicalNote     String?         @map("medical_note")
-  medicalClearedAt DateTime?      @map("medical_cleared_at")
+  verificationSkippedAt DateTime?        @map("verification_skipped_at")
+  offerSentAt           DateTime?        @map("offer_sent_at")
+  offerAcceptedAt       DateTime?        @map("offer_accepted_at")
+  medicalStatus         MedicalStatus    @default(pending) @map("medical_status")
+  medicalNote           String?          @map("medical_note")
+  medicalClearedAt      DateTime?        @map("medical_cleared_at")
   // --- Offer & appointment letters -------------------------------------
   /// 'junior' (probation + notice) or 'senior' (job location + benefits) —
   /// DBL issues two house formats and HR picks one per candidate.
-  offerFormat          String?   @map("offer_format") @db.VarChar(10)
-  offerRef             String?   @map("offer_ref") @db.VarChar(60)
+  /// Which of the requisition's designations this person is actually hired at.
+  ///
+  /// A requisition may offer several levels ("Senior Executive" or "Assistant
+  /// Manager") because the level depends on who is found. This is where that is
+  /// settled, per candidate, and it is what the offer and appointment letters
+  /// print. Null means the requisition's primary designation, which is every
+  /// single-designation requisition.
+  fixedDesignation      String?          @map("fixed_designation") @db.VarChar(150)
+  offerFormat           String?          @map("offer_format") @db.VarChar(10)
+  offerRef              String?          @map("offer_ref") @db.VarChar(60)
   /// "effective on or before" — the date printed on the letter.
-  offerJoiningDate     DateTime? @map("offer_joining_date") @db.Date
-  offerJobLocation     String?   @map("offer_job_location") @db.VarChar(200)
-  offerProbationMonths Int?      @map("offer_probation_months")
-  offerNoticeDays      Int?      @map("offer_notice_days")
-  offerBenefits        String[]  @map("offer_benefits")
+  offerJoiningDate      DateTime?        @map("offer_joining_date") @db.Date
+  offerJobLocation      String?          @map("offer_job_location") @db.VarChar(200)
+  offerProbationMonths  Int?             @map("offer_probation_months")
+  offerNoticeDays       Int?             @map("offer_notice_days")
+  offerBenefits         String[]         @map("offer_benefits")
   /// The letter exactly as it was sent. A candidate holds a copy, so it must
   /// not change afterwards because a template or a salary did.
-  offerLetterHtml      String?   @map("offer_letter_html")
-  candidateAddress     String?   @map("candidate_address") @db.VarChar(300)
-  appointmentRef       String?   @map("appointment_ref") @db.VarChar(60)
-  appointmentSentAt    DateTime? @map("appointment_sent_at")
-  appointmentLetterHtml String?  @map("appointment_letter_html")
+  offerLetterHtml       String?          @map("offer_letter_html")
+  candidateAddress      String?          @map("candidate_address") @db.VarChar(300)
+  appointmentRef        String?          @map("appointment_ref") @db.VarChar(60)
+  appointmentSentAt     DateTime?        @map("appointment_sent_at")
+  appointmentLetterHtml String?          @map("appointment_letter_html")
 
   /// Recorded from a paper/offline check rather than the structured form, so
   /// the completeness gate on MedicalExam was deliberately bypassed.
-  medicalManual   Boolean         @default(false) @map("medical_manual")
+  medicalManual      Boolean         @default(false) @map("medical_manual")
   /// When the medical team was told this candidate is waiting on them, so the
   /// alert fires once rather than on every document verified.
-  medicalNotifiedAt DateTime?     @map("medical_notified_at")
-  medicalClearedById String?      @map("medical_cleared_by_id")
-  medicalClearedBy   User?        @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
-  hrVerifiedAt    DateTime?       @map("hr_verified_at")
+  medicalNotifiedAt  DateTime?       @map("medical_notified_at")
+  medicalClearedById String?         @map("medical_cleared_by_id")
+  medicalClearedBy   User?           @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
+  hrVerifiedAt       DateTime?       @map("hr_verified_at")
   /// AI cross-verification of submitted docs vs the candidate's profile:
   /// { verdict, overview, findings: [{doc, severity, detail}] }
-  crossCheck      Json?           @map("cross_check")
-  crossCheckedAt  DateTime?       @map("cross_checked_at")
-  archivedAt      DateTime?       @map("archived_at")
+  crossCheck         Json?           @map("cross_check")
+  crossCheckedAt     DateTime?       @map("cross_checked_at")
+  archivedAt         DateTime?       @map("archived_at")
   /// Drive folder the joining docs were moved into on archive.
-  archiveFolderUrl String?        @map("archive_folder_url")
-  itEmail         String?         @map("it_email") @db.VarChar(254)
-  itAssetId       String?         @map("it_asset_id") @db.VarChar(50)
-  itNotifiedAt    DateTime?       @map("it_notified_at")
-  docs            OnboardingDoc[]
-  medicalExam     MedicalExam?
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
+  archiveFolderUrl   String?         @map("archive_folder_url")
+  itEmail            String?         @map("it_email") @db.VarChar(254)
+  itAssetId          String?         @map("it_asset_id") @db.VarChar(50)
+  itNotifiedAt       DateTime?       @map("it_notified_at")
+  docs               OnboardingDoc[]
+  medicalExam        MedicalExam?
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
 
   @@map("onboardings")
 }
@@ -917,52 +943,52 @@ model Onboarding {
 /// officer can save partial progress — completeness is only enforced by
 /// OnboardingService.setMedical() at the moment of clearing.
 model MedicalExam {
-  id             String     @id @default(cuid())
-  onboardingId   String     @unique @map("onboarding_id")
-  onboarding     Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  id           String     @id @default(cuid())
+  onboardingId String     @unique @map("onboarding_id")
+  onboarding   Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
 
-  dateOfBirth    DateTime?  @map("date_of_birth") @db.Date
+  dateOfBirth    DateTime? @map("date_of_birth") @db.Date
   /// Often left blank on the paper form itself — kept optional.
-  dutyPosition   String?    @map("duty_position")
-  refNo          String?    @map("ref_no")
-  registrationNo String?    @map("registration_no")
-  examDate       DateTime?  @map("exam_date") @db.Date
-  issueDate      DateTime?  @map("issue_date") @db.Date
-  consultantName String?    @map("consultant_name")
+  dutyPosition   String?   @map("duty_position")
+  refNo          String?   @map("ref_no")
+  registrationNo String?   @map("registration_no")
+  examDate       DateTime? @map("exam_date") @db.Date
+  issueDate      DateTime? @map("issue_date") @db.Date
+  consultantName String?   @map("consultant_name")
 
-  height         String?
-  weight         String?
-  pulse          String?
-  bloodPressure  String?    @map("blood_pressure")
+  height        String?
+  weight        String?
+  pulse         String?
+  bloodPressure String? @map("blood_pressure")
 
-  visionRightEye  String?   @map("vision_right_eye")
-  visionLeftEye   String?   @map("vision_left_eye")
+  visionRightEye  String?  @map("vision_right_eye")
+  visionLeftEye   String?  @map("vision_left_eye")
   /// true = "with glass", false = "without glass".
-  visionWithGlass Boolean?  @map("vision_with_glass")
+  visionWithGlass Boolean? @map("vision_with_glass")
 
   colorVisionYellow String? @map("color_vision_yellow")
   colorVisionRed    String? @map("color_vision_red")
   colorVisionGreen  String? @map("color_vision_green")
   colorVisionBlue   String? @map("color_vision_blue")
 
-  hearingRightEar String?   @map("hearing_right_ear")
-  hearingLeftEar  String?   @map("hearing_left_ear")
+  hearingRightEar String? @map("hearing_right_ear")
+  hearingLeftEar  String? @map("hearing_left_ear")
   speech          String?
   extremities     String?
 
   noAnemiaJaundiceEtc           Boolean? @map("no_anemia_jaundice_etc")
   stableNormotensiveNondiabetic Boolean? @map("stable_normotensive_nondiabetic")
   urineTestClear                Boolean? @map("urine_test_clear")
-  hepatitisBNegative             Boolean? @map("hepatitis_b_negative")
-  liverFunctionNormal            Boolean? @map("liver_function_normal")
-  pastIllnessHistory             String?  @map("past_illness_history")
-  familyHistoryDmHtn             Boolean? @map("family_history_dm_htn")
-  familyHistoryDetail            String?  @map("family_history_detail")
+  hepatitisBNegative            Boolean? @map("hepatitis_b_negative")
+  liverFunctionNormal           Boolean? @map("liver_function_normal")
+  pastIllnessHistory            String?  @map("past_illness_history")
+  familyHistoryDmHtn            Boolean? @map("family_history_dm_htn")
+  familyHistoryDetail           String?  @map("family_history_detail")
 
-  bloodGroup     String?    @map("blood_group")
+  bloodGroup String?  @map("blood_group")
   /// The doctor's overall determination — drives whether clearance is valid.
-  fitToJoin      Boolean?   @map("fit_to_join")
-  remarks        String?
+  fitToJoin  Boolean? @map("fit_to_join")
+  remarks    String?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -972,17 +998,17 @@ model MedicalExam {
 
 /// A document the candidate submitted (stored on Drive), with AI extraction.
 model OnboardingDoc {
-  id           String     @id @default(cuid())
-  onboardingId String     @map("onboarding_id")
-  onboarding   Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
-  label        String     @db.VarChar(100)
-  fileId       String     @map("file_id") @db.VarChar(100)
+  id           String              @id @default(cuid())
+  onboardingId String              @map("onboarding_id")
+  onboarding   Onboarding          @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  label        String              @db.VarChar(100)
+  fileId       String              @map("file_id") @db.VarChar(100)
   url          String
-  mimeType     String     @map("mime_type") @db.VarChar(100)
+  mimeType     String              @map("mime_type") @db.VarChar(100)
   status       OnboardingDocStatus @default(pending)
   /// AI (OCR + LLM) extracted structured fields.
-  aiExtract    Json?      @map("ai_extract")
-  createdAt    DateTime   @default(now()) @map("created_at")
+  aiExtract    Json?               @map("ai_extract")
+  createdAt    DateTime            @default(now()) @map("created_at")
 
   @@index([onboardingId])
   @@map("onboarding_docs")
@@ -1025,25 +1051,57 @@ model CommitteeMember {
 }
 
 /// Phase 3 — a component of a requisition's assessment plan (written/excel/skill/viva).
+/// One person a requisition replaces.
+///
+/// A single requisition often covers several leavers — three operators gone in
+/// the same month, one requisition to refill the line. Each is recorded
+/// separately because they rarely leave on the same date or for the same
+/// reason, and an approver signing the sheet needs to see the real picture
+/// rather than one name standing in for three.
+model RequisitionReplacement {
+  id            String      @id @default(cuid())
+  requisitionId String      @map("requisition_id")
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  /// Snapshot, not a foreign key: the person has usually already left, and a
+  /// requisition raised in 2026 must still read correctly after their employee
+  /// record is archived or their name is corrected.
+  employeeName String  @map("employee_name") @db.VarChar(150)
+  employeeCode String? @map("employee_code") @db.VarChar(50)
+
+  /// Resigned / Terminated / Retired / Transferred / Deceased — per person.
+  separationReason String?   @map("separation_reason") @db.VarChar(120)
+  /// When their seat actually became free.
+  vacantDate       DateTime? @map("vacant_date") @db.Date
+  remarks          String?
+
+  /// Display order, so the list reads the way the raiser entered it.
+  orderIndex Int      @default(0) @map("order_index")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([requisitionId])
+  @@map("requisition_replacements")
+}
+
 model ApprovalStep {
-  id            String        @id @default(cuid())
-  requisitionId String        @map("requisition_id")
-  requisition   Requisition   @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  orderIndex    Int           @map("order_index")
+  id             String        @id @default(cuid())
+  requisitionId  String        @map("requisition_id")
+  requisition    Requisition   @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  orderIndex     Int           @map("order_index")
   /// Set only on role-routed steps — legacy chains raised before configurable
   /// approval paths, and the CHRO step appended on escalation. Person-routed
   /// steps (the norm now) carry `approverUserId` instead.
-  role          ApprovalRole?
+  role           ApprovalRole?
   /// The named approver, snapshotted from the unit's ApprovalPath at creation
   /// time so editing a unit's path never reroutes an in-flight requisition.
-  approverUserId String?      @map("approver_user_id")
-  approverUser   User?        @relation("ApprovalStepApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
-  title         String        @db.VarChar(150)
-  subtitle      String        @db.VarChar(200)
-  assignee      String        @default("") @db.VarChar(150)
-  status        StepStatus    @default(PENDING)
-  note          String        @default("")
-  actedAt       DateTime?     @map("acted_at")
+  approverUserId String?       @map("approver_user_id")
+  approverUser   User?         @relation("ApprovalStepApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
+  title          String        @db.VarChar(150)
+  subtitle       String        @db.VarChar(200)
+  assignee       String        @default("") @db.VarChar(150)
+  status         StepStatus    @default(PENDING)
+  note           String        @default("")
+  actedAt        DateTime?     @map("acted_at")
 
   @@unique([requisitionId, orderIndex])
   @@index([approverUserId])
@@ -1166,49 +1224,49 @@ model BoardGroupMember {
 }
 
 model BoardApproval {
-  id               String              @id @default(cuid())
-  candidateId      String              @map("candidate_id")
-  candidate        Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  requestedById    String              @map("requested_by_id")
-  requestedBy      User                @relation("BoardApprovalRequester", fields: [requestedById], references: [id])
-  status           BoardApprovalStatus @default(pending)
+  id                         String              @id @default(cuid())
+  candidateId                String              @map("candidate_id")
+  candidate                  Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requestedById              String              @map("requested_by_id")
+  requestedBy                User                @relation("BoardApprovalRequester", fields: [requestedById], references: [id])
+  status                     BoardApprovalStatus @default(pending)
   /// Which link in the chain is currently being waited on.
-  currentStage     BoardApprovalStage  @default(board) @map("current_stage")
+  currentStage               BoardApprovalStage  @default(board) @map("current_stage")
   /// The Corporate HR the requester chose to sign off. Several people hold the
   /// role, so the first link names one rather than mailing them all.
-  corporateHrId    String?             @map("corporate_hr_id")
-  corporateHr      User?               @relation("BoardApprovalCorporateHr", fields: [corporateHrId], references: [id], onDelete: SetNull)
+  corporateHrId              String?             @map("corporate_hr_id")
+  corporateHr                User?               @relation("BoardApprovalCorporateHr", fields: [corporateHrId], references: [id], onDelete: SetNull)
   /// The CHRO chosen to sign the second link.
-  chroId           String?             @map("chro_id")
-  chro             User?               @relation("BoardApprovalChro", fields: [chroId], references: [id], onDelete: SetNull)
+  chroId                     String?             @map("chro_id")
+  chro                       User?               @relation("BoardApprovalChro", fields: [chroId], references: [id], onDelete: SetNull)
   /// Board members picked when the request was raised. They are only emailed
   /// once the chain reaches the board stage.
-  boardMemberIds   String[]            @map("board_member_ids")
-  rejectedReason   String?             @map("rejected_reason")
-  rejectedAt       DateTime?           @map("rejected_at")
-  votes            BoardApprovalVote[]
-  hrApprovedById   String?             @map("hr_approved_by_id")
-  hrApprovedBy     User?               @relation("BoardApprovalHrApprover", fields: [hrApprovedById], references: [id], onDelete: SetNull)
-  hrApprovalNote   String?             @db.VarChar(500) @map("hr_approval_note")
+  boardMemberIds             String[]            @map("board_member_ids")
+  rejectedReason             String?             @map("rejected_reason")
+  rejectedAt                 DateTime?           @map("rejected_at")
+  votes                      BoardApprovalVote[]
+  hrApprovedById             String?             @map("hr_approved_by_id")
+  hrApprovedBy               User?               @relation("BoardApprovalHrApprover", fields: [hrApprovedById], references: [id], onDelete: SetNull)
+  hrApprovalNote             String?             @map("hr_approval_note") @db.VarChar(500)
   /// Required whenever HR approves on the board's behalf (not needed for a real board member's vote) — justifying documentation.
-  hrApprovalAttachmentFileId String?   @map("hr_approval_attachment_file_id")
-  hrApprovalAttachmentUrl    String?   @map("hr_approval_attachment_url")
-  hrApprovalAttachmentName   String?   @map("hr_approval_attachment_name")
-  hrApprovedAt     DateTime?           @map("hr_approved_at")
+  hrApprovalAttachmentFileId String?             @map("hr_approval_attachment_file_id")
+  hrApprovalAttachmentUrl    String?             @map("hr_approval_attachment_url")
+  hrApprovalAttachmentName   String?             @map("hr_approval_attachment_name")
+  hrApprovedAt               DateTime?           @map("hr_approved_at")
   /// Sheet columns the system holds no structured field for. Seeded from the
   /// CV screening extract when the row first appears on Corporate HR's desk,
   /// then correctable by them — an AI reading of a CV is a starting point, not
   /// something to put before the board unchecked.
-  sheetEducation   String?             @map("sheet_education")
-  sheetExperience  String?             @map("sheet_experience") @db.VarChar(60)
-  sheetLastOrg     String?             @map("sheet_last_org") @db.VarChar(200)
+  sheetEducation             String?             @map("sheet_education")
+  sheetExperience            String?             @map("sheet_experience") @db.VarChar(60)
+  sheetLastOrg               String?             @map("sheet_last_org") @db.VarChar(200)
   /// Set once Corporate HR puts this candidate onto an approval sheet. From
   /// that point the CHRO and board links are decided for the sheet as a whole,
   /// not per candidate.
-  batchId          String?             @map("batch_id")
-  batch            BoardApprovalBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  createdAt        DateTime            @default(now()) @map("created_at")
-  updatedAt        DateTime            @updatedAt @map("updated_at")
+  batchId                    String?             @map("batch_id")
+  batch                      BoardApprovalBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  createdAt                  DateTime            @default(now()) @map("created_at")
+  updatedAt                  DateTime            @updatedAt @map("updated_at")
 
   @@index([batchId])
   @@map("board_approvals")
@@ -1244,25 +1302,25 @@ model BoardApprovalBatch {
 }
 
 model BoardApprovalVote {
-  id              String          @id @default(cuid())
+  id              String              @id @default(cuid())
   /// Exactly one of these is set: a vote is cast either on one candidate's
   /// approval (the recruiter → Corporate HR link) or on a whole sheet.
-  boardApprovalId String?         @map("board_approval_id")
-  boardApproval   BoardApproval?  @relation(fields: [boardApprovalId], references: [id], onDelete: Cascade)
-  batchId         String?         @map("batch_id")
+  boardApprovalId String?             @map("board_approval_id")
+  boardApproval   BoardApproval?      @relation(fields: [boardApprovalId], references: [id], onDelete: Cascade)
+  batchId         String?             @map("batch_id")
   batch           BoardApprovalBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  userId          String          @map("user_id")
-  user            User            @relation(fields: [userId], references: [id])
+  userId          String              @map("user_id")
+  user            User                @relation(fields: [userId], references: [id])
   /// Legacy raw token; null for anything issued since hashing was introduced.
-  token           String?         @unique @db.VarChar(64)
+  token           String?             @unique @db.VarChar(64)
   /// SHA-256 of the raw token — what lookups match on.
-  tokenHash       String?         @unique @map("token_hash") @db.VarChar(64)
-  tokenExpiresAt  DateTime        @map("token_expires_at")
+  tokenHash       String?             @unique @map("token_hash") @db.VarChar(64)
+  tokenExpiresAt  DateTime            @map("token_expires_at")
   /// Which link in the chain this vote belongs to.
-  stage           BoardApprovalStage @default(board)
-  status          BoardVoteStatus @default(pending)
+  stage           BoardApprovalStage  @default(board)
+  status          BoardVoteStatus     @default(pending)
   notes           String?
-  respondedAt     DateTime?       @map("responded_at")
+  respondedAt     DateTime?           @map("responded_at")
 
   @@index([batchId])
   @@map("board_approval_votes")
@@ -1299,7 +1357,7 @@ model FacilityNotification {
 }
 
 model SyncLog {
-  id         String    @id @default(cuid())
+  id         String     @id @default(cuid())
   source     SyncSource @default(zinghr)
   total      Int        @default(0)
   processed  Int        @default(0)
@@ -1311,8 +1369,8 @@ model SyncLog {
   message    String?
   /// Terminal-style log lines streamed to the UI.
   logs       String[]
-  startedAt  DateTime  @default(now()) @map("started_at")
-  finishedAt DateTime? @map("finished_at")
+  startedAt  DateTime   @default(now()) @map("started_at")
+  finishedAt DateTime?  @map("finished_at")
 
   @@map("sync_logs")
 }

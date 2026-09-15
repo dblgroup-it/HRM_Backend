@@ -67,6 +67,14 @@ export interface LetterInput {
   salutation?: string | null;
   address?: string | null;
   designation: string;
+  /**
+   * The department the post sits in — "Admin, Safety & Security".
+   *
+   * Printed after the designation, because a designation alone is ambiguous in
+   * a group this size: an Additional General Manager could be running Admin,
+   * Finance or Production, and the letter is the document that settles which.
+   */
+  department?: string | null;
   unitFactory: string;
   reference?: string | null;
   date?: Date | null;
@@ -106,6 +114,28 @@ const fmtJoining = (d?: Date | null) =>
 
 const esc = (v: string) =>
   v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * How the letters name the post: designation, then department.
+ *
+ *   "Additional General Manager - Admin, Safety & Security"
+ *
+ * Joined with a spaced hyphen to match the signed originals. The department is
+ * skipped when it is missing, and when the designation already contains it —
+ * some designations are recorded with the department baked in, and "Manager -
+ * Admin - Admin" on an appointment letter is the kind of thing that has to be
+ * reprinted and re-signed.
+ */
+function positionTitle(
+  designation: string,
+  department?: string | null,
+): string {
+  const role = designation.trim();
+  const dept = (department ?? '').trim();
+  if (!dept) return role;
+  if (role.toLowerCase().includes(dept.toLowerCase())) return role;
+  return `${role} - ${dept}`;
+}
 
 /**
  * A unit name at the end of a sentence.
@@ -222,7 +252,8 @@ ${head(input, true)}
 
   <p style="${P}">
     This is with reference to your application and the subsequent interviews you had with us.
-    We are pleased to offer you the position of <strong>${esc(input.designation)}</strong> in
+    We are pleased to offer you the position of
+    <strong>${esc(positionTitle(input.designation, input.department))}</strong> in
     <strong>${esc(input.unitFactory)}</strong> with the following terms &amp; condition.
     Your service starting date in the organization shall be effective on or before
     <strong>${fmtJoining(input.joiningDate)}.</strong>
@@ -285,7 +316,8 @@ ${head(input, true)}
   <p style="${P}">
     This is with reference to your application and the subsequent interviews you had with us.
     The management is pleased to offer you for the position of
-    <strong>"${esc(input.designation)}"</strong> of <strong>${esc(input.unitFactory)}</strong>
+    <strong>"${esc(positionTitle(input.designation, input.department))}"</strong> of
+    <strong>${esc(input.unitFactory)}</strong>
     under the following terms &amp; conditions:
   </p>
 
@@ -374,7 +406,8 @@ export function buildAppointmentLetter(input: LetterInput): string {
 
   <p style="${P}">
     With reference to our offer letter${input.reference ? '' : ''} and your subsequent joining, we are pleased to
-    confirm your appointment as <strong>${esc(input.designation)}</strong> in
+    confirm your appointment as
+    <strong>${esc(positionTitle(input.designation, input.department))}</strong> in
     <strong>${esc(input.unitFactory)}</strong> with effect from
     <strong>${fmtJoining(input.joiningDate)}</strong>.
   </p>
