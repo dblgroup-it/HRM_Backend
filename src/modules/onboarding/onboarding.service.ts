@@ -178,6 +178,24 @@ export class OnboardingService {
     return this.getByCandidate(candidateId, userId);
   }
 
+  /**
+   * Settle which level this candidate is hired at.
+   *
+   * Its own action rather than a side effect of rendering a letter: the choice
+   * changes what every screen calls this person, so it has to take effect when
+   * it is made, not when somebody happens to open the offer letter.
+   */
+  async setFixedDesignation(
+    candidateId: string,
+    userId: string,
+    designation: string | null,
+  ) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    await this.resolveFixedDesignation(cand, ob, designation);
+    return this.getByCandidate(candidateId, userId);
+  }
+
   async getByCandidate(candidateId: string, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.prisma.onboarding.findUnique({
@@ -203,7 +221,26 @@ export class OnboardingService {
         matchScore: cand.matchScore,
         matchSummary: cand.matchSummary ?? '',
         requisitionId: cand.requisitionId,
-        designation: cand.requisition.designation,
+        /**
+         * The designation to SHOW for this candidate.
+         *
+         * Once a level has been settled it is the one that matters — the
+         * sidebar, the header card and anything else reading this field must
+         * say what the letter says, not what the requisition was raised as.
+         * Falls back to the requisition's primary, which is every candidate on
+         * a single-level requisition.
+         */
+        designation: ob?.fixedDesignation ?? cand.requisition.designation,
+        /**
+         * The requisition's own primary, kept separate so the picker can offer
+         * the full list. Deriving it from `designation` would drop the primary
+         * from the choices the moment an alternate was selected.
+         */
+        requisitionDesignation: cand.requisition.designation,
+        /** Other levels this requisition was raised for. */
+        alternateDesignations: cand.requisition.alternateDesignations ?? [],
+        /** The level settled for this person; null until chosen. */
+        fixedDesignation: ob?.fixedDesignation ?? null,
         code: cand.requisition.code,
         unit: cand.requisition.unitFactory,
         department: cand.requisition.department,
@@ -1827,6 +1864,8 @@ export class OnboardingService {
       // structured report, and who put their name to it.
       // Offer & appointment letters
       offerFormat: ob.offerFormat,
+      /** The level settled for this candidate; null until it is chosen. */
+      fixedDesignation: ob.fixedDesignation ?? null,
       offerRef: ob.offerRef,
       offerJoiningDate: ob.offerJoiningDate
         ? ob.offerJoiningDate.toISOString().slice(0, 10)

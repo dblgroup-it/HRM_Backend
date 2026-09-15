@@ -27,6 +27,7 @@ import {
   VerifyDocDto,
   OfferLetterDto,
   AppointmentLetterDto,
+  SetFixedDesignationDto,
 } from './dto/onboarding.dto';
 
 /** Phase 4 & 5 — document verification, offer & onboarding (authenticated HR). */
@@ -126,6 +127,21 @@ export class OnboardingController {
   @Post('candidates/:id/onboarding')
   start(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.onboarding.start(id, user.id);
+  }
+
+  /**
+   * Settle the level this candidate is hired at.
+   *
+   * Applies immediately rather than when a letter is next rendered, because
+   * the choice changes what every screen calls this person.
+   */
+  @Patch('candidates/:id/onboarding/designation')
+  setDesignation(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SetFixedDesignationDto,
+  ) {
+    return this.onboarding.setFixedDesignation(id, user.id, dto.designation);
   }
 
   @Post('candidates/:id/onboarding/send-link')

@@ -2334,6 +2334,12 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
     cvFileId: c.cvFileId,
     cvUrl:
       files.url(c.cvFileId, 'cv', { filename: `${c.name} — CV` }) ?? c.cvUrl,
+    /**
+     * True when a CV can be rendered from stored data even though no file was
+     * ever sent — every Bdjobs applicant, who applies as fields rather than a
+     * document. Lets the UI offer the generated CV instead of showing nothing.
+     */
+    hasGeneratedCv: Boolean(c.cvProfile),
     notes: c.notes ?? '',
     salaryExpectation: c.salaryExpectation ?? null,
     matchScore: c.matchScore,

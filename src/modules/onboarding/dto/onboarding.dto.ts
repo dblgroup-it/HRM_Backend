@@ -265,6 +265,11 @@ export class OfferLetterDto {
   @IsOptional() @IsInt() @Min(0) @Max(180) noticeDays?: number;
 }
 
+/** Settle which of the requisition's designations a candidate is hired at. */
+export class SetFixedDesignationDto {
+  @IsString() @MaxLength(150) designation!: string;
+}
+
 /** The appointment letter, issued after joining. */
 export class AppointmentLetterDto {
   /** See OfferLetterDto.fixedDesignation — the appointment letter prints the same. */
