@@ -17,7 +17,11 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
-import { AiGraderService } from '../integrations/ai/ai-grader.service';
+import {
+  AiGraderService,
+  type ScreenResult,
+  type ScreenRole,
+} from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
 import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { RecruitmentService } from './recruitment.service';
@@ -25,6 +29,7 @@ import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import type { CvProfile } from './cv/cv-profile.types';
 import { buildCvDocument } from './cv/cv-document';
+import { cvProfileToText } from './cv/cv-text';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import {
   BulkRejectDto,
@@ -1276,7 +1281,7 @@ export class CandidatesService {
     if (!this.ai.isConfigured()) {
       throw new ServiceUnavailableException('AI screening is not configured');
     }
-    if (!cand.cvFileId) {
+    if (!cand.cvFileId && !cand.cvProfile) {
       throw new BadRequestException('This candidate has no CV to screen');
     }
     const updated = await this.runScreen(cand);
@@ -1302,8 +1307,13 @@ export class CandidatesService {
     const pending = await this.prisma.candidate.findMany({
       where: {
         requisitionId: reqId,
-        stage: 'APPLIED',
-        cvFileId: { not: null },
+        // SHORTLISTED is included for the Bdjobs intake, which lands already
+        // shortlisted: it still needs a score, and runScreen will not move it.
+        stage: { in: ['APPLIED', 'SHORTLISTED'] },
+        // Either kind of CV — a Drive document, or a structured profile.
+        // cvProfileAt is set in lockstep with cvProfile and filters cleanly,
+        // which a nullable Json column does not.
+        OR: [{ cvFileId: { not: null } }, { cvProfileAt: { not: null } }],
         screenedAt: null,
         deletedAt: null,
       },
@@ -1486,21 +1496,30 @@ export class CandidatesService {
     };
   }
 
-  /** Run the AI screen + persist the score; auto-advance APPLIED → AI_SHORTLISTED. */
+  /**
+   * Run the AI screen + persist the score; auto-advance APPLIED → AI_SHORTLISTED.
+   *
+   * Two kinds of CV reach this method. A document (uploaded, or collected from
+   * Drive) is read by the vision model. A Bdjobs application is fields, never a
+   * file — its structured profile is rendered to text and scored by the same
+   * prompt, so a Bdjobs candidate is not the one applicant in the pipeline with
+   * no match score.
+   *
+   * The stage is only ever advanced from APPLIED. Candidates who arrive already
+   * shortlisted (Bdjobs forwards only its own shortlist) therefore gain a score
+   * without being moved backwards into an AI stage.
+   */
   private async runScreen(
     cand: Prisma.CandidateGetPayload<{ include: { requisition: true } }>,
   ): Promise<CandidateRow | null> {
-    if (!cand.cvFileId || !this.ai.isConfigured()) return null;
-    const { buffer, mimeType } = await this.drive.getFileBuffer(cand.cvFileId);
+    if (!this.ai.isConfigured()) return null;
     const rp =
       (cand.requisition.roleProfile as {
         responsibilities?: string[];
         requirements?: string[];
       } | null) ?? null;
 
-    const result = await this.ai.screenCv({
-      cvMimeType: mimeType,
-      cvBase64: buffer.toString('base64'),
+    const role: ScreenRole = {
       designation: cand.requisition.designation,
       jobDescription: cand.requisition.jobDescription,
       education: cand.requisition.education,
@@ -1513,7 +1532,24 @@ export class CandidatesService {
       requirements: Array.isArray(rp?.requirements)
         ? rp?.requirements
         : undefined,
-    });
+    };
+
+    let result: ScreenResult;
+    if (cand.cvFileId) {
+      const { buffer, mimeType } = await this.drive.getFileBuffer(cand.cvFileId);
+      result = await this.ai.screenCv({
+        ...role,
+        cvMimeType: mimeType,
+        cvBase64: buffer.toString('base64'),
+      });
+    } else if (cand.cvProfile) {
+      result = await this.ai.screenCvText({
+        ...role,
+        cvText: cvProfileToText(cand.cvProfile as unknown as CvProfile),
+      });
+    } else {
+      return null;
+    }
 
     const data: Prisma.CandidateUpdateInput = {
       matchScore: result.score,
@@ -1554,6 +1590,23 @@ export class CandidatesService {
     return this.prisma.candidate.update({ where: { id: cand.id }, data });
   }
 
+  /**
+   * A candidate arrived from an external job board. Announce it and screen it.
+   *
+   * The Bdjobs webhook writes its own candidate row (it has payload details
+   * this service never sees), which used to mean two things silently did not
+   * happen: no `candidate:changed` broadcast, so open pipelines did not show
+   * the applicant until someone refreshed; and no AI screen, so Bdjobs
+   * candidates were the only ones with no match score. Both belong to this
+   * module, so both live here rather than in the integration.
+   */
+  onCandidateImported(candidateId: string, reqId: string): void {
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'imported',
+    });
+    this.autoScreen(candidateId);
+  }
+
   /** Fire-and-forget screen used right after a CV first arrives. */
   private autoScreen(candidateId: string): void {
     if (!this.ai.isConfigured()) return;
@@ -1564,7 +1617,7 @@ export class CandidatesService {
           where: { id: candidateId },
           include: { requisition: true },
         });
-        if (cand?.cvFileId && cand.stage === 'APPLIED') {
+        if (cand && screenable(cand)) {
           await this.runScreen(cand);
           this.notifications.broadcastChange('candidate', cand.requisitionId, {
             action: 'screened',
@@ -1591,7 +1644,7 @@ export class CandidatesService {
             where: { id },
             include: { requisition: true },
           });
-          if (cand?.cvFileId && cand.stage === 'APPLIED' && !cand.screenedAt) {
+          if (cand && screenable(cand) && !cand.screenedAt) {
             await this.runScreen(cand);
             this.notifications.broadcastChange('candidate', reqId, {
               action: 'screened',
@@ -2250,6 +2303,29 @@ export class CandidatesService {
 }
 
 /** Strip all non-digit characters for phone comparison. Returns null for empty/null. */
+/**
+ * Is there anything here for the AI to read, at a stage where a score still
+ * means something?
+ *
+ * Two kinds of CV qualify: a Drive document and a structured Bdjobs profile.
+ * Two stages qualify: APPLIED, and SHORTLISTED — which is where a Bdjobs
+ * application lands, since Bdjobs only forwards candidates its own recruiter
+ * already shortlisted. Screening never moves a SHORTLISTED candidate; it only
+ * gives them the match score every other candidate has.
+ */
+function screenable(cand: {
+  cvFileId: string | null;
+  cvProfile: Prisma.JsonValue | null;
+  stage: CandidateStage;
+}): boolean {
+  const hasCv = Boolean(cand.cvFileId) || cand.cvProfile != null;
+  return (
+    hasCv &&
+    (cand.stage === CandidateStage.APPLIED ||
+      cand.stage === CandidateStage.SHORTLISTED)
+  );
+}
+
 function normalizePhone(phone?: string | null): string | null {
   if (!phone) return null;
   const digits = phone.replace(/\D/g, '');

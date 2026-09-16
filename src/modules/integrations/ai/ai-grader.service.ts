@@ -77,9 +77,8 @@ const GRADE_LEVEL_HINT: Record<string, string> = {
   M7: 'general manager / director / senior executive leadership',
 };
 
-export interface ScreenInput {
-  cvMimeType: string;
-  cvBase64: string;
+/** The role half of a screening request — identical whatever form the CV took. */
+export interface ScreenRole {
   designation: string;
   jobDescription: string;
   education: string;
@@ -88,6 +87,20 @@ export interface ScreenInput {
   placeOfPosting?: string | null;
   responsibilities?: string[];
   requirements?: string[];
+}
+
+/** A CV that arrived as a document (an uploaded or Drive-collected file). */
+export interface ScreenInput extends ScreenRole {
+  cvMimeType: string;
+  cvBase64: string;
+}
+
+/**
+ * A CV that arrived as structured fields rather than a document — Bdjobs
+ * pushes an applicant's profile, not a file, so there is nothing to attach.
+ */
+export interface ScreenTextInput extends ScreenRole {
+  cvText: string;
 }
 
 export interface MatchCriterion {
@@ -593,7 +606,7 @@ Respond with ONLY a compact JSON array and nothing else, in this exact shape:
         address: null,
       };
     }
-    const prompt = this.buildScreenPrompt(input);
+    const prompt = this.buildScreenPrompt(input, true);
     const raw =
       this.provider === 'claude'
         ? await this.callClaudeVision(prompt, input.cvMimeType, input.cvBase64)
@@ -601,12 +614,51 @@ Respond with ONLY a compact JSON array and nothing else, in this exact shape:
     return this.parseScreen(raw);
   }
 
-  private buildScreenPrompt(i: ScreenInput): string {
+  /**
+   * Screen a CV that exists only as structured data — same prompt, same
+   * criteria, same JSON, read as text instead of an attachment.
+   *
+   * A Bdjobs applicant is fields, never a file. Without this they were the one
+   * group of candidates who arrived with no match score at all, which quietly
+   * excluded them from every score-ordered list and bulk decision in the
+   * pipeline.
+   */
+  async screenCvText(input: ScreenTextInput): Promise<ScreenResult> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const cv = input.cvText.trim();
+    if (!cv) {
+      return {
+        score: 0,
+        summary: 'This application carried no CV content — please review manually.',
+        criteria: [],
+        email: null,
+        phone: null,
+        address: null,
+      };
+    }
+    // Generous cap: a long career history is ~4-6k characters, and the limit
+    // exists only to keep a malformed profile from blowing the context window.
+    const prompt = `${this.buildScreenPrompt(input, false)}
+
+CANDIDATE CV (structured application data from the job board, rendered as text):
+"""
+${cv.slice(0, 20_000)}
+"""`;
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, 1600)
+        : await this.callGemini(prompt);
+    return this.parseScreen(raw);
+  }
+
+  private buildScreenPrompt(i: ScreenRole, attached: boolean): string {
     const list = (arr?: string[]) =>
       arr && arr.length
         ? arr.map((x) => `- ${x}`).join('\n')
         : '(none specified)';
-    return `You are a recruitment screening assistant. Read the attached candidate CV and score it against the role below. Be objective and evidence-based.
+    return `You are a recruitment screening assistant. Read the candidate CV ${attached ? 'attached to this message' : 'given at the end of this message'} and score it against the role below. Be objective and evidence-based.
 
 ROLE: ${i.designation}
 Job description: ${i.jobDescription || '(none)'}
@@ -619,7 +671,7 @@ ${list(i.responsibilities)}
 Key requirements:
 ${list(i.requirements)}
 
-Also extract the candidate's contact email, mobile/phone number and full postal address if visible anywhere in the CV (else leave empty). The address is copied verbatim onto an offer letter, so reproduce it exactly as written — do not tidy, abbreviate or invent any part of it.
+Also extract the candidate's contact email, mobile/phone number and full postal address if present anywhere in the CV (else leave empty). The address is copied verbatim onto an offer letter, so reproduce it exactly as written — do not tidy, abbreviate or invent any part of it.
 
 SCORING — evaluate the candidate using ONLY the standard criteria below. Use the EXACT label names shown.
 

@@ -29,6 +29,7 @@ import {
   BdJobsSettingsService,
   type BdJobsSettings,
 } from './bdjobs-settings.service';
+import { CandidatesService } from '../../candidates/candidates.service';
 
 const BDJOBS_API = 'https://api.bdjobs.com/EmployerApi/api';
 
@@ -41,6 +42,7 @@ export class BdJobsService {
     private readonly config: ConfigService,
     private readonly permissions: PermissionsService,
     private readonly settings: BdJobsSettingsService,
+    private readonly candidates: CandidatesService,
   ) {}
 
   async isConfigured(): Promise<boolean> {
@@ -698,6 +700,12 @@ export class BdJobsService {
         email: dto.candidate?.email ?? cv?.contact.email ?? null,
         phone: dto.candidate?.phone ?? cv?.contact.phone ?? null,
         source: 'bdjobs',
+        // Bdjobs does not forward everyone who applied — its own recruiter
+        // shortlists on the Bdjobs side and only those candidates are pushed
+        // here. Landing them at APPLIED discarded that decision and asked HR
+        // to re-make it, so they enter the pipeline already shortlisted. The
+        // AI screen below still scores them; it will not move the stage.
+        stage: 'SHORTLISTED',
         // A structured profile is a CV in its own right; a file is optional.
         cvUrl: dto.resume?.url ?? null,
         cvProfile: cv ? (cv as unknown as Prisma.InputJsonValue) : undefined,
@@ -711,10 +719,16 @@ export class BdJobsService {
 
     this.logger.log(
       `BDJobs candidate imported: ${candidate.id} (${name}) → ${requisition.code}` +
+        ` at Shortlisted` +
         (cv
           ? ` with a structured CV (${cv.employment.length} roles, ${cv.education.length} qualifications)`
           : ''),
     );
+
+    // Live-update anyone with the pipeline open, and AI-screen the application
+    // in the background. Fire-and-forget: Bdjobs is waiting on this response
+    // and must not be held open by our provider, nor fail because of it.
+    this.candidates.onCandidateImported(candidate.id, requisition.id);
 
     return {
       success: true,
@@ -738,7 +752,7 @@ export class BdJobsService {
           lastOrganization: cv?.summary.lastOrganization ?? null,
         },
       },
-      message: `Imported ${name} against ${requisition.code}.`,
+      message: `Imported ${name} against ${requisition.code}, at the Shortlisted stage.`,
       ...(warnings.length ? { warnings } : {}),
     };
   }

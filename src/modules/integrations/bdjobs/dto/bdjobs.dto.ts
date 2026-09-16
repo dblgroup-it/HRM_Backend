@@ -39,5 +39,7 @@ export class PostBdJobsDto {
   @IsBoolean() restrictGender!: boolean;
   @IsBoolean() restrictExperience!: boolean;
   @IsBoolean() applyOnline!: boolean;
-  @IsBoolean() publishLinkedIn!: boolean;
+  /** Retired field — still accepted so drafts saved before it was dropped
+   * (strict whitelist validation) can be re-submitted. Never read. */
+  @IsOptional() @IsBoolean() publishLinkedIn?: boolean;
 }

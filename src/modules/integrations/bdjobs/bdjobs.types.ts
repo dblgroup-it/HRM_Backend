@@ -80,5 +80,4 @@ export interface PostBdJobsFormData {
   restrictGender: boolean;
   restrictExperience: boolean;
   applyOnline: boolean;
-  publishLinkedIn: boolean;
 }

@@ -162,10 +162,18 @@ export class BdJobsController {
     );
   }
 
-  /** Whether BDJobs posting is enabled + configured (gates the modal). */
+  /**
+   * Whether BDJobs posting is enabled + configured (gates the modal), plus the
+   * application window, so the posting form can show the deadline the listing
+   * will actually carry instead of leaving the recruiter to guess it.
+   */
   @Get('integrations/bdjobs/status')
   async status() {
-    return { configured: await this.bdjobs.isConfigured() };
+    const [configured, settings] = await Promise.all([
+      this.bdjobs.isConfigured(),
+      this.settings.get(),
+    ]);
+    return { configured, deadlineDays: settings.deadlineDays };
   }
 
   /**
