@@ -14,17 +14,25 @@ const base: LetterInput = {
 };
 
 const body = (input: LetterInput) =>
-  buildOfferEmail(input).paragraphs.join('\n');
+  buildOfferEmail(input)
+    .paragraphs.map((spans) => spans.map((sp) => sp.text).join(''))
+    .join('\n');
 
 describe('buildOfferEmail', () => {
+  it('uses the subject line Corporate HR already writes', () => {
+    expect(buildOfferEmail(base).subject).toBe(
+      'Offer Letter, Deputy General Manager - Washing (Hamza Textiles Ltd)',
+    );
+  });
+
   it('addresses the candidate by title and surname', () => {
-    expect(buildOfferEmail(base).paragraphs[0]).toBe('Dear Mr. Ahmed,');
+    expect(buildOfferEmail(base).paragraphs[0][0].text).toBe('Dear Mr. Ahmed,');
   });
 
   it('uses the full name when no title is known, rather than guessing one', () => {
-    expect(buildOfferEmail({ ...base, salutation: null }).paragraphs[0]).toBe(
-      'Dear Kamrul Ahmed,',
-    );
+    expect(
+      buildOfferEmail({ ...base, salutation: null }).paragraphs[0][0].text,
+    ).toBe('Dear Kamrul Ahmed,');
   });
 
   it('names the post with its department', () => {
@@ -44,8 +52,9 @@ describe('buildOfferEmail', () => {
     expect(out).toContain(
       'Your Job location will be at Hamza Textiles Ltd., Nayapara, Kashimpur, Gazipur.',
     );
+    // No full stop after the date — the house wording ends there.
     expect(out).toContain(
-      'You have agreed to join the duties on or before September 1, 2026.',
+      'You have agreed to join the duties on or before September 1, 2026',
     );
   });
 
@@ -74,6 +83,34 @@ describe('buildOfferEmail', () => {
     const html = offerEmailHtml(buildOfferEmail(base), 'https://hrm.example/x');
     expect(html).toContain('https://hrm.example/x"');
     expect(html).toContain('https://hrm.example/x?action=decline');
+  });
+
+  it('signs with the sender, between the company lines', () => {
+    expect(buildOfferEmail(base, 'Mohammad Al Amin').signOff).toEqual([
+      'On Behalf of DBL Group',
+      'Mohammad Al Amin',
+      'Corporate HR Department',
+      'DBL Group',
+    ]);
+  });
+
+  it('leaves the sender line out rather than printing a blank one', () => {
+    expect(buildOfferEmail(base).signOff).toEqual([
+      'On Behalf of DBL Group',
+      'Corporate HR Department',
+      'DBL Group',
+    ]);
+  });
+
+  it('emphasises the post, the location and the joining date', () => {
+    const bold = buildOfferEmail(base)
+      .paragraphs[2].filter((sp) => sp.bold)
+      .map((sp) => sp.text);
+    expect(bold).toEqual([
+      'Deputy General Manager – Washing.',
+      'Hamza Textiles Ltd., Nayapara, Kashimpur, Gazipur.',
+      'September 1, 2026',
+    ]);
   });
 
   it('keeps the sign-off as one block in the plain-text body', () => {

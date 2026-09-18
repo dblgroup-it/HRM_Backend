@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { Browser } from 'puppeteer';
+import type { Browser, Page } from 'puppeteer';
 
 /**
  * HTML → PDF, for documents that leave the building: the offer letter, the
@@ -42,6 +42,15 @@ export class PdfService {
        * own print button working: that path has no margin templates.
        */
       stripSelectors?: string[];
+      /**
+       * Shrink the content until it fits this many pages.
+       *
+       * A one-page letter is what HR hands over and what a candidate files, so
+       * a letter that runs three lines onto a second sheet is worth setting a
+       * point smaller. There is a floor: past it the letter is squinting
+       * material, and two readable pages beat one unreadable one.
+       */
+      fitToPages?: number;
     },
   ): Promise<Buffer | null> {
     let browser: Browser | undefined;
@@ -77,22 +86,29 @@ export class PdfService {
         }, opts.stripSelectors);
       }
       const hasPad = Boolean(opts?.headerHtml || opts?.footerHtml);
-      const pdf = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        displayHeaderFooter: hasPad,
-        headerTemplate: opts?.headerHtml ?? '<span></span>',
-        // An empty template still needs an element, or Chrome prints its own
-        // default footer (the URL and page number) instead.
-        footerTemplate: opts?.footerHtml ?? '<span></span>',
-        margin: opts?.margin ?? {
-          top: '18mm',
-          bottom: '18mm',
-          left: '18mm',
-          right: '18mm',
-        },
-      });
-      return Buffer.from(pdf);
+      const render = (scale: number) =>
+        page.pdf({
+          format: 'A4',
+          printBackground: true,
+          displayHeaderFooter: hasPad,
+          headerTemplate: opts?.headerHtml ?? '<span></span>',
+          // An empty template still needs an element, or Chrome prints its own
+          // default footer (the URL and page number) instead.
+          footerTemplate: opts?.footerHtml ?? '<span></span>',
+          margin: opts?.margin ?? {
+            top: '18mm',
+            bottom: '18mm',
+            left: '18mm',
+            right: '18mm',
+          },
+          scale,
+        });
+
+      let out = await render(1);
+      if (opts?.fitToPages) {
+        out = await this.shrinkToFit(page, out, opts.fitToPages, render);
+      }
+      return Buffer.from(out);
     } catch (e) {
       this.logger.error(`PDF generation failed: ${(e as Error).message}`);
       return null;
@@ -100,4 +116,57 @@ export class PdfService {
       await browser?.close().catch(() => undefined);
     }
   }
+
+  /**
+   * Re-render at smaller scales until the document fits.
+   *
+   * Chrome's own `scale` is used rather than restyling the letter: it re-lays
+   * the page out at the smaller size, so lines re-wrap the way they would if
+   * the whole letter had been typed a point smaller — nothing is squashed.
+   *
+   * Steps down rather than binary-searching because the answer is nearly
+   * always the first or second step, and each render costs a few hundred
+   * milliseconds. Below the floor it gives up and returns the best it has:
+   * an unreadable letter is worse than a second sheet.
+   */
+  private async shrinkToFit(
+    page: Page,
+    first: Uint8Array,
+    maxPages: number,
+    render: (scale: number) => Promise<Uint8Array>,
+  ): Promise<Uint8Array> {
+    const pages = countPdfPages(first);
+    if (pages === null || pages <= maxPages) return first;
+
+    let best = first;
+    for (const scale of [0.94, 0.88, 0.82, 0.76, 0.7]) {
+      const out = await render(scale);
+      const n = countPdfPages(out);
+      if (n !== null && n <= maxPages) {
+        this.logger.log(
+          `Letter ran to ${pages} pages; fitted onto ${maxPages} at ${Math.round(scale * 100)}% scale.`,
+        );
+        return out;
+      }
+      if (n !== null && n < (countPdfPages(best) ?? Infinity)) best = out;
+    }
+    this.logger.warn(
+      `Letter still runs past ${maxPages} page(s) at the smallest readable scale — sending it as it is.`,
+    );
+    void page;
+    return best;
+  }
+}
+
+/**
+ * How many pages a Chrome-generated PDF has.
+ *
+ * Counting `/Type /Page` objects works because Chrome writes them uncompressed;
+ * null means the structure was not recognised, and the caller then leaves the
+ * document alone rather than guessing.
+ */
+export function countPdfPages(pdf: Uint8Array): number | null {
+  const text = Buffer.from(pdf).toString('latin1');
+  const matches = text.match(/\/Type\s*\/Page(?![s])/g);
+  return matches?.length ?? null;
 }

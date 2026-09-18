@@ -561,12 +561,21 @@ export class OnboardingService {
     // covering note Corporate HR sends with it. If Chromium cannot start we
     // fall back to the letter in the body rather than hold up the offer —
     // better a plain letter than none.
-    const email = buildOfferEmail(input);
+    // Signed by whoever sent it — "On Behalf of DBL Group, <name>, Corporate
+    // HR Department", the way these go out today.
+    const sender = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+    const email = buildOfferEmail(input, sender?.name);
     const pdf = await this.pdf.fromHtml(letter, {
       headerHtml: letterheadHeaderHtml(),
       footerHtml: letterheadFooterHtml(),
       margin: { ...LETTERHEAD_PDF_MARGIN },
       stripSelectors: [...LETTERHEAD_IN_FLOW_SELECTORS],
+      // One sheet, the way these are handed over and filed. A long letter is
+      // set a little smaller rather than spilling three lines onto page two.
+      fitToPages: 1,
     });
     if (!pdf) {
       this.logger.warn(
@@ -687,6 +696,9 @@ export class OnboardingService {
       footerHtml: letterheadFooterHtml(),
       margin: { ...LETTERHEAD_PDF_MARGIN },
       stripSelectors: [...LETTERHEAD_IN_FLOW_SELECTORS],
+      // One sheet, the way these are handed over and filed. A long letter is
+      // set a little smaller rather than spilling three lines onto page two.
+      fitToPages: 1,
     });
     if (!appointmentPdf) {
       this.logger.warn(
