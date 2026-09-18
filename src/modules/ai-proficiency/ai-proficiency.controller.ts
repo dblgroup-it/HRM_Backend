@@ -1,6 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 
-import { AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
+import {
+  AuthUser,
+  CurrentUser,
+} from '../../common/decorators/current-user.decorator';
 import { AiProficiencyService } from './ai-proficiency.service';
 import {
   AddQuestionDto,
@@ -37,13 +49,19 @@ export class AiProficiencyController {
 
   /** AI-generate a batch of questions for review — nothing is saved yet. */
   @Post('ai-proficiency/questions/generate')
-  generateQuestions(@Body() dto: GenerateQuestionsDto, @CurrentUser() user: AuthUser) {
+  generateQuestions(
+    @Body() dto: GenerateQuestionsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.aiProficiency.generateQuestions(user.id, dto);
   }
 
   /** Save a reviewed batch (typically from "generate") to the bank in one go. */
   @Post('ai-proficiency/questions/bulk')
-  bulkAddQuestions(@Body() dto: BulkAddQuestionsDto, @CurrentUser() user: AuthUser) {
+  bulkAddQuestions(
+    @Body() dto: BulkAddQuestionsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.aiProficiency.bulkAddQuestions(user.id, dto);
   }
 
@@ -62,7 +80,10 @@ export class AiProficiencyController {
   }
 
   @Post('ai-proficiency/questions/bulk-delete')
-  bulkRemoveQuestions(@Body() dto: BulkDeleteQuestionsDto, @CurrentUser() user: AuthUser) {
+  bulkRemoveQuestions(
+    @Body() dto: BulkDeleteQuestionsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.aiProficiency.bulkRemoveQuestions(user.id, dto);
   }
 

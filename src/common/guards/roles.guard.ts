@@ -36,7 +36,11 @@ export class RolesGuard implements CanActivate {
       ALLOW_SUPER_USER_KEY,
       [context.getHandler(), context.getClass()],
     );
-    if (user && allowSuperUser && (await this.permissions.isSuperUser(user.id))) {
+    if (
+      user &&
+      allowSuperUser &&
+      (await this.permissions.isSuperUser(user.id))
+    ) {
       return true;
     }
 

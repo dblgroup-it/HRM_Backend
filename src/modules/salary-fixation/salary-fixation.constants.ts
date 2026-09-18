@@ -127,8 +127,32 @@ export const CRITERIA: SalaryFixationCriterion[] = [
 export const TOTAL_MAX = CRITERIA.reduce((sum, c) => sum + c.max, 0); // 50
 
 export const JOB_GRADES = [
-  'M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'M10', 'M11', 'M12', 'M13', 'M14', 'M15',
-  'T1', 'T2', 'TM1', 'TM2', 'SM1', 'SM2', 'SM3', 'SM4', 'SM5', 'SM6', 'BM2',
+  'M1',
+  'M2',
+  'M3',
+  'M4',
+  'M5',
+  'M6',
+  'M7',
+  'M8',
+  'M9',
+  'M10',
+  'M11',
+  'M12',
+  'M13',
+  'M14',
+  'M15',
+  'T1',
+  'T2',
+  'TM1',
+  'TM2',
+  'SM1',
+  'SM2',
+  'SM3',
+  'SM4',
+  'SM5',
+  'SM6',
+  'BM2',
 ] as const;
 export type JobGrade = (typeof JOB_GRADES)[number];
 
@@ -141,7 +165,10 @@ export type JobGrade = (typeof JOB_GRADES)[number];
  * extrapolation pending an official HR document, not a confirmed policy
  * figure. Each grade spans 11 equal-step gross salary bands (bandSalary()).
  */
-export const GRADES: Record<JobGrade, { min: number; max: number; verified: boolean }> = {
+export const GRADES: Record<
+  JobGrade,
+  { min: number; max: number; verified: boolean }
+> = {
   M1: { min: 20_000, max: 35_000, verified: true },
   M2: { min: 30_000, max: 45_000, verified: true },
   M3: { min: 37_500, max: 60_000, verified: true },
@@ -215,7 +242,8 @@ export function evaluateScreeningTest(
   passPct: number = DEFAULT_SCREENING_PASS_PCT,
 ): ScreeningResult {
   if (!conducted) return { status: 'not_conducted', pct: null };
-  if (total == null || obtained == null) return { status: 'pending', pct: null };
+  if (total == null || obtained == null)
+    return { status: 'pending', pct: null };
   if (total <= 0 || obtained < 0 || obtained > total) {
     return { status: 'pending', pct: null };
   }

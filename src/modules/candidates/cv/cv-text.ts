@@ -80,7 +80,8 @@ export function cvProfileToText(profile: CvProfile): string {
     text(c.phone) && `Phone: ${text(c.phone)}`,
     text(c.currentLocation) && `Current location: ${text(c.currentLocation)}`,
     text(c.currentAddress) && `Current address: ${text(c.currentAddress)}`,
-    text(c.permanentAddress) && `Permanent address: ${text(c.permanentAddress)}`,
+    text(c.permanentAddress) &&
+      `Permanent address: ${text(c.permanentAddress)}`,
   ].filter(Boolean) as string[];
   blocks.push(identity.join('\n'));
 

@@ -3,7 +3,10 @@ import { Throttle } from '@nestjs/throttler';
 
 import { Public } from '../../common/decorators/public.decorator';
 import { AiProficiencyService } from './ai-proficiency.service';
-import { RecordViolationDto, SubmitAiProficiencyDto } from './dto/ai-proficiency.dto';
+import {
+  RecordViolationDto,
+  SubmitAiProficiencyDto,
+} from './dto/ai-proficiency.dto';
 
 /** Public, no-login candidate-facing AI Proficiency Test endpoints. */
 @Controller('ai-proficiency')
@@ -29,7 +32,10 @@ export class AiProficiencyPublicController {
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(200)
   @Post(':token/violation')
-  recordViolation(@Param('token') token: string, @Body() dto: RecordViolationDto) {
+  recordViolation(
+    @Param('token') token: string,
+    @Body() dto: RecordViolationDto,
+  ) {
     return this.aiProficiency.recordViolation(token, dto);
   }
 

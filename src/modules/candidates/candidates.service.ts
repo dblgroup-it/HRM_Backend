@@ -1536,7 +1536,9 @@ export class CandidatesService {
 
     let result: ScreenResult;
     if (cand.cvFileId) {
-      const { buffer, mimeType } = await this.drive.getFileBuffer(cand.cvFileId);
+      const { buffer, mimeType } = await this.drive.getFileBuffer(
+        cand.cvFileId,
+      );
       result = await this.ai.screenCv({
         ...role,
         cvMimeType: mimeType,

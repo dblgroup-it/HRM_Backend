@@ -142,7 +142,9 @@ describe('normaliseReplacements', () => {
 
   it('never produces an Invalid Date from a bad vacancy date', () => {
     const out = normaliseReplacements({
-      replacements: [{ employeeName: 'Employee One', vacantDate: 'not a date' }],
+      replacements: [
+        { employeeName: 'Employee One', vacantDate: 'not a date' },
+      ],
     });
     expect(out[0].vacantDate).toBeNull();
   });

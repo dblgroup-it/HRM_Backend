@@ -87,7 +87,9 @@ describe('cvProfileToText', () => {
       summary: { currentlyEmployed: false },
     };
     const out = cvProfileToText(bare);
-    expect(out).toContain('EMPLOYMENT HISTORY\nNone stated in the application.');
+    expect(out).toContain(
+      'EMPLOYMENT HISTORY\nNone stated in the application.',
+    );
     expect(out).toContain('EDUCATION\nNone stated in the application.');
   });
 

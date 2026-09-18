@@ -10,7 +10,10 @@ import {
 import { UserRole } from '@prisma/client';
 
 import { Roles } from '../../common/decorators/roles.decorator';
-import { CurrentUser, AuthUser } from '../../common/decorators/current-user.decorator';
+import {
+  CurrentUser,
+  AuthUser,
+} from '../../common/decorators/current-user.decorator';
 import { UnitsService } from './units.service';
 import {
   CreateDepartmentDto,
@@ -45,7 +48,11 @@ export class UnitsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateUnitDto, @CurrentUser() user: AuthUser) {
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUnitDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.unitsService.update(id, dto, user.id);
   }
 
@@ -56,7 +63,11 @@ export class UnitsController {
   }
 
   @Post(':id/departments')
-  addDepartment(@Param('id') id: string, @Body() dto: CreateDepartmentDto, @CurrentUser() user: AuthUser) {
+  addDepartment(
+    @Param('id') id: string,
+    @Body() dto: CreateDepartmentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.unitsService.addDepartment(id, dto, user.id);
   }
 
@@ -70,7 +81,10 @@ export class UnitsController {
   }
 
   @Delete('departments/:departmentId')
-  removeDepartment(@Param('departmentId') departmentId: string, @CurrentUser() user: AuthUser) {
+  removeDepartment(
+    @Param('departmentId') departmentId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.unitsService.removeDepartment(departmentId, user.id);
   }
 
@@ -93,7 +107,10 @@ export class UnitsController {
   }
 
   @Delete('positions/:positionId')
-  removePosition(@Param('positionId') positionId: string, @CurrentUser() user: AuthUser) {
+  removePosition(
+    @Param('positionId') positionId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
     return this.unitsService.removePosition(positionId, user.id);
   }
 }

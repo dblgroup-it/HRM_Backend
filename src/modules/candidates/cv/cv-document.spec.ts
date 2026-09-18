@@ -68,11 +68,25 @@ const FLAT = {
   dateOfBirth: '1988-01-01',
   gender: 'Female',
   employmentHistory: [
-    { companyName: 'Alpha Ltd', designation: 'Officer', fromDate: '02/01/2012', toDate: '14/09/2026' },
-    { companyName: 'Beta Ltd', designation: 'Executive', fromDate: '02/11/2001', toDate: '14/09/2026' },
+    {
+      companyName: 'Alpha Ltd',
+      designation: 'Officer',
+      fromDate: '02/01/2012',
+      toDate: '14/09/2026',
+    },
+    {
+      companyName: 'Beta Ltd',
+      designation: 'Executive',
+      fromDate: '02/11/2001',
+      toDate: '14/09/2026',
+    },
   ],
   educationHistory: [
-    { institute: 'govt girl``````s school', passingYear: 2014, percentage: '60%' },
+    {
+      institute: 'govt girl``````s school',
+      passingYear: 2014,
+      percentage: '60%',
+    },
     { institute: 'Example College', passingYear: 2016, percentage: '45%' },
   ],
 };
@@ -154,7 +168,9 @@ describe('buildCvDocument — the flat profile application', () => {
 
   it('counts overlapping jobs once', () => {
     // 2001 to 2026 is about 24 years. Adding the two spans would claim ~39.
-    const years = Number(/([\d.]+)/.exec(cv.summary.totalExperienceYears + '')?.[1]);
+    const years = Number(
+      /([\d.]+)/.exec(cv.summary.totalExperienceYears + '')?.[1],
+    );
     expect(years).toBeGreaterThan(24);
     expect(years).toBeLessThan(25);
   });

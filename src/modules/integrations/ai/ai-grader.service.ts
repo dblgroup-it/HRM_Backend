@@ -631,7 +631,8 @@ Respond with ONLY a compact JSON array and nothing else, in this exact shape:
     if (!cv) {
       return {
         score: 0,
-        summary: 'This application carried no CV content — please review manually.',
+        summary:
+          'This application carried no CV content — please review manually.',
         criteria: [],
         email: null,
         phone: null,

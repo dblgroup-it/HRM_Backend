@@ -1,4 +1,10 @@
-import { IsDateString, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class UpdateEmployeeDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
