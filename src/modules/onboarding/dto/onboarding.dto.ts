@@ -339,3 +339,16 @@ export class AppointmentLetterDto {
   @IsOptional() @IsString() joiningDate?: string;
   @IsOptional() @IsString() @MaxLength(300) address?: string;
 }
+
+/**
+ * Declining an offer. The reason is required — see publicDeclineOffer for why.
+ */
+export class DeclineOfferDto {
+  // Trimmed first so whitespace cannot satisfy the length rule here and then
+  // be rejected by the service — one rule, one message.
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(3)
+  @MaxLength(1000)
+  reason!: string;
+}

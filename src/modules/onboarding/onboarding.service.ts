@@ -557,6 +557,9 @@ export class OnboardingService {
       html: `${letter}
 <div style="font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:18px auto 0;padding:18px 34px;border-top:1px solid #dbe3ec;text-align:center">
   <a href="${link}" style="display:inline-block;background:#1877c0;color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 30px;border-radius:6px">Accept offer &amp; submit documents</a>
+  <div style="margin-top:14px;font-size:13px">
+    <a href="${link}?action=decline" style="color:#b91c1c;text-decoration:underline">I need to decline this offer</a>
+  </div>
 </div>`,
     });
 
@@ -565,6 +568,11 @@ export class OnboardingService {
       data: {
         offerSentAt: new Date(),
         status: 'offer_sent',
+        // A re-send is a new offer: whatever they turned down before is no
+        // longer what is on the table, so the old refusal must not linger on
+        // HR's screen as though it applied to this one.
+        offerDeclinedAt: null,
+        offerDeclineReason: null,
         offerFormat: dto.format,
         offerRef: dto.reference?.trim() || null,
         offerJoiningDate: dto.joiningDate ? new Date(dto.joiningDate) : null,
@@ -1893,6 +1901,8 @@ export class OnboardingService {
       optionalDocs: OPTIONAL_DOCS,
       offerSentAt: ob.offerSentAt?.toISOString() ?? null,
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
+      offerDeclinedAt: ob.offerDeclinedAt?.toISOString() ?? null,
+      offerDeclineReason: ob.offerDeclineReason,
       submitted: ob.docs.map((d) => ({
         id: d.id,
         label: d.label,
@@ -1977,6 +1987,11 @@ export class OnboardingService {
     if (!ob) throw new NotFoundException('This link is not valid');
     if (!ob.offerSentAt)
       throw new BadRequestException('No offer has been sent yet');
+    if (ob.offerDeclinedAt) {
+      throw new BadRequestException(
+        'You have already declined this offer. Please contact DBL Group HR if you would like to reconsider.',
+      );
+    }
     if (!ob.offerAcceptedAt) {
       await this.prisma.onboarding.update({
         where: { id: ob.id },
@@ -2016,6 +2031,62 @@ export class OnboardingService {
       );
     }
     return { ok: true };
+  }
+
+  /**
+   * The candidate turns the offer down.
+   *
+   * The reason is required. A bare "no" tells HR nothing they can act on —
+   * whether to improve the offer, ask what went wrong, or go to the next
+   * candidate — and this note is the only record of it. It is shown back to
+   * HR on the offer section of the onboarding page.
+   */
+  async publicDeclineOffer(token: string, reason: string) {
+    const text = reason?.trim() ?? '';
+    if (text.length < 3) {
+      throw new BadRequestException(
+        'Please tell us why you are declining — it is the only thing HR will have to go on.',
+      );
+    }
+
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('This link is not valid');
+    if (!ob.offerSentAt)
+      throw new BadRequestException('No offer has been sent yet');
+    if (ob.offerAcceptedAt) {
+      throw new BadRequestException(
+        'You have already accepted this offer. Please contact DBL Group HR directly.',
+      );
+    }
+    if (ob.offerDeclinedAt) return { ok: true, alreadyDeclined: true };
+
+    await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      // Status deliberately stays `offer_sent`: the offer was made, and HR may
+      // yet send a revised one. The timestamp is what says it was refused.
+      data: { offerDeclinedAt: new Date(), offerDeclineReason: text },
+    });
+
+    const hrIds = await this.permissions.recruitmentRecipients(
+      ob.candidate.requisition.unitFactory,
+      ob.candidate.requisition.recruiterId,
+    );
+    await this.notifications.notifyMany(hrIds, {
+      type: 'onboarding',
+      title: 'Offer declined',
+      message: `${ob.candidate.name} declined the offer for ${ob.candidate.requisition.designation} — ${text}`,
+      link: `/requisitions/${ob.candidate.requisitionId}`,
+    });
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      { action: 'offer_declined' },
+    );
+
+    return { ok: true, alreadyDeclined: false };
   }
 
   // --- helpers -------------------------------------------------------------
@@ -2395,6 +2466,8 @@ export class OnboardingService {
       verificationSkippedAt: ob.verificationSkippedAt?.toISOString() ?? null,
       offerSentAt: ob.offerSentAt?.toISOString() ?? null,
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
+      offerDeclinedAt: ob.offerDeclinedAt?.toISOString() ?? null,
+      offerDeclineReason: ob.offerDeclineReason,
       medicalStatus: ob.medicalStatus,
       medicalNote: ob.medicalNote ?? '',
       medicalClearedAt: ob.medicalClearedAt?.toISOString() ?? null,

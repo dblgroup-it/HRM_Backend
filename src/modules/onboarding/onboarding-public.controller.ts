@@ -13,7 +13,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { PDF_UPLOAD } from '../../common/upload/file-upload';
 import { OnboardingService, type UploadedDoc } from './onboarding.service';
-import { UploadDocDto } from './dto/onboarding.dto';
+import { DeclineOfferDto, UploadDocDto } from './dto/onboarding.dto';
 
 /**
  * Public, unauthenticated onboarding endpoints used by the selected candidate's
@@ -47,5 +47,13 @@ export class OnboardingPublicController {
   @Post(':token/accept-offer')
   accept(@Param('token') token: string) {
     return this.onboarding.publicAcceptOffer(token);
+  }
+
+  /** Turn the offer down. The reason is required, and HR sees it. */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post(':token/decline-offer')
+  decline(@Param('token') token: string, @Body() dto: DeclineOfferDto) {
+    return this.onboarding.publicDeclineOffer(token, dto.reason);
   }
 }

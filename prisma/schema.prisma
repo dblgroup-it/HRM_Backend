@@ -898,6 +898,14 @@ model Onboarding {
   verificationSkippedAt DateTime?        @map("verification_skipped_at")
   offerSentAt           DateTime?        @map("offer_sent_at")
   offerAcceptedAt       DateTime?        @map("offer_accepted_at")
+  /// The candidate turned the offer down. Kept as its own timestamp rather
+  /// than an OnboardingStatus value so every existing `offerAcceptedAt IS NOT
+  /// NULL` gate keeps its exact meaning, and a row can never read as both.
+  offerDeclinedAt       DateTime?        @map("offer_declined_at")
+  /// Why they declined — required from them, and the only thing HR has to go
+  /// on when deciding whether to improve the offer or move to the next
+  /// candidate. Cleared if HR sends a fresh offer.
+  offerDeclineReason    String?          @map("offer_decline_reason")
   medicalStatus         MedicalStatus    @default(pending) @map("medical_status")
   medicalNote           String?          @map("medical_note")
   medicalClearedAt      DateTime?        @map("medical_cleared_at")
