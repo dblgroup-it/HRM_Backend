@@ -40,9 +40,11 @@ import { AutomationModule } from './modules/automation/automation.module';
 import { BoardModule } from './modules/board/board.module';
 import { SalaryFixationModule } from './modules/salary-fixation/salary-fixation.module';
 import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.module';
+import { PdfModule } from './common/pdf/pdf.module';
 
 @Module({
   imports: [
+    PdfModule,
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     ScheduleModule.forRoot(),
     // Global rate limit: 120 requests/min per IP (tighter on sensitive routes).

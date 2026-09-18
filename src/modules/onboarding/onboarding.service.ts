@@ -15,6 +15,7 @@ import type { Response } from 'express';
 
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
+import { PdfService } from '../../common/pdf/pdf.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import {
@@ -23,6 +24,13 @@ import {
   type LetterFormat,
   type LetterInput,
 } from './letters';
+import { buildOfferEmail, offerEmailHtml, offerEmailText } from './offer-email';
+import {
+  LETTERHEAD_IN_FLOW_SELECTORS,
+  LETTERHEAD_PDF_MARGIN,
+  letterheadFooterHtml,
+  letterheadHeaderHtml,
+} from './letterhead';
 import { NotificationsService } from '../realtime/notifications.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
@@ -194,6 +202,7 @@ export class OnboardingService {
     private readonly config: ConfigService,
     private readonly files: FileGrantService,
     private readonly secureFiles: SecureFileService,
+    private readonly pdf: PdfService,
   ) {}
 
   // --- HR: lifecycle -------------------------------------------------------
@@ -548,19 +557,38 @@ export class OnboardingService {
     const letter = buildOfferLetter(dto.format, input);
     const link = this.publicLink(ob.token ?? '');
 
+    // The letter travels as a PDF on DBL's pad; the mail body is the short
+    // covering note Corporate HR sends with it. If Chromium cannot start we
+    // fall back to the letter in the body rather than hold up the offer —
+    // better a plain letter than none.
+    const email = buildOfferEmail(input);
+    const pdf = await this.pdf.fromHtml(letter, {
+      headerHtml: letterheadHeaderHtml(),
+      footerHtml: letterheadFooterHtml(),
+      margin: { ...LETTERHEAD_PDF_MARGIN },
+      stripSelectors: [...LETTERHEAD_IN_FLOW_SELECTORS],
+    });
+    if (!pdf) {
+      this.logger.warn(
+        `Offer letter PDF unavailable for ${cand.id} — sending the letter inline instead.`,
+      );
+    }
     await this.mail.send({
       to: cand.email,
-      subject: `Offer of employment — ${cand.requisition.designation} | DBL Group`,
-      text: `Dear ${cand.name},\n\nPlease find your offer of employment for the position of ${cand.requisition.designation} at ${cand.requisition.unitFactory}, DBL Group.\n\nTo accept and submit your joining documents:\n\n${link}\n\nWarm regards,\nDBL Group Recruitment`,
-      // The letter itself is the email body — an offer is a document, not a
-      // notification with a link to one.
-      html: `${letter}
-<div style="font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:18px auto 0;padding:18px 34px;border-top:1px solid #dbe3ec;text-align:center">
-  <a href="${link}" style="display:inline-block;background:#1877c0;color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:12px 30px;border-radius:6px">Accept offer &amp; submit documents</a>
-  <div style="margin-top:14px;font-size:13px">
-    <a href="${link}?action=decline" style="color:#b91c1c;text-decoration:underline">I need to decline this offer</a>
-  </div>
-</div>`,
+      subject: email.subject,
+      text: offerEmailText(email, link),
+      html: pdf
+        ? offerEmailHtml(email, link)
+        : `${offerEmailHtml(email, link)}<hr>${letter}`,
+      attachments: pdf
+        ? [
+            {
+              filename: `Offer Letter — ${cand.name}.pdf`,
+              content: pdf,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
     });
 
     const updated = await this.prisma.onboarding.update({
@@ -650,11 +678,41 @@ export class OnboardingService {
       }),
     );
 
+    // Same treatment as the offer: the letter is a document on DBL's pad, so it
+    // travels as a PDF. It also has to — the pad's logo is a data: URI, which
+    // Gmail and most clients refuse to load inside a message body, so an
+    // inline letter would arrive with a broken image where the letterhead is.
+    const appointmentPdf = await this.pdf.fromHtml(letter, {
+      headerHtml: letterheadHeaderHtml(),
+      footerHtml: letterheadFooterHtml(),
+      margin: { ...LETTERHEAD_PDF_MARGIN },
+      stripSelectors: [...LETTERHEAD_IN_FLOW_SELECTORS],
+    });
+    if (!appointmentPdf) {
+      this.logger.warn(
+        `Appointment letter PDF unavailable for ${cand.id} — sending the letter inline instead.`,
+      );
+    }
+    const covering = `Dear ${cand.name},\n\nPlease find attached your appointment letter for the position of ${cand.requisition.designation} at ${cand.requisition.unitFactory}, DBL Group.\n\nWarm regards,\nDBL Group`;
     await this.mail.send({
       to: cand.email,
       subject: `Appointment letter — ${cand.requisition.designation} | DBL Group`,
-      text: `Dear ${cand.name},\n\nPlease find your appointment letter for the position of ${cand.requisition.designation} at ${cand.requisition.unitFactory}, DBL Group.\n\nWarm regards,\nDBL Group`,
-      html: letter,
+      text: covering,
+      html: appointmentPdf
+        ? `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#0f172a">${covering
+            .split('\n\n')
+            .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+            .join('')}</div>`
+        : letter,
+      attachments: appointmentPdf
+        ? [
+            {
+              filename: `Appointment Letter — ${cand.name}.pdf`,
+              content: appointmentPdf,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
     });
 
     const updated = await this.prisma.onboarding.update({

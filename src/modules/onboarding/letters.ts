@@ -1,3 +1,5 @@
+import { DBL_LETTERHEAD_FOOTER, DBL_LOGO_DATA_URI } from './letterhead';
+
 /**
  * DBL's offer and appointment letters.
  *
@@ -154,10 +156,39 @@ function lastName(full: string): string {
 const P = 'margin:0 0 12px;font-size:11pt;line-height:1.5;text-align:justify';
 const LI = 'margin:0 0 4px;font-size:11pt;line-height:1.45';
 
+/**
+ * The letter, on DBL's printed pad.
+ *
+ * On screen — and when HR prints a copy from the browser — the logo and
+ * address block sit in the flow, so the review modal shows what the candidate
+ * will receive. The PDF renderer strips these two blocks and draws the pad
+ * into each page's margin instead, which is how it repeats on every sheet of a
+ * letter that runs to two pages.
+ */
 function shell(body: string): string {
   return `
-<div style="font-family:Calibri,'Segoe UI',Arial,sans-serif;color:#000;max-width:760px;margin:0 auto;padding:28px 34px;background:#fff">
+<div class="dbl-letter" style="font-family:Calibri,'Segoe UI',Arial,sans-serif;color:#000;max-width:760px;margin:0 auto;padding:28px 34px;background:#fff;position:relative">
+  <style>
+    .dbl-letter .dbl-pad-head { padding: 0 0 18px }
+    .dbl-letter .dbl-pad-foot {
+      margin-top: 26px; padding-top: 8px; border-top: 1px solid #1f3864;
+      text-align: center; font-size: 8.5pt; line-height: 1.45; color: #1f3864;
+    }
+    /* Printing from the browser keeps the pad in flow — that path has no page
+       margins to draw it into, and HR printing a copy should still get a
+       letterhead. The PDF renderer removes these two blocks instead, because
+       there the pad is drawn into every page's margin (see PdfService). */
+    @media print {
+      .dbl-letter { max-width: none; padding: 0 }
+    }
+  </style>
+  <div class="dbl-pad-head">
+    <img src="${DBL_LOGO_DATA_URI}" alt="DBL Group" style="height:56px;width:auto;display:block">
+  </div>
 ${body}
+  <div class="dbl-pad-foot">
+    ${DBL_LETTERHEAD_FOOTER.office}<br>${DBL_LETTERHEAD_FOOTER.contact}
+  </div>
 </div>`;
 }
 

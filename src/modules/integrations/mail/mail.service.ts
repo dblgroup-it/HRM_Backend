@@ -9,12 +9,20 @@ import type { Transporter } from 'nodemailer';
 
 import { SettingsService } from '../../settings/settings.service';
 
+/** One file travelling with the message — an offer letter PDF, say. */
+export interface MailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 export interface SendMailInput {
   to: string;
   subject: string;
   text?: string;
   html?: string;
   replyTo?: string;
+  attachments?: MailAttachment[];
 }
 
 /** Sends mail through the recruitment Gmail account (app password, SMTP). */
@@ -74,6 +82,7 @@ export class MailService {
       text: input.text,
       html: input.html,
       replyTo: input.replyTo,
+      attachments: input.attachments,
     });
     this.logger.log(`Email sent to ${input.to} (${info.messageId})`);
     return { messageId: info.messageId };
