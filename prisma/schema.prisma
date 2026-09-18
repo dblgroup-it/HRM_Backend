@@ -261,6 +261,7 @@ model User {
   interviewDelegationsHeld      InterviewDelegation[]  @relation("InterviewDelegatedTo")
   interviewDelegationsMade      InterviewDelegation[]  @relation("InterviewDelegatedBy")
   boardApprovalVotes            BoardApprovalVote[]
+  referenceChecksConducted      ReferenceCheck[]       @relation("ReferenceCheckConductedBy")
   facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
   facilityNotificationsReceived FacilityNotification[] @relation("FacilityNotificationRecipient")
   approvalPathsUpdated          ApprovalPath[]         @relation("ApprovalPathUpdatedBy")
@@ -609,6 +610,7 @@ model Candidate {
   salaryFixation        SalaryFixation?
   aiProficiencyAttempts AiProficiencyAttempt[]
   facilityNotifications FacilityNotification[]
+  referenceChecks       ReferenceCheck[]
   talentBankMatches     TalentBankMatch[]
   createdAt             DateTime               @default(now()) @map("created_at")
   updatedAt             DateTime               @updatedAt @map("updated_at")
@@ -1515,4 +1517,56 @@ model AuditLog {
   @@index([action, createdAt(sort: Desc)])
   @@index([requestId])
   @@map("audit_logs")
+}
+
+/**
+ * DBL's pre-employment reference check, one row per referee.
+ *
+ * The recruiter fills this in while on the call — it is their record of the
+ * conversation, not something the referee submits — so it carries who
+ * conducted it. Several referees per candidate is the norm, hence a list
+ * rather than fields on Onboarding.
+ *
+ * The free-text answers are columns because HR reads them; the nine rating
+ * scales are JSON because they are a fixed block that is only ever read back
+ * as a whole, and adding a tenth should not need a migration.
+ */
+model ReferenceCheck {
+  id                  String    @id @default(cuid())
+  candidateId         String    @map("candidate_id")
+  candidate           Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  refereeName         String    @map("referee_name") @db.VarChar(150)
+  refereeDesignation  String?   @map("referee_designation") @db.VarChar(150)
+  refereeOrganization String?   @map("referee_organization") @db.VarChar(200)
+  refereeEmail        String?   @map("referee_email") @db.VarChar(254)
+  refereePhone        String?   @map("referee_phone") @db.VarChar(40)
+
+  /// 1a, 1b — how long they have known the applicant, and in what capacity.
+  knownDuration       String?   @map("known_duration")
+  relationship        String?
+  /// 2a, 2b
+  strengths           String?
+  weaknesses          String?
+  /// 3a–3i, as { trustworthiness: 'excellent', quality: 'consistently_high', … }
+  ratings             Json      @default("{}")
+  /// 4–7
+  handover            String?
+  rehireEligible      String?   @map("rehire_eligible")
+  concerns            String?
+  overallComments     String?   @map("overall_comments")
+
+  conductedById       String    @map("conducted_by_id")
+  conductedBy         User      @relation("ReferenceCheckConductedBy", fields: [conductedById], references: [id], onDelete: Restrict)
+  conductedAt         DateTime  @default(now()) @map("conducted_at")
+
+  /// The completed form, filed with the candidate's joining documents.
+  fileId              String?   @map("file_id")
+  url                 String?
+
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@index([candidateId])
+  @@map("reference_checks")
 }

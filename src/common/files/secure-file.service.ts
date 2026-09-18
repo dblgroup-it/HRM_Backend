@@ -118,7 +118,7 @@ function sanitizeFilename(raw: string): string {
  * `filename*`, so the reader still sees the em dash — it is only the
  * compatibility copy that is folded down.
  */
-function contentDisposition(
+export function contentDisposition(
   disposition: 'inline' | 'attachment',
   name: string,
 ): string {

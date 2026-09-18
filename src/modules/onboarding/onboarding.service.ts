@@ -27,6 +27,7 @@ import {
 import { buildOfferEmail, offerEmailHtml, offerEmailText } from './offer-email';
 import { hrVerifyBlocker, missingDocs, pendingDocs } from './hr-verify';
 import { buildCocForm } from './coc-form';
+import { ReferenceCheckService } from './reference-check.service';
 import { signatureRatioError } from '../../common/signature.util';
 import { imageSize } from '../../common/upload/image-size';
 import {
@@ -210,6 +211,7 @@ export class OnboardingService {
     private readonly files: FileGrantService,
     private readonly secureFiles: SecureFileService,
     private readonly pdf: PdfService,
+    private readonly refChecks: ReferenceCheckService,
   ) {}
 
   // --- HR: lifecycle -------------------------------------------------------
@@ -1035,6 +1037,23 @@ export class OnboardingService {
             `${cand.name} — Joining Docs`,
             ws.joiningFolderId,
           );
+          // The reference checks live in the database and are rendered on
+          // demand, so the permanent file would otherwise not contain them.
+          // This is the moment the record stops being editable, so it is the
+          // moment to write them down.
+          for (const form of await this.refChecks.renderAllForFiling(cand.id)) {
+            await this.drive
+              .uploadFile(candFolder, {
+                name: form.name,
+                mimeType: 'application/pdf',
+                buffer: form.buffer,
+              })
+              .catch((e: Error) =>
+                this.logger.warn(
+                  `Could not file "${form.name}" on archive: ${e.message}`,
+                ),
+              );
+          }
           await this.drive.moveFile(candFolder, reqArchive);
           archiveFolderUrl = `https://drive.google.com/drive/folders/${candFolder}`;
           // The folder stays PRIVATE. It holds the candidate's national ID,
