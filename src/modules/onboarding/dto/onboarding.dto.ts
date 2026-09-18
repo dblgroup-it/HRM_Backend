@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
@@ -264,6 +265,48 @@ export class OfferLetterDto {
   /** Junior format only. */
   @IsOptional() @IsInt() @Min(0) @Max(24) probationMonths?: number;
   @IsOptional() @IsInt() @Min(0) @Max(180) noticeDays?: number;
+}
+
+/** Send the pre-employment medical test letter. */
+export class SendMedicalLetterDto {
+  /**
+   * Which test list. Not derived server-side from the date of birth: the two
+   * lists differ by an actual test, Bdjobs applicants frequently have no date
+   * on file, and HR may know better than the record does.
+   */
+  @IsIn(['below_40', 'above_40'])
+  band!: 'below_40' | 'above_40';
+
+  /** Appointment date AND time — "10.30 AM" is printed on the letter. */
+  @IsString()
+  @IsNotEmpty()
+  examAt!: string;
+
+  /** Defaults to MEDICAL_TEST_VENUE, and to whatever was used last time. */
+  @IsOptional() @IsString() @MaxLength(500) venue?: string;
+
+  /** "Mr." / "Ms." — omitted rather than guessed. */
+  @IsOptional() @IsString() @MaxLength(10) salutation?: string;
+
+  /**
+   * No recipient list.
+   *
+   * The letter goes to whoever holds the Medical Officer and Central Medical
+   * Officer roles, resolved server-side. Those people are already in the
+   * system, their addresses are already on their accounts, and typing them on
+   * every send is a transcription error waiting to reach an external clinic.
+   */
+
+  /**
+   * Who to send to. Both default to true; the service refuses a send with
+   * neither, since an email to nobody is not a send.
+   *
+   * Separate flags because the two are genuinely independent: a clinic already
+   * told by phone still needs the candidate emailed, and a candidate told in
+   * person still needs the clinic to receive the letter.
+   */
+  @IsOptional() @IsBoolean() notifyMedicalTeam?: boolean;
+  @IsOptional() @IsBoolean() notifyCandidate?: boolean;
 }
 
 /** The Central Medical Officer's verdict on a submitted medical finding. */

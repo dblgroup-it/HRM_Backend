@@ -930,44 +930,61 @@ model Onboarding {
 
   /// Recorded from a paper/offline check rather than the structured form, so
   /// the completeness gate on MedicalExam was deliberately bypassed.
-  medicalManual        Boolean         @default(false) @map("medical_manual")
+  medicalManual                Boolean         @default(false) @map("medical_manual")
+  /// The pre-employment medical test letter — reference, appointment and venue.
+  ///
+  /// The reference continues DBL's existing DBL/Corp/HR/MT-<serial>/<yy>
+  /// register, issued from a database sequence so two letters can never share
+  /// one. Stored so a re-send repeats the number rather than burning a new one.
+  medicalRefNo                 String?         @map("medical_ref_no") @db.VarChar(40)
+  /// Date AND time of the appointment — "10:30 AM" is on the letter.
+  medicalExamAt                DateTime?       @map("medical_exam_at")
+  medicalVenue                 String?         @map("medical_venue")
+  /// Which test list was used. Null until a letter is sent.
+  medicalAgeBand               String?         @map("medical_age_band") @db.VarChar(10)
+  medicalLetterSentAt          DateTime?       @map("medical_letter_sent_at")
+  /// Tracked separately because they are two sends and either can fail alone.
+  /// One stamp could not answer "was the candidate actually told?", which is
+  /// the question asked when somebody does not turn up for their exam.
+  medicalLetterTeamSentAt      DateTime?       @map("medical_letter_team_sent_at")
+  medicalLetterCandidateSentAt DateTime?       @map("medical_letter_candidate_sent_at")
   /// When the medical team was told this candidate is waiting on them, so the
   /// alert fires once rather than on every document verified.
-  medicalNotifiedAt    DateTime?       @map("medical_notified_at")
+  medicalNotifiedAt            DateTime?       @map("medical_notified_at")
   /// What the examining officer submitted for approval — `cleared` or
   /// `rejected`. Kept separately from `medicalStatus` so the Central Medical
   /// Officer can see what they are being asked to confirm while the candidate's
   /// actual state is still `submitted`.
-  medicalProposed      MedicalStatus?  @map("medical_proposed")
-  medicalSubmittedAt   DateTime?       @map("medical_submitted_at")
-  medicalSubmittedById String?         @map("medical_submitted_by_id")
-  medicalSubmittedBy   User?           @relation("OnboardingMedicalSubmittedBy", fields: [medicalSubmittedById], references: [id], onDelete: SetNull)
+  medicalProposed              MedicalStatus?  @map("medical_proposed")
+  medicalSubmittedAt           DateTime?       @map("medical_submitted_at")
+  medicalSubmittedById         String?         @map("medical_submitted_by_id")
+  medicalSubmittedBy           User?           @relation("OnboardingMedicalSubmittedBy", fields: [medicalSubmittedById], references: [id], onDelete: SetNull)
   /// Who signed it off centrally, and when. Null on a result HR recorded by
   /// hand, which is deliberately immediate and therefore never CMO-approved —
   /// the distinction is shown wherever the clearance is displayed.
-  medicalApprovedAt    DateTime?       @map("medical_approved_at")
-  medicalApprovedById  String?         @map("medical_approved_by_id")
-  medicalApprovedBy    User?           @relation("OnboardingMedicalApprovedBy", fields: [medicalApprovedById], references: [id], onDelete: SetNull)
+  medicalApprovedAt            DateTime?       @map("medical_approved_at")
+  medicalApprovedById          String?         @map("medical_approved_by_id")
+  medicalApprovedBy            User?           @relation("OnboardingMedicalApprovedBy", fields: [medicalApprovedById], references: [id], onDelete: SetNull)
   /// The Central Medical Officer's note — required when overturning or
   /// returning a submission, because those reverse a clinician's finding.
-  medicalCmoNote       String?         @map("medical_cmo_note")
-  medicalClearedById   String?         @map("medical_cleared_by_id")
-  medicalClearedBy     User?           @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
-  hrVerifiedAt         DateTime?       @map("hr_verified_at")
+  medicalCmoNote               String?         @map("medical_cmo_note")
+  medicalClearedById           String?         @map("medical_cleared_by_id")
+  medicalClearedBy             User?           @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
+  hrVerifiedAt                 DateTime?       @map("hr_verified_at")
   /// AI cross-verification of submitted docs vs the candidate's profile:
   /// { verdict, overview, findings: [{doc, severity, detail}] }
-  crossCheck           Json?           @map("cross_check")
-  crossCheckedAt       DateTime?       @map("cross_checked_at")
-  archivedAt           DateTime?       @map("archived_at")
+  crossCheck                   Json?           @map("cross_check")
+  crossCheckedAt               DateTime?       @map("cross_checked_at")
+  archivedAt                   DateTime?       @map("archived_at")
   /// Drive folder the joining docs were moved into on archive.
-  archiveFolderUrl     String?         @map("archive_folder_url")
-  itEmail              String?         @map("it_email") @db.VarChar(254)
-  itAssetId            String?         @map("it_asset_id") @db.VarChar(50)
-  itNotifiedAt         DateTime?       @map("it_notified_at")
-  docs                 OnboardingDoc[]
-  medicalExam          MedicalExam?
-  createdAt            DateTime        @default(now()) @map("created_at")
-  updatedAt            DateTime        @updatedAt @map("updated_at")
+  archiveFolderUrl             String?         @map("archive_folder_url")
+  itEmail                      String?         @map("it_email") @db.VarChar(254)
+  itAssetId                    String?         @map("it_asset_id") @db.VarChar(50)
+  itNotifiedAt                 DateTime?       @map("it_notified_at")
+  docs                         OnboardingDoc[]
+  medicalExam                  MedicalExam?
+  createdAt                    DateTime        @default(now()) @map("created_at")
+  updatedAt                    DateTime        @updatedAt @map("updated_at")
 
   @@map("onboardings")
 }

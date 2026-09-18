@@ -35,7 +35,16 @@ import {
   NotifyItDto,
   OfferLetterDto,
   AppointmentLetterDto,
+  SendMedicalLetterDto,
 } from './dto/onboarding.dto';
+import type { CvProfile } from '../candidates/cv/cv-profile.types';
+import {
+  bandFromDateOfBirth,
+  buildCandidateMedicalEmail,
+  buildMedicalTestLetter,
+  MEDICAL_TEST_VENUE,
+  type MedicalAgeBand,
+} from './medical-test-letter';
 import {
   applyCmoDecision,
   decisionNoteError,
@@ -83,11 +92,25 @@ export const MEDICAL_DUE: Prisma.OnboardingWhereInput = {
 /** The standard joining-document checklist shown to a selected candidate. */
 export const REQUIRED_DOCS = [
   'National ID / Passport',
-  'Academic Certificates',
+  'Academic Certificates / Marksheet',
   'Experience / Release Letter',
   'Address Proof',
   'Passport-size Photo',
 ];
+
+/**
+ * Documents a candidate provides if they have them.
+ *
+ * Deliberately a separate list rather than more entries in REQUIRED_DOCS.
+ * Progress, the "all uploaded" flag and the gate that opens the medical step
+ * all count the required list, so an optional document added there would mean
+ * nobody could ever reach complete — a fresh graduate has no pay slip, and the
+ * checklist would sit at 5 of 7 forever with nothing anyone could do about it.
+ *
+ * They are uploaded, stored and verified exactly like the rest; they simply do
+ * not hold anything up by being absent.
+ */
+export const OPTIONAL_DOCS = ['Pay Slip / Salary Certificate'];
 
 /** Multer file subset we use for document uploads. */
 export interface UploadedDoc {
@@ -227,6 +250,7 @@ export class OnboardingService {
       mailConfigured: this.mail.isConfigured(),
       itWebhook: Boolean(this.config.get<string>('it.webhookUrl')),
       requiredDocs: REQUIRED_DOCS,
+      optionalDocs: OPTIONAL_DOCS,
       candidate: {
         id: cand.id,
         name: cand.name,
@@ -1234,6 +1258,259 @@ export class OnboardingService {
     return { ok: true };
   }
 
+  // ── Pre-employment medical test letter ────────────────────────────────────
+
+  /**
+   * What the send screen needs before HR can send anything.
+   *
+   * The age band is offered from the candidate's date of birth and left
+   * changeable: the two test lists differ by an actual test, so a wrong band
+   * means a test nobody runs — but Bdjobs applicants often have no date at all,
+   * and blocking the send would strand them.
+   */
+  async medicalLetterDraft(onboardingId: string, userId: string) {
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('Onboarding not found');
+    if (!(await this.hasMedicalRole(userId))) {
+      await this.requireRecruitmentAccess(ob.candidate.requisition, userId);
+    }
+
+    const medical = await this.prisma.user.findMany({
+      where: {
+        roleAssignments: {
+          some: {
+            role: {
+              key: { in: [...MEDICAL_ROLE_KEYS, CENTRAL_MEDICAL_ROLE_KEY] },
+            },
+          },
+        },
+      },
+      select: { name: true, email: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const cv = ob.candidate.cvProfile as unknown as CvProfile | null;
+    const dob = cv?.personal?.dateOfBirth ?? null;
+    const suggested = bandFromDateOfBirth(dob);
+
+    return {
+      candidateName: ob.candidate.name,
+      candidateEmail: ob.candidate.email ?? null,
+      unitName: ob.candidate.requisition.unitFactory,
+      dateOfBirth: dob,
+      /** Null when there is no usable date — HR is then asked to choose. */
+      suggestedBand: suggested,
+      /** Re-sending repeats the reference rather than burning a new one. */
+      refNo: ob.medicalRefNo,
+      examAt: ob.medicalExamAt?.toISOString() ?? null,
+      venue: ob.medicalVenue?.trim() || MEDICAL_TEST_VENUE,
+      band: (ob.medicalAgeBand as MedicalAgeBand | null) ?? suggested,
+      sentAt: ob.medicalLetterSentAt?.toISOString() ?? null,
+      teamSentAt: ob.medicalLetterTeamSentAt?.toISOString() ?? null,
+      candidateSentAt: ob.medicalLetterCandidateSentAt?.toISOString() ?? null,
+      /**
+       * Who the letter will reach, resolved from the medical roles.
+       *
+       * Shown before sending rather than discovered afterwards: an empty list
+       * means nobody holds the role, and the send screen should say so while
+       * it can still be fixed.
+       */
+      recipients: medical.map((u) => ({
+        name: u.name,
+        email: u.email,
+        hasEmail: Boolean(u.email),
+      })),
+    };
+  }
+
+  /**
+   * Send the medical test letter.
+   *
+   * Two different emails go out. The clinic gets the letter — reference, tests,
+   * appointment. The candidate gets where to be, when, and what to bring; the
+   * test list is deliberately not repeated to them.
+   *
+   * Sent by business decision as email bodies rather than attachments: the
+   * clinic reads an instruction and a checklist, and an email they can forward
+   * is enough.
+   */
+  async sendMedicalTestLetter(
+    onboardingId: string,
+    userId: string,
+    dto: SendMedicalLetterDto,
+  ) {
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('Onboarding not found');
+    if (!(await this.hasMedicalRole(userId))) {
+      await this.requireRecruitmentAccess(
+        ob.candidate.requisition,
+        userId,
+        'send the medical test letter',
+      );
+    }
+    if (!this.mail.isConfigured()) {
+      throw new ServiceUnavailableException('Email is not configured');
+    }
+
+    // Chosen value, else what this candidate's last letter used, else the
+    // default — so a corrected address survives a re-send.
+    const venue =
+      dto.venue?.trim() || ob.medicalVenue?.trim() || MEDICAL_TEST_VENUE;
+
+    const examAt = new Date(dto.examAt);
+    if (Number.isNaN(examAt.getTime())) {
+      throw new BadRequestException('Give a valid appointment date and time');
+    }
+
+    // The reference is issued once and kept. A re-send — a candidate who lost
+    // the email, a corrected time — must not produce a second number for the
+    // same person, because the clinic files by it.
+    let refNo = ob.medicalRefNo;
+    if (!refNo) {
+      const [{ nextval }] = await this.prisma.$queryRaw<{ nextval: bigint }[]>`
+        SELECT nextval('medical_test_ref_seq')
+      `;
+      const yy = String(examAt.getFullYear()).slice(-2);
+      refNo = `DBL/Corp/HR/MT - ${nextval}/${yy}`;
+    }
+
+    const letter = buildMedicalTestLetter({
+      candidateName: ob.candidate.name,
+      salutation: dto.salutation ?? null,
+      unitName: ob.candidate.requisition.unitFactory,
+      refNo,
+      band: dto.band,
+      examAt,
+      venue,
+    });
+
+    // Recipients come from the roles, not from a typed list: these people are
+    // already in the system with their addresses on their accounts, and
+    // retyping them per send is a transcription error headed for an external
+    // clinic.
+    const medicalUsers = await this.prisma.user.findMany({
+      where: {
+        roleAssignments: {
+          some: {
+            role: {
+              key: { in: [...MEDICAL_ROLE_KEYS, CENTRAL_MEDICAL_ROLE_KEY] },
+            },
+          },
+        },
+      },
+      select: { id: true, name: true, email: true },
+    });
+
+    if (!medicalUsers.length) {
+      throw new BadRequestException(
+        'Nobody holds the Medical Officer or Central Medical Officer role, so there is nowhere to send this letter. Assign one in Access Control first.',
+      );
+    }
+
+    const recipients = medicalUsers.filter((u) => u.email);
+    const noEmail = medicalUsers.filter((u) => !u.email).map((u) => u.name);
+    if (!recipients.length) {
+      throw new BadRequestException(
+        `No medical role holder has an email address on file (${noEmail.join(', ')}). Add one before sending.`,
+      );
+    }
+
+    const toTeam = dto.notifyMedicalTeam !== false;
+    const toCandidate =
+      dto.notifyCandidate !== false && Boolean(ob.candidate.email);
+    if (!toTeam && !toCandidate) {
+      throw new BadRequestException(
+        'Choose at least one recipient — an email to nobody is not a send.',
+      );
+    }
+
+    const sent: string[] = [];
+    const failed: { to: string; reason: string }[] = [];
+    let teamSentAt: Date | null = null;
+    let candidateSentAt: Date | null = null;
+
+    // The medical team first: if this fails there is no appointment to keep,
+    // and telling the candidate to attend would be worse than telling nobody.
+    for (const to of toTeam ? recipients.map((u) => u.email as string) : []) {
+      try {
+        await this.mail.send({
+          to,
+          subject: `Medical Tests — ${ob.candidate.name} | ${refNo}`,
+          text: `Medical test letter for ${ob.candidate.name}. Reference ${refNo}.`,
+          html: letter,
+        });
+        sent.push(to);
+        teamSentAt = new Date();
+      } catch (err) {
+        failed.push({ to, reason: (err as Error).message });
+      }
+    }
+
+    if (toCandidate && ob.candidate.email) {
+      const mail = buildCandidateMedicalEmail({ examAt, venue });
+      try {
+        await this.mail.send({
+          to: ob.candidate.email,
+          subject: 'Pre-employment Medical Test | DBL Group',
+          text: mail.text,
+          html: mail.html,
+        });
+        sent.push(ob.candidate.email);
+        candidateSentAt = new Date();
+      } catch (err) {
+        failed.push({
+          to: ob.candidate.email,
+          reason: (err as Error).message,
+        });
+      }
+    }
+
+    // Recorded even on a partial failure: the reference was issued and the
+    // appointment agreed, and losing that because one address bounced would
+    // mean re-issuing a number the clinic may already hold.
+    await this.prisma.onboarding.update({
+      where: { id: onboardingId },
+      data: {
+        medicalRefNo: refNo,
+        medicalExamAt: examAt,
+        medicalVenue: venue,
+        medicalAgeBand: dto.band,
+        medicalLetterSentAt: sent.length ? new Date() : ob.medicalLetterSentAt,
+        // Kept from the previous send when this one did not target that side:
+        // re-sending only to the candidate must not erase the record that the
+        // clinic was told last week.
+        medicalLetterTeamSentAt: teamSentAt ?? ob.medicalLetterTeamSentAt,
+        medicalLetterCandidateSentAt:
+          candidateSentAt ?? ob.medicalLetterCandidateSentAt,
+      },
+    });
+
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      {
+        action: 'medical_updated',
+      },
+    );
+
+    return {
+      refNo,
+      sent,
+      failed,
+      /** Role holders with no address — named so somebody fixes the account. */
+      skippedNoEmail: noEmail,
+      teamSentAt: teamSentAt?.toISOString() ?? null,
+      candidateSentAt: candidateSentAt?.toISOString() ?? null,
+      letterHtml: letter,
+    };
+  }
+
   // ── Central Medical Officer ───────────────────────────────────────────────
 
   /** Only a Central Medical Officer (or a super user) may decide a submission. */
@@ -1613,6 +1890,7 @@ export class OnboardingService {
       unit: ob.candidate.requisition.unitFactory,
       status: ob.status,
       requiredDocs: REQUIRED_DOCS,
+      optionalDocs: OPTIONAL_DOCS,
       offerSentAt: ob.offerSentAt?.toISOString() ?? null,
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
       submitted: ob.docs.map((d) => ({
@@ -2132,6 +2410,14 @@ export class OnboardingService {
        */
       medicalCmoNote: ob.medicalCmoNote ?? null,
       medicalApprovedAt: ob.medicalApprovedAt?.toISOString() ?? null,
+      /** The pre-employment test letter, so HR can see it has gone out. */
+      medicalRefNo: ob.medicalRefNo ?? null,
+      medicalExamAt: ob.medicalExamAt?.toISOString() ?? null,
+      medicalLetterSentAt: ob.medicalLetterSentAt?.toISOString() ?? null,
+      medicalLetterTeamSentAt:
+        ob.medicalLetterTeamSentAt?.toISOString() ?? null,
+      medicalLetterCandidateSentAt:
+        ob.medicalLetterCandidateSentAt?.toISOString() ?? null,
       // Whether the clearance came from a paper check rather than the
       // structured report, and who put their name to it.
       // Offer & appointment letters

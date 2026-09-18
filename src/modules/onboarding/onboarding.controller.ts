@@ -30,6 +30,7 @@ import {
   SetFixedDesignationDto,
   MedicalDecisionDto,
   MedicalDecisionBulkDto,
+  SendMedicalLetterDto,
 } from './dto/onboarding.dto';
 
 /** Phase 4 & 5 — document verification, offer & onboarding (authenticated HR). */
@@ -118,6 +119,28 @@ export class OnboardingController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.onboarding.verifyDoc(docId, dto.status, user.id);
+  }
+
+  /** What the send screen needs: suggested band, reference, venue, appointment. */
+  @Get('onboarding/:id/medical-letter')
+  medicalLetterDraft(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.medicalLetterDraft(id, user.id);
+  }
+
+  /**
+   * Send the pre-employment medical test letter.
+   *
+   * Two emails: the letter to the clinic, and where/when/what-to-bring to the
+   * candidate. Returns which addresses took it and which did not, rather than
+   * failing the whole send because one bounced.
+   */
+  @Post('onboarding/:id/medical-letter')
+  sendMedicalLetter(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SendMedicalLetterDto,
+  ) {
+    return this.onboarding.sendMedicalTestLetter(id, user.id, dto);
   }
 
   // ── Central Medical Officer ───────────────────────────────────────────────
