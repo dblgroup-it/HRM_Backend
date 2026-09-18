@@ -67,6 +67,9 @@ export class FacilityProvisioningService {
     ).map((key) => {
       const recipients = byKey.get(key) ?? [];
       const confirmed = recipients.find((r) => r.confirmedAt);
+      // Newest decline that nobody has since confirmed — `recipients` is sorted
+      // newest first, so this is the one HR needs to answer.
+      const declined = recipients.find((r) => r.declinedAt && !r.confirmedAt);
       return {
         key,
         label: FACILITY_LABEL[key],
@@ -77,10 +80,15 @@ export class FacilityProvisioningService {
           sentAt: r.sentAt.toISOString(),
           confirmedAt: r.confirmedAt?.toISOString() ?? null,
           confirmNote: r.confirmNote,
+          declinedAt: r.declinedAt?.toISOString() ?? null,
+          declineReason: r.declineReason,
         })),
         confirmedBy: confirmed?.recipientName ?? null,
         confirmedAt: confirmed?.confirmedAt?.toISOString() ?? null,
         confirmNote: confirmed?.confirmNote ?? null,
+        declinedBy: declined?.recipientName ?? null,
+        declinedAt: declined?.declinedAt?.toISOString() ?? null,
+        declineReason: declined?.declineReason ?? null,
       };
     });
 
@@ -214,10 +222,16 @@ export class FacilityProvisioningService {
             <b>${cand.name}</b> has been selected for <b>${cand.requisition.designation}</b>
             (${cand.requisition.unitFactory}${cand.requisition.department ? ` — ${cand.requisition.department}` : ''})
             and will need <b>${FACILITY_LABEL[key]}</b> arranged before joining.<br><br>
-            Once it's arranged, please confirm using the button below.`,
+            Once it's arranged, please confirm using the button below. If you cannot
+            arrange it, use the second link to tell HR why.`,
             {
               label: `Confirm ${FACILITY_LABEL[key]} arranged`,
               url: confirmUrl,
+            },
+            // Same page, decline form already open — so refusing is one click too.
+            {
+              label: 'I cannot arrange this',
+              url: `${confirmUrl}?action=decline`,
             },
           ),
         });
@@ -246,8 +260,19 @@ export class FacilityProvisioningService {
     if (n.confirmedAt) {
       return { alreadyConfirmed: true, recipientName: n.recipientName };
     }
+    // A recipient who already refused gets told so rather than a fresh form —
+    // otherwise revisiting the link looks like the decline never registered.
+    if (n.declinedAt) {
+      return {
+        alreadyConfirmed: false,
+        alreadyDeclined: true,
+        declineReason: n.declineReason,
+        recipientName: n.recipientName,
+      };
+    }
     return {
       alreadyConfirmed: false,
+      alreadyDeclined: false,
       recipientName: n.recipientName,
       facilityKey: n.facilityKey,
       facilityLabel: FACILITY_LABEL[n.facilityKey] ?? n.facilityKey,
@@ -270,6 +295,11 @@ export class FacilityProvisioningService {
     if (new Date() > n.tokenExpiresAt)
       throw new BadRequestException('This link has expired.');
     if (n.confirmedAt) return { ok: true, alreadyConfirmed: true };
+    if (n.declinedAt) {
+      throw new BadRequestException(
+        'You already declined this request. Ask HR to send it again if that was a mistake.',
+      );
+    }
 
     // A link issued before hashing carries the raw value; retire it as it is
     // used, so the residue drains away without anyone's link breaking.
@@ -298,6 +328,64 @@ export class FacilityProvisioningService {
     }
 
     return { ok: true, alreadyConfirmed: false };
+  }
+
+  /**
+   * Refuse a facility request.
+   *
+   * The reason is required and deliberately so: "no" on its own leaves HR with
+   * nothing to act on — they cannot tell whether to ask somebody else, wait, or
+   * change what was asked for. This note is the only record of why, and it is
+   * what they will read when they pick the request up again.
+   */
+  async declineByToken(token: string, reason: string) {
+    const text = reason?.trim() ?? '';
+    if (text.length < 3) {
+      throw new BadRequestException(
+        'Say why this cannot be arranged — HR has nothing to act on otherwise.',
+      );
+    }
+
+    const n = await this.prisma.facilityNotification.findFirst({
+      where: tokenLookupWhere(token),
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!n) throw new NotFoundException('Invalid link.');
+    if (new Date() > n.tokenExpiresAt)
+      throw new BadRequestException('This link has expired.');
+    if (n.confirmedAt) {
+      throw new BadRequestException(
+        'You already confirmed this as arranged. Contact HR if that needs reversing.',
+      );
+    }
+    if (n.declinedAt) return { ok: true, alreadyDeclined: true };
+
+    // Same legacy-token retirement as confirmByToken.
+    if (!n.tokenHash) {
+      await this.prisma.facilityNotification
+        .update({ where: { id: n.id }, data: migrateTokenFields(token) })
+        .catch(() => undefined);
+    }
+
+    await this.prisma.facilityNotification.update({
+      where: { id: n.id },
+      data: { declinedAt: new Date(), declineReason: text },
+    });
+
+    try {
+      await this.notifications.notify(n.sentById, {
+        type: 'facility_provisioned',
+        title: 'Facility declined',
+        message: `${n.recipientName} cannot arrange ${FACILITY_LABEL[n.facilityKey] ?? n.facilityKey} for ${n.candidate.name} — ${text}`,
+        link: `/onboarding/manage/${n.candidateId}`,
+      });
+    } catch (e) {
+      this.logger.error(
+        `Failed to notify HR of facility decline: ${(e as Error).message}`,
+      );
+    }
+
+    return { ok: true, alreadyDeclined: false };
   }
 
   // --- Helpers ---------------------------------------------------------------
@@ -332,10 +420,18 @@ export class FacilityProvisioningService {
   private emailHtml(
     bodyHtml: string,
     cta?: { label: string; url: string },
+    secondary?: { label: string; url: string },
   ): string {
+    // Both actions sit together, with the paste-the-link fallback after them —
+    // otherwise the second choice reads as an afterthought below the footer text.
     const button = cta
-      ? `<tr><td style="padding:8px 28px 28px"><a href="${cta.url}" style="display:inline-block;background:#1877c0;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:bold">${cta.label}</a></td></tr>
-         <tr><td style="padding:0 28px 28px;font-size:12px;color:#94a3b8">Or paste this link into your browser:<br><span style="color:#64748b">${cta.url}</span></td></tr>`
+      ? `<tr><td style="padding:8px 28px ${secondary ? '12px' : '28px'}"><a href="${cta.url}" style="display:inline-block;background:#1877c0;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:bold">${cta.label}</a></td></tr>`
+      : '';
+    const secondaryRow = secondary
+      ? `<tr><td style="padding:0 28px 24px;font-size:13px"><a href="${secondary.url}" style="color:#b91c1c;text-decoration:underline">${secondary.label}</a></td></tr>`
+      : '';
+    const fallback = cta
+      ? `<tr><td style="padding:0 28px 28px;font-size:12px;color:#94a3b8">Or paste this link into your browser:<br><span style="color:#64748b">${cta.url}</span></td></tr>`
       : '';
     return `<!doctype html><html><body style="margin:0;background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
@@ -343,6 +439,8 @@ export class FacilityProvisioningService {
           <tr><td style="background:#1877c0;padding:18px 28px;color:#fff;font-size:18px;font-weight:bold">DBL Group — HR</td></tr>
           <tr><td style="padding:28px 28px 16px;font-size:14px;line-height:1.7;color:#334155">${bodyHtml}</td></tr>
           ${button}
+          ${secondaryRow}
+          ${fallback}
           <tr><td style="padding:18px 28px;background:#f8fafc;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0">This message was sent by DBL Group HR. Please do not share this link.</td></tr>
         </table>
       </td></tr></table>

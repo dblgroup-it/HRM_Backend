@@ -1404,6 +1404,14 @@ model FacilityNotification {
   sentAt          DateTime  @default(now()) @map("sent_at")
   confirmedAt     DateTime? @map("confirmed_at")
   confirmNote     String?   @map("confirm_note")
+  /// The recipient can refuse instead of confirming — no desk free, no vehicle
+  /// available, wrong person asked. Kept as its own timestamp rather than a
+  /// status column so a row can never be both, and so the existing
+  /// `confirmedAt IS NOT NULL` checks keep their exact meaning.
+  declinedAt      DateTime? @map("declined_at")
+  /// Mandatory when declining: "no" without a reason leaves HR with nothing to
+  /// act on, and this is the only record of why the facility was refused.
+  declineReason   String?   @map("decline_reason")
 
   @@index([candidateId, facilityKey])
   @@map("facility_notifications")
