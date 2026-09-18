@@ -25,6 +25,10 @@ import {
   type LetterInput,
 } from './letters';
 import { buildOfferEmail, offerEmailHtml, offerEmailText } from './offer-email';
+import { hrVerifyBlocker, missingDocs, pendingDocs } from './hr-verify';
+import { buildCocForm } from './coc-form';
+import { signatureRatioError } from '../../common/signature.util';
+import { imageSize } from '../../common/upload/image-size';
 import {
   LETTERHEAD_IN_FLOW_SELECTORS,
   LETTERHEAD_PDF_MARGIN,
@@ -98,6 +102,9 @@ export const MEDICAL_DUE: Prisma.OnboardingWhereInput = {
 };
 
 /** The standard joining-document checklist shown to a selected candidate. */
+/** The signed Code of Conduct, filed like any other joining document. */
+export const COC_DOC_LABEL = 'Code of Conduct (signed)';
+
 export const REQUIRED_DOCS = [
   'National ID / Passport',
   'Academic Certificates / Marksheet',
@@ -600,6 +607,17 @@ export class OnboardingService {
         : undefined,
     });
 
+    // The letter the candidate received is filed with their documents, not just
+    // emailed: a copy in the outbox of one mailbox is not a record anyone else
+    // can find, and this is the document the hire rests on.
+    if (pdf) {
+      await this.fileWithJoiningDocs(cand.requisition, cand.name, {
+        name: `Offer Letter — ${cand.name}.pdf`,
+        mimeType: 'application/pdf',
+        buffer: pdf,
+      });
+    }
+
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
       data: {
@@ -726,6 +744,14 @@ export class OnboardingService {
           ]
         : undefined,
     });
+
+    if (appointmentPdf) {
+      await this.fileWithJoiningDocs(cand.requisition, cand.name, {
+        name: `Appointment Letter — ${cand.name}.pdf`,
+        mimeType: 'application/pdf',
+        buffer: appointmentPdf,
+      });
+    }
 
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
@@ -948,11 +974,21 @@ export class OnboardingService {
   async hrVerify(candidateId: string, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
-    if (ob.medicalStatus !== 'cleared') {
-      throw new BadRequestException(
-        'Medical clearance is required before HR final verification',
-      );
-    }
+    // Every required document has to be in and checked — or HR has to have
+    // said, in the file, that they checked them by hand. This step closes the
+    // hire and rejects everyone else in the requisition, so "we'll chase that
+    // certificate later" is not something it should be possible to do silently.
+    const docs = await this.prisma.onboardingDoc.findMany({
+      where: { onboardingId: ob.id },
+      select: { label: true, status: true },
+    });
+    const blocker = hrVerifyBlocker(REQUIRED_DOCS, {
+      docs,
+      docsSkippedAt: ob.docsSkippedAt,
+      verificationSkippedAt: ob.verificationSkippedAt,
+      medicalStatus: ob.medicalStatus,
+    });
+    if (blocker) throw new BadRequestException(blocker);
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
       data: { hrVerifiedAt: new Date(), status: 'hr_final' },
@@ -1973,6 +2009,8 @@ export class OnboardingService {
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
       offerDeclinedAt: ob.offerDeclinedAt?.toISOString() ?? null,
       offerDeclineReason: ob.offerDeclineReason,
+      cocSentAt: ob.cocSentAt?.toISOString() ?? null,
+      cocSignedAt: ob.cocSignedAt?.toISOString() ?? null,
       submitted: ob.docs.map((d) => ({
         id: d.id,
         label: d.label,
@@ -2159,7 +2197,204 @@ export class OnboardingService {
     return { ok: true, alreadyDeclined: false };
   }
 
+  // --- Code of Conduct -----------------------------------------------------
+
+  /**
+   * Send the candidate DBL's Code of Conduct acknowledgement to sign.
+   *
+   * The blank form goes as a PDF so they can read it away from the screen, and
+   * the mail points at their own portal, where they sign it. Nothing is filed
+   * until they do.
+   */
+  async sendCoc(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    if (!cand.email) {
+      throw new BadRequestException(
+        'This candidate has no email address on file',
+      );
+    }
+    if (ob.cocSignedAt) {
+      throw new BadRequestException(
+        'This candidate has already signed the Code of Conduct.',
+      );
+    }
+
+    const form = buildCocForm({ employeeName: cand.name });
+    const pdf = await this.pdf.fromHtml(form, {
+      margin: { top: '16mm', bottom: '14mm', left: '18mm', right: '18mm' },
+      fitToPages: 1,
+    });
+    const link = `${this.publicLink(ob.token ?? '')}?action=coc`;
+
+    await this.mail.send({
+      to: cand.email,
+      subject: 'Company Code of Conduct — your acknowledgement | DBL Group',
+      text: `Dear ${cand.name},\n\nPlease read DBL Group's Code of Conduct and confirm your acknowledgement of it. The form is attached.\n\nSign it here: ${link}\n\nYou will be asked to upload a picture of your signature.\n\nWarm regards,\nCorporate HR Department\nDBL Group`,
+      html: `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#202124;max-width:720px">
+  <p>Dear ${cand.name},</p>
+  <p>Please read DBL Group&rsquo;s Code of Conduct and confirm your acknowledgement of it. The form is attached for your records.</p>
+  <p><a href="${link}" style="color:#1155cc">Open the form and sign it here</a>. You will be asked to upload a picture of your signature.</p>
+  <p style="color:#1155cc;margin-top:20px">Corporate HR Department<br>DBL Group</p>
+</div>`,
+      attachments: pdf
+        ? [
+            {
+              filename: 'DBL Group — Code of Conduct.pdf',
+              content: pdf,
+              contentType: 'application/pdf',
+            },
+          ]
+        : undefined,
+    });
+
+    const updated = await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: { cocSentAt: new Date() },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+      },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'coc_sent',
+    });
+    return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * The candidate signs it, from their own portal.
+   *
+   * Their signature arrives as an image they cropped themselves, so it is
+   * checked for shape before it is drawn into a document that goes in their
+   * personnel file — a square or a full-page scan would letterbox into a
+   * smear. The completed form is filed with their joining documents, which is
+   * where anyone will look for it afterwards.
+   */
+  async publicSignCoc(token: string, file?: UploadedDoc) {
+    if (!file) throw new BadRequestException('Please attach your signature');
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('This link is not valid');
+    if (!ob.cocSentAt) {
+      throw new BadRequestException(
+        'The Code of Conduct has not been sent to you yet.',
+      );
+    }
+    if (ob.cocSignedAt) return { ok: true, alreadySigned: true };
+
+    const size = imageSize(file.buffer);
+    if (!size) {
+      throw new BadRequestException(
+        'That file is not a readable PNG or JPEG image.',
+      );
+    }
+    const ratioError = signatureRatioError(size.width, size.height);
+    if (ratioError) throw new BadRequestException(ratioError);
+
+    const signedAt = new Date();
+    const dataUri = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+    const form = buildCocForm({
+      employeeName: ob.candidate.name,
+      signatureDataUri: dataUri,
+      signedAt,
+    });
+    const pdf = await this.pdf.fromHtml(form, {
+      margin: { top: '16mm', bottom: '14mm', left: '18mm', right: '18mm' },
+      fitToPages: 1,
+    });
+    if (!pdf) {
+      throw new ServiceUnavailableException(
+        'We could not produce your signed form just now. Please try again in a moment.',
+      );
+    }
+
+    const filed = await this.fileWithJoiningDocs(
+      ob.candidate.requisition,
+      ob.candidate.name,
+      {
+        name: `Code of Conduct — ${ob.candidate.name}.pdf`,
+        mimeType: 'application/pdf',
+        buffer: pdf,
+      },
+    );
+
+    await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: {
+        cocSignedAt: signedAt,
+        cocFileId: filed?.id ?? null,
+        cocUrl: filed?.url ?? null,
+      },
+    });
+    if (filed) {
+      // Filed as a document in its own right: it belongs in the candidate's
+      // paperwork, not only in a column. Verified on arrival — the candidate
+      // signed it, there is nothing for HR to check it against.
+      await this.prisma.onboardingDoc.create({
+        data: {
+          onboardingId: ob.id,
+          label: COC_DOC_LABEL,
+          fileId: filed.id,
+          url: filed.url,
+          mimeType: 'application/pdf',
+          status: 'verified',
+        },
+      });
+    }
+
+    const hrIds = await this.permissions.recruitmentRecipients(
+      ob.candidate.requisition.unitFactory,
+      ob.candidate.requisition.recruiterId,
+    );
+    await this.notifications.notifyMany(hrIds, {
+      type: 'onboarding',
+      title: 'Code of Conduct signed',
+      message: `${ob.candidate.name} acknowledged and signed the Code of Conduct.`,
+      link: `/onboarding/manage/${ob.candidateId}`,
+    });
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      { action: 'coc_signed' },
+    );
+    return { ok: true, alreadySigned: false };
+  }
+
   // --- helpers -------------------------------------------------------------
+
+  /**
+   * Put a file in the candidate's own joining-documents folder.
+   *
+   * Everything that belongs to one candidate lands in one folder — the papers
+   * they upload, their medical report, their signed Code of Conduct, the
+   * letters we send them — so that at archive time the whole file moves as a
+   * unit. Returns null when Drive is unavailable rather than throwing: losing
+   * the filing copy must not lose the thing itself.
+   */
+  private async fileWithJoiningDocs(
+    requisition: Parameters<RecruitmentService['ensureWorkspace']>[0],
+    candidateName: string,
+    upload: { name: string; mimeType: string; buffer: Buffer },
+  ): Promise<{ id: string; url: string } | null> {
+    try {
+      const ws = await this.recruitment.ensureWorkspace(requisition);
+      if (!ws) return null;
+      const folder = await this.drive.ensureFolder(
+        `${candidateName} — Joining Docs`,
+        ws.joiningFolderId,
+      );
+      const uploaded = await this.drive.uploadFile(folder, upload);
+      return { id: uploaded.id, url: uploaded.url };
+    } catch (e) {
+      this.logger.warn(
+        `Could not file "${upload.name}" on Drive: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
 
   private publicLink(token: string): string {
     const origin =
@@ -2538,6 +2773,13 @@ export class OnboardingService {
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
       offerDeclinedAt: ob.offerDeclinedAt?.toISOString() ?? null,
       offerDeclineReason: ob.offerDeclineReason,
+      // What final verification is still waiting on, worked out in one place so
+      // the modal cannot disagree with the endpoint that refuses.
+      missingDocs: missingDocs(REQUIRED_DOCS, ob),
+      pendingDocs: pendingDocs(ob),
+      cocSentAt: ob.cocSentAt?.toISOString() ?? null,
+      cocSignedAt: ob.cocSignedAt?.toISOString() ?? null,
+      cocUrl: ob.cocUrl,
       medicalStatus: ob.medicalStatus,
       medicalNote: ob.medicalNote ?? '',
       medicalClearedAt: ob.medicalClearedAt?.toISOString() ?? null,

@@ -11,7 +11,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 
 import { Public } from '../../common/decorators/public.decorator';
-import { PDF_UPLOAD } from '../../common/upload/file-upload';
+import { PDF_UPLOAD, SIGNATURE_UPLOAD } from '../../common/upload/file-upload';
 import { OnboardingService, type UploadedDoc } from './onboarding.service';
 import { DeclineOfferDto, UploadDocDto } from './dto/onboarding.dto';
 
@@ -47,6 +47,15 @@ export class OnboardingPublicController {
   @Post(':token/accept-offer')
   accept(@Param('token') token: string) {
     return this.onboarding.publicAcceptOffer(token);
+  }
+
+  /** Sign the Code of Conduct, with a picture of your signature. */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post(':token/coc')
+  @UseInterceptors(FileInterceptor('file', SIGNATURE_UPLOAD))
+  signCoc(@Param('token') token: string, @UploadedFile() file?: UploadedDoc) {
+    return this.onboarding.publicSignCoc(token, file);
   }
 
   /** Turn the offer down. The reason is required, and HR sees it. */

@@ -898,6 +898,14 @@ model Onboarding {
   verificationSkippedAt DateTime?        @map("verification_skipped_at")
   offerSentAt           DateTime?        @map("offer_sent_at")
   offerAcceptedAt       DateTime?        @map("offer_accepted_at")
+  /// Acknowledgement of the Company Code of Conduct — sent to the candidate,
+  /// signed by them on their own portal with an uploaded e-signature. The
+  /// completed form is filed with their joining documents on Drive, so these
+  /// hold only when it went and where it landed.
+  cocSentAt             DateTime?        @map("coc_sent_at")
+  cocSignedAt           DateTime?        @map("coc_signed_at")
+  cocFileId             String?          @map("coc_file_id")
+  cocUrl                String?          @map("coc_url")
   /// The candidate turned the offer down. Kept as its own timestamp rather
   /// than an OnboardingStatus value so every existing `offerAcceptedAt IS NOT
   /// NULL` gate keeps its exact meaning, and a row can never read as both.

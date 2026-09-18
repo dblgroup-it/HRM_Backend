@@ -251,6 +251,12 @@ export class OnboardingController {
     return this.onboarding.sendAppointmentLetter(id, user.id, dto);
   }
 
+  /** Send the Code of Conduct acknowledgement for the candidate to sign. */
+  @Post('candidates/:id/onboarding/coc/send')
+  sendCoc(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.sendCoc(id, user.id);
+  }
+
   /** HR marks the offer accepted by hand (candidate confirmed in person / by phone). */
   @Post('candidates/:id/onboarding/offer/mark-accepted')
   markOfferAcceptedManually(
