@@ -604,6 +604,14 @@ export class BoardService {
         data: { candidateId, requestedById: userId, ...data },
       });
     }
+
+    // Same reason as sendSheet: the board panel is watched by more than the
+    // person clicking. Without this, a colleague with the candidate open still
+    // sees it awaiting Head of Talent Acquisition after it has been approved.
+    this.notifications.broadcastChange('candidate', candidate.requisitionId, {
+      action: 'board_hr_approved',
+    });
+
     return this.getApprovalStatus(candidateId);
   }
 
@@ -1203,6 +1211,22 @@ export class BoardService {
     });
 
     await this.openSheetStage(batch.id, 'chro');
+    // Tell every open client. Without this the sheet was a silent change:
+    // the tab that sent it could refresh its own cache, but a colleague with
+    // the candidate open — or the same person on the requisition page — kept
+    // showing "awaiting Head of Talent Acquisition" until a manual reload.
+    //
+    // One broadcast per requisition, not per candidate: a sheet of forty from
+    // the same requisition would otherwise fire forty identical invalidations
+    // at every connected browser.
+    for (const requisitionId of new Set(
+      approvals.map((a) => a.candidate.requisitionId),
+    )) {
+      this.notifications.broadcastChange('candidate', requisitionId, {
+        action: 'board_sheet_sent',
+      });
+    }
+
     return { id: batch.id, reference, candidates: approvals.length };
   }
 
