@@ -179,7 +179,12 @@ function shell(body: string): string {
        letterhead. The PDF renderer removes these two blocks instead, because
        there the pad is drawn into every page's margin (see PdfService). */
     @media print {
-      .dbl-letter { max-width: none; padding: 0 }
+      /* !important because the wrapper carries its own inline style, which an
+         email client cannot be trusted to read from a stylesheet — and an
+         inline style outranks any rule here without it. In print the page
+         margin already provides the gutter, so the letter itself takes none:
+         that is what lines the text up with the letterhead above it. */
+      .dbl-letter { max-width: none !important; padding: 0 !important }
     }
   </style>
   <div class="dbl-pad-head">

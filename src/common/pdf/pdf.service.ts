@@ -62,6 +62,13 @@ export class PdfService {
       // `networkidle0` would wait on nothing: the letter carries its images as
       // data URIs, so there is no network to settle.
       await page.setContent(html, { waitUntil: 'domcontentloaded' });
+      // The browser's default 8px body margin (~2.1mm) applies to the document
+      // but not to the header/footer templates, which Chrome renders outside
+      // it — so a letterhead lined up with the page margin sat ~2mm left of the
+      // text below it. Zeroed here rather than in the document's own CSS: that
+      // markup is also injected into the app's review modal, where a rule on
+      // `body` would reach the whole page.
+      await page.addStyleTag({ content: 'html,body{margin:0;padding:0}' });
       if (opts?.stripSelectors?.length) {
         await page.evaluate((selectors: string[]) => {
           for (const sel of selectors) {
