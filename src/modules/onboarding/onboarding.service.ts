@@ -2779,7 +2779,15 @@ export class OnboardingService {
       pendingDocs: pendingDocs(ob),
       cocSentAt: ob.cocSentAt?.toISOString() ?? null,
       cocSignedAt: ob.cocSignedAt?.toISOString() ?? null,
-      cocUrl: ob.cocUrl,
+      // Streamed through the API on a short-lived grant, like every other
+      // joining document. The Drive link is the recruitment account's own and
+      // opens a permission-request screen for anybody else — the file is
+      // deliberately private, so linking to it asked HR to request access to a
+      // document they are entitled to read.
+      cocUrl:
+        this.files.url(ob.cocFileId, 'onboarding-doc', {
+          filename: 'Code of Conduct',
+        }) ?? null,
       medicalStatus: ob.medicalStatus,
       medicalNote: ob.medicalNote ?? '',
       medicalClearedAt: ob.medicalClearedAt?.toISOString() ?? null,
