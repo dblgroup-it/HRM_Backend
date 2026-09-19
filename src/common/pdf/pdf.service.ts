@@ -15,6 +15,30 @@ import type { Browser, Page } from 'puppeteer';
  * handful of times a day, and a long-lived Chromium is a memory leak waiting
  * to happen on a box that is also running the API.
  */
+
+/**
+ * Load puppeteer without TypeScript turning the import back into a require().
+ *
+ * puppeteer 25 ships ESM only — its package "require" condition points at the
+ * same ESM file, and there is no CJS build. This project compiles to CommonJS,
+ * and `await import('puppeteer')` is downlevelled to
+ * `Promise.resolve().then(() => require('puppeteer'))`, which throws
+ * ERR_REQUIRE_ESM on any Node older than 22.12.
+ *
+ * It worked in development purely by accident of version: Node 22.22 permits
+ * require() of ESM, so the same build that threw on the production server
+ * rendered PDFs here. The symptom there was letters arriving inline with the
+ * letterhead broken, because the caller falls back rather than failing.
+ *
+ * Hiding the import inside `new Function` keeps a genuine dynamic import() in
+ * the emitted JavaScript. The alternatives are worse: "module": "node16"
+ * changes how every file in a NestJS app is emitted, and pinning puppeteer to
+ * its last CommonJS release gives up three years of fixes.
+ */
+const importPuppeteer = new Function(
+  'return import("puppeteer")',
+) as () => Promise<typeof import('puppeteer')>;
+
 @Injectable()
 export class PdfService {
   private readonly logger = new Logger(PdfService.name);
@@ -40,7 +64,7 @@ export class PdfService {
     }
     let browser: Browser | undefined;
     try {
-      const puppeteer = await import('puppeteer');
+      const puppeteer = await importPuppeteer();
       browser = await puppeteer.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
@@ -95,7 +119,7 @@ export class PdfService {
   ): Promise<Buffer | null> {
     let browser: Browser | undefined;
     try {
-      const puppeteer = await import('puppeteer');
+      const puppeteer = await importPuppeteer();
       browser = await puppeteer.launch({
         headless: true,
         // --no-sandbox is required where the API runs as root in a container;
