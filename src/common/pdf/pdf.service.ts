@@ -20,6 +20,46 @@ export class PdfService {
   private readonly logger = new Logger(PdfService.name);
 
   /**
+   * Whether a browser can actually be started here.
+   *
+   * Cached: launching one costs about a second, and this is asked on every
+   * page load that offers to send a letter. A failure is re-checked after a
+   * few minutes so installing the browser does not need a restart to take
+   * effect; a success is never re-checked.
+   */
+  private availability: { ok: boolean; at: number } | null = null;
+
+  async isAvailable(): Promise<boolean> {
+    const RETRY_AFTER_MS = 5 * 60 * 1000;
+    if (
+      this.availability &&
+      (this.availability.ok ||
+        Date.now() - this.availability.at < RETRY_AFTER_MS)
+    ) {
+      return this.availability.ok;
+    }
+    let browser: Browser | undefined;
+    try {
+      const puppeteer = await import('puppeteer');
+      browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+      });
+      this.availability = { ok: true, at: Date.now() };
+    } catch (e) {
+      // Logged at warn, with the reason: "letters went out without the PDF"
+      // is otherwise a mystery that only shows up in somebody's inbox.
+      this.logger.warn(
+        `No PDF browser available — letters will be sent inline. ${(e as Error).message}`,
+      );
+      this.availability = { ok: false, at: Date.now() };
+    } finally {
+      await browser?.close().catch(() => undefined);
+    }
+    return this.availability.ok;
+  }
+
+  /**
    * Returns null rather than throwing when the browser cannot start.
    *
    * A missing Chromium must not stop an offer going out — the caller falls

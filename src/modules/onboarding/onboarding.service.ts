@@ -287,6 +287,14 @@ export class OnboardingService {
       aiConfigured: this.ai.isConfigured(),
       aiProvider: this.ai.provider,
       mailConfigured: this.mail.isConfigured(),
+      /**
+       * Whether letters can be produced as PDFs here.
+       *
+       * Surfaced because the fallback is silent otherwise: the letter still
+       * goes, inline, and HR only discovers it by looking in the candidate's
+       * inbox. Better to say so before they send.
+       */
+      pdfReady: await this.pdf.isAvailable(),
       itWebhook: Boolean(this.config.get<string>('it.webhookUrl')),
       requiredDocs: REQUIRED_DOCS,
       optionalDocs: OPTIONAL_DOCS,
