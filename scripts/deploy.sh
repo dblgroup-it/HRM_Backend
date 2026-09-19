@@ -141,6 +141,25 @@ if ! tail -c 4096 "$BACKUP_FILE" | grep -q "PostgreSQL database dump complete"; 
 fi
 step "verified: non-empty and complete ($(du -h "$BACKUP_FILE" | cut -f1))"
 
+# ── 1b. warm the Chromium cache BEFORE stopping anything ─────────────────
+#
+# The offer, appointment, Code of Conduct and reference-check PDFs are rendered
+# by puppeteer, which downloads its own Chromium (~550MB) on `npm ci`. That
+# download would otherwise happen in step 3 — with PM2 already stopped — so a
+# slow link or a proxy would hold the API down for the length of it, and a
+# failed download would leave it down.
+#
+# The browser lives in the user cache, NOT in node_modules, so it survives
+# `npm ci` and this only actually downloads once. Failure here is not fatal:
+# the app falls back to sending letters inline, and PUPPETEER_EXECUTABLE_PATH
+# can point at an installed Chrome or Edge instead.
+log "[1b/6] Ensuring the PDF browser is present (before anything is stopped)"
+if npx --yes puppeteer@"$(node -p "require('$BACKEND_DIR/package.json').dependencies.puppeteer.replace(/^[^0-9]*/,'')" 2>/dev/null || echo latest)" browsers install chrome >/dev/null 2>&1; then
+  step "PDF browser ready"
+else
+  step "could not fetch the PDF browser — letters will send inline until it is installed"
+fi
+
 # ── 2. stop PM2 before npm ci ────────────────────────────────────────────
 log "[2/6] Stopping $PM2_APP (required before npm ci — see header comment)"
 "$PM2" stop "$PM2_APP" 2>/dev/null || step "$PM2_APP was not running — continuing"
