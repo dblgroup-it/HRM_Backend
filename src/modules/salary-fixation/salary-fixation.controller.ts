@@ -1,10 +1,31 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
 
 import {
   AuthUser,
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
+import { FileInterceptor } from '@nestjs/platform-express';
+
+import { PDF_UPLOAD } from '../../common/upload/file-upload';
 import { SalaryFixationService } from './salary-fixation.service';
+
+/** What multer hands back for the uploaded script. */
+interface UploadedSheet {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+}
 import {
   UpsertSalaryFixationDto,
   UpsertScreeningTestsDto,
@@ -45,6 +66,38 @@ export class SalaryFixationController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.salaryFixation.upsertScreeningTests(id, user.id, dto);
+  }
+
+  /**
+   * The marked answer script for a hand-marked screening test.
+   *
+   * `kind` is written | computer. Optional throughout — a mark can still be
+   * recorded without one.
+   */
+  @Post('candidates/:id/screening-tests/:kind/sheet')
+  @UseInterceptors(FileInterceptor('file', PDF_UPLOAD))
+  uploadTestSheet(
+    @Param('id') id: string,
+    @Param('kind') kind: string,
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() file?: UploadedSheet,
+  ) {
+    if (kind !== 'written' && kind !== 'computer') {
+      throw new BadRequestException('Unknown test');
+    }
+    return this.salaryFixation.uploadTestSheet(id, user.id, kind, file);
+  }
+
+  @Delete('candidates/:id/screening-tests/:kind/sheet')
+  removeTestSheet(
+    @Param('id') id: string,
+    @Param('kind') kind: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (kind !== 'written' && kind !== 'computer') {
+      throw new BadRequestException('Unknown test');
+    }
+    return this.salaryFixation.removeTestSheet(id, user.id, kind);
   }
 
   @Post('candidates/:id/salary-fixation/offer')

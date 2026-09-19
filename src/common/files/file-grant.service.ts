@@ -14,6 +14,8 @@ export type FilePurpose =
   | 'medical-report'
   | 'requisition-attachment'
   | 'board-attachment'
+  /** A marked answer script from a hand-marked screening test. */
+  | 'exam-sheet'
   /**
    * A user's e-signature.
    *

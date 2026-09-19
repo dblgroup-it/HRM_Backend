@@ -669,10 +669,17 @@ model SalaryFixation {
   writtenTestEnabled   Boolean @default(false) @map("written_test_enabled")
   writtenTestTotal     Float?  @map("written_test_total")
   writtenTestObtained  Float?  @map("written_test_obtained")
+  /// The marked answer script, scanned and attached — optional, and filed with
+  /// the requisition's interview documents. A mark on its own is somebody's
+  /// word for it; this is what Corporate HR can actually look at.
+  writtenTestSheetId   String? @map("written_test_sheet_id")
+  writtenTestSheetUrl  String? @map("written_test_sheet_url")
   /// Computer Literacy — hand-marked like the Written Test, off unless enabled.
   computerTestEnabled  Boolean @default(false) @map("computer_test_enabled")
   computerTestTotal    Float?  @map("computer_test_total")
   computerTestObtained Float?  @map("computer_test_obtained")
+  computerTestSheetId  String? @map("computer_test_sheet_id")
+  computerTestSheetUrl String? @map("computer_test_sheet_url")
   /// HR can skip Step 2 per candidate; defaults on since it was mandatory-only before this field existed.
   aiTestEnabled        Boolean @default(true) @map("ai_test_enabled")
   aiTestTotal          Float?  @map("ai_test_total")

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { SalaryFixationStatus } from '@prisma/client';
 
@@ -9,6 +10,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { SettingsService, ScreeningConfig } from '../settings/settings.service';
+import { DriveService } from '../integrations/google/drive.service';
+import { RecruitmentService } from '../candidates/recruitment.service';
+import { FileGrantService } from '../../common/files/file-grant.service';
 import {
   bandFromScore,
   bandSalary,
@@ -38,6 +42,9 @@ export class SalaryFixationService {
     private readonly permissions: PermissionsService,
     private readonly notifications: NotificationsService,
     private readonly settings: SettingsService,
+    private readonly drive: DriveService,
+    private readonly recruitment: RecruitmentService,
+    private readonly files: FileGrantService,
   ) {}
 
   async get(candidateId: string, userId: string) {
@@ -367,9 +374,11 @@ export class SalaryFixationService {
       writtenTestEnabled: boolean;
       writtenTestTotal: number | null;
       writtenTestObtained: number | null;
+      writtenTestSheetId?: string | null;
       computerTestEnabled: boolean;
       computerTestTotal: number | null;
       computerTestObtained: number | null;
+      computerTestSheetId?: string | null;
       aiTestEnabled: boolean;
       aiTestTotal: number | null;
       aiTestObtained: number | null;
@@ -472,9 +481,17 @@ export class SalaryFixationService {
       writtenTestEnabled: base.writtenTestEnabled,
       writtenTestTotal: base.writtenTestTotal,
       writtenTestObtained: base.writtenTestObtained,
+      writtenTestSheetUrl: this.sheetUrl(
+        base.writtenTestSheetId,
+        'Written Test',
+      ),
       computerTestEnabled: base.computerTestEnabled,
       computerTestTotal: base.computerTestTotal,
       computerTestObtained: base.computerTestObtained,
+      computerTestSheetUrl: this.sheetUrl(
+        base.computerTestSheetId,
+        'Computer Literacy',
+      ),
       aiTestEnabled: base.aiTestEnabled,
       aiTestTotal: base.aiTestTotal,
       aiTestObtained: base.aiTestObtained,
@@ -582,10 +599,18 @@ export class SalaryFixationService {
       writtenTestTotal: saved.writtenTestTotal,
       writtenTestObtained: saved.writtenTestObtained,
       writtenTestPassPct: screening.writtenTestPassPct,
+      writtenTestSheetUrl: this.sheetUrl(
+        saved.writtenTestSheetId,
+        'Written Test',
+      ),
       computerTestEnabled: saved.computerTestEnabled,
       computerTestTotal: saved.computerTestTotal,
       computerTestObtained: saved.computerTestObtained,
       computerTestPassPct: screening.computerTestPassPct,
+      computerTestSheetUrl: this.sheetUrl(
+        saved.computerTestSheetId,
+        'Computer Literacy',
+      ),
       aiTestEnabled: saved.aiTestEnabled,
       aiTestTotal: saved.aiTestTotal,
       aiTestObtained: saved.aiTestObtained,
@@ -623,15 +648,140 @@ export class SalaryFixationService {
       writtenTestTotal: saved?.writtenTestTotal ?? null,
       writtenTestObtained: saved?.writtenTestObtained ?? null,
       writtenTestPassPct: screening.writtenTestPassPct,
+      writtenTestSheetUrl: this.sheetUrl(
+        saved?.writtenTestSheetId,
+        'Written Test',
+      ),
       computerTestEnabled: saved?.computerTestEnabled ?? false,
       computerTestTotal: saved?.computerTestTotal ?? null,
       computerTestObtained: saved?.computerTestObtained ?? null,
       computerTestPassPct: screening.computerTestPassPct,
+      computerTestSheetUrl: this.sheetUrl(
+        saved?.computerTestSheetId,
+        'Computer Literacy',
+      ),
       aiTestEnabled: saved?.aiTestEnabled ?? true,
       aiTestTotal: saved?.aiTestTotal ?? null,
       aiTestObtained: saved?.aiTestObtained ?? null,
       aiTestPassPct: screening.aiTestPassPct,
     };
+  }
+
+  /**
+   * Attach the marked answer script to a hand-marked screening test.
+   *
+   * Optional, and deliberately so: these tests were always markable without
+   * one, and a factory interviewer with no scanner must not be blocked from
+   * recording a mark. When it is attached, Corporate HR and the recruiter can
+   * open it beside the mark rather than taking the number on trust.
+   *
+   * Filed in the requisition's own "03 Interview Docs" folder, because that is
+   * where the rest of the interview paperwork for this post lives.
+   */
+  async uploadTestSheet(
+    candidateId: string,
+    userId: string,
+    kind: 'written' | 'computer',
+    file?: { buffer: Buffer; mimetype: string; originalname: string },
+  ) {
+    if (!file) throw new BadRequestException('Please attach the exam sheet');
+    const cand = await this.requireScreeningAccess(candidateId, userId);
+
+    const ws = await this.recruitment.ensureWorkspace(cand.requisition);
+    if (!ws) {
+      throw new ServiceUnavailableException(
+        'Document storage is unavailable just now. Please try again in a moment.',
+      );
+    }
+    const label = kind === 'written' ? 'Written Test' : 'Computer Literacy';
+    const folder = await this.drive.ensureFolder(
+      `${cand.name} — Test Sheets`,
+      ws.interviewFolderId,
+    );
+    const uploaded = await this.drive.uploadFile(folder, {
+      name: `${label} — ${cand.name}.pdf`,
+      mimeType: file.mimetype,
+      buffer: file.buffer,
+    });
+
+    await this.prisma.salaryFixation.upsert({
+      where: { candidateId },
+      create: {
+        candidateId,
+        ...(kind === 'written'
+          ? {
+              writtenTestSheetId: uploaded.id,
+              writtenTestSheetUrl: uploaded.url,
+            }
+          : {
+              computerTestSheetId: uploaded.id,
+              computerTestSheetUrl: uploaded.url,
+            }),
+      },
+      update:
+        kind === 'written'
+          ? {
+              writtenTestSheetId: uploaded.id,
+              writtenTestSheetUrl: uploaded.url,
+            }
+          : {
+              computerTestSheetId: uploaded.id,
+              computerTestSheetUrl: uploaded.url,
+            },
+    });
+
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'test_sheet',
+    });
+    return this.getScreeningTests(candidateId, userId);
+  }
+
+  /**
+   * Detach it — the wrong file, or the wrong candidate's script.
+   *
+   * The file itself stays on Drive: deleting someone's marked paper because a
+   * link was wrong is not a decision this button should be able to make.
+   */
+  async removeTestSheet(
+    candidateId: string,
+    userId: string,
+    kind: 'written' | 'computer',
+  ) {
+    await this.requireScreeningAccess(candidateId, userId);
+    await this.prisma.salaryFixation.update({
+      where: { candidateId },
+      data:
+        kind === 'written'
+          ? { writtenTestSheetId: null, writtenTestSheetUrl: null }
+          : { computerTestSheetId: null, computerTestSheetUrl: null },
+    });
+    return this.getScreeningTests(candidateId, userId);
+  }
+
+  /**
+   * Served through a signed grant, never the Drive link.
+   *
+   * The interview folder is private to the recruitment account, so a Drive URL
+   * would show everyone else Google's request-access screen for a document
+   * they are entitled to read.
+   */
+  private sheetUrl(fileId: string | null | undefined, label: string) {
+    return this.files.url(fileId, 'exam-sheet', { filename: label }) ?? null;
+  }
+
+  /** Whoever may mark the test may attach its script: the delegate, or recruitment. */
+  private async requireScreeningAccess(candidateId: string, userId: string) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      include: { requisition: true },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    if (
+      !(await this.permissions.hasInterviewDelegation(userId, { candidateId }))
+    ) {
+      await this.requireRecruitmentAccess(cand.requisition, userId);
+    }
+    return cand;
   }
 
   private async requireCandidate(candidateId: string, userId: string) {
