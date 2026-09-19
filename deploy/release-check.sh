@@ -32,12 +32,55 @@ fi
 # ── refuse to run while an app is live ──────────────────────────────────────
 # `npm ci` deletes node_modules. See the header comment: on Windows that
 # corrupts the tree under a running process instead of failing cleanly.
-if [ "${ALLOW_LIVE_NPM_CI:-0}" != "1" ] && command -v pm2 >/dev/null 2>&1; then
-  LIVE="$(pm2 jlist 2>/dev/null \
-    | tr ',' '\n' \
-    | grep -c '"status":"online"' || true)"
+#
+# This guard used to start with `command -v pm2`, which is exactly wrong on the
+# machine it exists to protect: pm2 is NOT on PATH inside Git Bash on the
+# production server (deploy.sh carries its own locate_pm2 for that reason), so
+# the guard skipped itself and the gates ran `npm ci` against the live app —
+# the very thing it was written to prevent. Found on 2026-09-19, by which point
+# it had already half-deleted node_modules under a running process once.
+#
+# So: find pm2 the way deploy.sh does, and — because that can still come up
+# empty — also ask the only question that matters regardless of pm2, which is
+# whether anything is actually serving the API port.
+locate_pm2() {
+  if command -v pm2 >/dev/null 2>&1; then command -v pm2; return 0; fi
+  local npm_prefix c
+  npm_prefix="$(npm config get prefix 2>/dev/null | tr -d '\r')"
+  for c in "$npm_prefix/pm2.cmd" "$npm_prefix/pm2" \
+           "/c/Users/Administrator/AppData/Roaming/npm/pm2.cmd"; do
+    if [ -x "$c" ] || [ -f "$c" ]; then printf '%s' "$c"; return 0; fi
+  done
+  return 1
+}
+
+api_port_busy() {
+  local port="${PORT:-4000}"
+  # Whichever of these exists on the box; silence is "nothing listening".
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti:"$port" 2>/dev/null | grep -q . && return 0
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -ano 2>/dev/null | grep -qE "[:.]${port}[[:space:]]+.*LISTEN" && return 0
+  fi
+  return 1
+}
+
+if [ "${ALLOW_LIVE_NPM_CI:-0}" != "1" ]; then
+  LIVE=0
+  if PM2_BIN="$(locate_pm2)"; then
+    LIVE="$("$PM2_BIN" jlist 2>/dev/null \
+      | tr ',' '\n' \
+      | grep -c '"status":"online"' || true)"
+  fi
+  # A listening API port is a live app whatever pm2 says — and it is the
+  # condition that actually makes `npm ci` destructive here.
+  if [ "${LIVE:-0}" -eq 0 ] && api_port_busy; then
+    LIVE=1
+    printf '\n\033[33mNote\033[0m — pm2 reported nothing, but port %s is being served.\n' "${PORT:-4000}" >&2
+  fi
   if [ "${LIVE:-0}" -gt 0 ]; then
-    printf '\n\033[31mREFUSING TO RUN\033[0m — %s PM2 process(es) are online.\n' "$LIVE" >&2
+    printf '\n\033[31mREFUSING TO RUN\033[0m — the app appears to be live (%s signal(s)).\n' "$LIVE" >&2
     printf '\n' >&2
     printf 'The gates run `npm ci`, which deletes node_modules. A live process holds\n' >&2
     printf 'those files open, so the delete half-succeeds and the app cannot restart.\n' >&2
