@@ -11,6 +11,8 @@ import {
   CRITERIA,
   TOTAL_MAX,
 } from '../salary-fixation/salary-fixation.constants';
+import { SettingsService } from '../settings/settings.service';
+import { FileGrantService } from '../../common/files/file-grant.service';
 import { AddCommitteeMemberDto } from './dto/assessment.dto';
 
 @Injectable()
@@ -19,6 +21,8 @@ export class AssessmentService {
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
     private readonly ai: AiGraderService,
+    private readonly settings: SettingsService,
+    private readonly files: FileGrantService,
   ) {}
 
   async getSetup(reqId: string, userId: string) {
@@ -63,15 +67,24 @@ export class AssessmentService {
         deletedAt: null,
       },
       include: {
-        interviews: { include: { evaluations: true } },
+        interviews: {
+          include: {
+            evaluations: { include: { evaluator: { select: { name: true } } } },
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
 
+    // The scorecard is read as "show me the working", so it carries every
+    // component that made the number rather than the number alone.
     const salaryFixations = await this.prisma.salaryFixation.findMany({
       where: { candidateId: { in: candidates.map((c) => c.id) } },
-      select: { candidateId: true, aiTestTotal: true, aiTestObtained: true },
     });
+    const fxByCandidate = new Map(
+      salaryFixations.map((s) => [s.candidateId, s]),
+    );
+    const screening = await this.settings.getScreeningConfig();
     const aiScoreByCandidate = new Map(
       salaryFixations
         .filter(
@@ -113,6 +126,7 @@ export class AssessmentService {
           ? round1(components.reduce((a, b) => a + b, 0) / components.length)
           : null;
 
+      const fx = fxByCandidate.get(c.id);
       return {
         candidateId: c.id,
         candidateName: c.name,
@@ -121,8 +135,86 @@ export class AssessmentService {
         aiProficiencyScore,
         interviewAvg,
         combined,
+        // Each hand-marked test as its own line: the mark, what it was out of,
+        // whether it passed, and the marked script if one was attached.
+        written: this.testDetail(
+          fx?.writtenTestEnabled ?? false,
+          fx?.writtenTestTotal ?? null,
+          fx?.writtenTestObtained ?? null,
+          screening.writtenTestPassPct,
+          fx?.writtenTestSheetId ?? null,
+          'Written Test',
+        ),
+        computer: this.testDetail(
+          fx?.computerTestEnabled ?? false,
+          fx?.computerTestTotal ?? null,
+          fx?.computerTestObtained ?? null,
+          screening.computerTestPassPct,
+          fx?.computerTestSheetId ?? null,
+          'Computer Literacy',
+        ),
+        aiTest: this.testDetail(
+          fx?.aiTestEnabled ?? true,
+          fx?.aiTestTotal ?? null,
+          fx?.aiTestObtained ?? null,
+          screening.aiTestPassPct,
+          null,
+          'AI Proficiency',
+        ),
+        // Who marked, in which round, and what they gave — an average hides a
+        // panel that disagreed, which is exactly what a reader wants to see.
+        interviewers: allEvals
+          .map((e) => ({
+            evaluatorName: e.evaluator.name,
+            roundKind:
+              c.interviews
+                .find((r) => r.evaluations.some((x) => x.id === e.id))
+                ?.kind.toLowerCase() ?? null,
+            total: round1(e.total),
+            max: TOTAL_MAX,
+            pct: round1((e.total / TOTAL_MAX) * 100),
+            submittedAt: e.submittedAt.toISOString(),
+          }))
+          .sort((a, b) => a.evaluatorName.localeCompare(b.evaluatorName)),
       };
     });
+  }
+
+  /**
+   * One screening test, as the scorecard shows it.
+   *
+   * `status` is the same three-way the marking panel uses — skipped, pending,
+   * or a verdict — so the two surfaces cannot tell the reader different things
+   * about the same mark.
+   */
+  private testDetail(
+    enabled: boolean,
+    total: number | null,
+    obtained: number | null,
+    passPct: number,
+    sheetFileId: string | null,
+    label: string,
+  ) {
+    const pct =
+      total !== null && obtained !== null && total > 0
+        ? round1((obtained / total) * 100)
+        : null;
+    const status = !enabled
+      ? ('skipped' as const)
+      : pct === null
+        ? ('pending' as const)
+        : pct >= passPct
+          ? ('pass' as const)
+          : ('fail' as const);
+    return {
+      enabled,
+      total,
+      obtained,
+      pct,
+      passPct,
+      status,
+      sheetUrl: this.files.url(sheetFileId, 'exam-sheet', { filename: label }),
+    };
   }
 
   async saveNotes(reqId: string, notes: string, userId: string) {

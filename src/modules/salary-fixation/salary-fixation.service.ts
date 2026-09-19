@@ -13,6 +13,7 @@ import { SettingsService, ScreeningConfig } from '../settings/settings.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
 import { FileGrantService } from '../../common/files/file-grant.service';
+import { lockedMarkConflicts, lockedMarkMessage } from './screening-lock';
 import {
   bandFromScore,
   bandSalary,
@@ -540,15 +541,29 @@ export class SalaryFixationService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    if (
-      !(await this.permissions.hasInterviewDelegation(userId, { candidateId }))
-    ) {
+    const viaDelegation = await this.permissions.hasInterviewDelegation(
+      userId,
+      {
+        candidateId,
+      },
+    );
+    if (!viaDelegation) {
       await this.requireRecruitmentAccess(cand.requisition, userId);
     }
 
     const existing = await this.prisma.salaryFixation.findUnique({
       where: { candidateId },
     });
+
+    // A delegate marks once. See screening-lock.ts for why — and note the
+    // check is skipped for recruitment, who are the ones a correction goes
+    // through.
+    if (viaDelegation) {
+      const locked = lockedMarkConflicts(existing, dto);
+      if (locked.length) {
+        throw new BadRequestException(lockedMarkMessage(locked));
+      }
+    }
     const pick = <T>(next: T | undefined, current: T, fallback: T): T =>
       next !== undefined ? next : (current ?? fallback);
 
@@ -603,6 +618,10 @@ export class SalaryFixationService {
         saved.writtenTestSheetId,
         'Written Test',
       ),
+      // Returned by the save as well as the read: the dialog updates its cache
+      // from this response, so without it the inputs stay open until a refetch
+      // and the delegate is invited to make an edit the server will refuse.
+      writtenTestLocked: viaDelegation && saved.writtenTestObtained != null,
       computerTestEnabled: saved.computerTestEnabled,
       computerTestTotal: saved.computerTestTotal,
       computerTestObtained: saved.computerTestObtained,
@@ -611,6 +630,7 @@ export class SalaryFixationService {
         saved.computerTestSheetId,
         'Computer Literacy',
       ),
+      computerTestLocked: viaDelegation && saved.computerTestObtained != null,
       aiTestEnabled: saved.aiTestEnabled,
       aiTestTotal: saved.aiTestTotal,
       aiTestObtained: saved.aiTestObtained,
@@ -632,9 +652,13 @@ export class SalaryFixationService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    if (
-      !(await this.permissions.hasInterviewDelegation(userId, { candidateId }))
-    ) {
+    const viaDelegation = await this.permissions.hasInterviewDelegation(
+      userId,
+      {
+        candidateId,
+      },
+    );
+    if (!viaDelegation) {
       await this.requireRecruitmentAccess(cand.requisition, userId);
     }
 
@@ -652,6 +676,8 @@ export class SalaryFixationService {
         saved?.writtenTestSheetId,
         'Written Test',
       ),
+      /** True when this reader may no longer change the mark — see screening-lock.ts. */
+      writtenTestLocked: viaDelegation && saved?.writtenTestObtained != null,
       computerTestEnabled: saved?.computerTestEnabled ?? false,
       computerTestTotal: saved?.computerTestTotal ?? null,
       computerTestObtained: saved?.computerTestObtained ?? null,
@@ -660,6 +686,7 @@ export class SalaryFixationService {
         saved?.computerTestSheetId,
         'Computer Literacy',
       ),
+      computerTestLocked: viaDelegation && saved?.computerTestObtained != null,
       aiTestEnabled: saved?.aiTestEnabled ?? true,
       aiTestTotal: saved?.aiTestTotal ?? null,
       aiTestObtained: saved?.aiTestObtained ?? null,
