@@ -31,6 +31,7 @@ import {
   MedicalDecisionDto,
   MedicalDecisionBulkDto,
   SendMedicalLetterDto,
+  EmployeeIdDto,
 } from './dto/onboarding.dto';
 
 /** Phase 4 & 5 — document verification, offer & onboarding (authenticated HR). */
@@ -249,6 +250,16 @@ export class OnboardingController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.onboarding.sendAppointmentLetter(id, user.id, dto);
+  }
+
+  /** Assign this candidate their DBL employee ID. */
+  @Patch('candidates/:id/onboarding/employee-id')
+  setEmployeeId(
+    @Param('id') id: string,
+    @Body() dto: EmployeeIdDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.onboarding.setEmployeeId(id, user.id, dto.employeeId);
   }
 
   /** Send the Code of Conduct acknowledgement for the candidate to sign. */

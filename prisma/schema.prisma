@@ -598,6 +598,10 @@ model Candidate {
   createdById           String?                @map("created_by_id")
   createdBy             User?                  @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Bdjobs inbound: unique per Bdjobs application — used for deduplication.
+  /// The DBL employee ID, assigned by the recruiter once the hire is settled.
+  /// It is the number the Code of Conduct and the personnel file are filed
+  /// under, so it lives on the candidate rather than in one form's fields.
+  employeeId            String?                @map("employee_id") @db.VarChar(30)
   bdjobsApplicationId   String?                @unique @map("bdjobs_application_id") @db.VarChar(100)
   /// Bdjobs inbound: the applicant's Bdjobs profile ID.
   bdjobsApplicantId     String?                @map("bdjobs_applicant_id") @db.VarChar(100)
@@ -915,6 +919,12 @@ model Onboarding {
   cocSignedAt           DateTime?        @map("coc_signed_at")
   cocFileId             String?          @map("coc_file_id")
   cocUrl                String?          @map("coc_url")
+  /// What the candidate told us when they accepted: the date they expect to
+  /// join, and the copy they signed by hand. Both are theirs to give, so they
+  /// sit beside offerAcceptedAt rather than on the letter's own fields.
+  offerJoiningTentative DateTime?        @map("offer_joining_tentative")
+  offerSignedFileId     String?          @map("offer_signed_file_id")
+  offerSignedUrl        String?          @map("offer_signed_url")
   /// The candidate turned the offer down. Kept as its own timestamp rather
   /// than an OnboardingStatus value so every existing `offerAcceptedAt IS NOT
   /// NULL` gate keeps its exact meaning, and a row can never read as both.

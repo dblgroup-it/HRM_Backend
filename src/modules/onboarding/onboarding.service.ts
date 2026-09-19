@@ -106,12 +106,29 @@ export const MEDICAL_DUE: Prisma.OnboardingWhereInput = {
 /** The signed Code of Conduct, filed like any other joining document. */
 export const COC_DOC_LABEL = 'Code of Conduct (signed)';
 
+/**
+ * The candidate's e-signature, collected as a joining document.
+ *
+ * It is a document like the rest — the candidate uploads it once, here — and
+ * every form that needs a signature (the Code of Conduct, the offer
+ * acceptance) reads it from this one place rather than asking again.
+ */
+export const SIGNATURE_DOC_LABEL = 'Signature (3:1 image)';
+
+/**
+ * DBL's joining-document checklist, in the order HR reads it out.
+ *
+ * Transcribed from their list. The three marked "For Experienced Candidates"
+ * are in OPTIONAL_DOCS instead: a fresher has none of them, and a checklist
+ * that can never be completed stops meaning anything.
+ */
 export const REQUIRED_DOCS = [
-  'National ID / Passport',
-  'Academic Certificates / Marksheet',
-  'Experience / Release Letter',
-  'Address Proof',
-  'Passport-size Photo',
+  'Four Passport-size photographs, white background (lab print)',
+  'All relevant education certificates and marksheets (main copy & photocopy)',
+  'Experience certificates',
+  'Copy of NID & Birth Registration / Passport (at least one)',
+  'Copy of residence proof (any government bill)',
+  SIGNATURE_DOC_LABEL,
 ];
 
 /**
@@ -126,7 +143,11 @@ export const REQUIRED_DOCS = [
  * They are uploaded, stored and verified exactly like the rest; they simply do
  * not hold anything up by being absent.
  */
-export const OPTIONAL_DOCS = ['Pay Slip / Salary Certificate'];
+export const OPTIONAL_DOCS = [
+  'Relieving letter and last pay slip from the previous employer (experienced candidates)',
+  'Copy of TIN / last tax return submission (experienced candidates, if any)',
+  'Pay slip / salary certificate / statement (experienced candidates)',
+];
 
 /** Multer file subset we use for document uploads. */
 export interface UploadedDoc {
@@ -276,6 +297,8 @@ export class OnboardingService {
         phone: cand.phone ?? '',
         stage: cand.stage.toLowerCase(),
         source: cand.source,
+        /** Assigned by the recruiter; printed on the Code of Conduct. */
+        employeeId: cand.employeeId,
         matchScore: cand.matchScore,
         matchSummary: cand.matchSummary ?? '',
         requisitionId: cand.requisitionId,
@@ -1504,7 +1527,9 @@ export class OnboardingService {
     // The reference is issued once and kept. A re-send — a candidate who lost
     // the email, a corrected time — must not produce a second number for the
     // same person, because the clinic files by it.
-    let refNo = ob.medicalRefNo;
+    // HR can type the reference — DBL's register lives partly on paper, and a
+    // letter must be able to carry the number that register already gave it.
+    let refNo = dto.refNo?.trim() || ob.medicalRefNo;
     if (!refNo) {
       const [{ nextval }] = await this.prisma.$queryRaw<{ nextval: bigint }[]>`
         SELECT nextval('medical_test_ref_seq')
@@ -1586,11 +1611,11 @@ export class OnboardingService {
     }
 
     if (toCandidate && ob.candidate.email) {
-      const mail = buildCandidateMedicalEmail({ examAt, venue });
+      const mail = buildCandidateMedicalEmail({ examAt, venue, refNo });
       try {
         await this.mail.send({
           to: ob.candidate.email,
-          subject: 'Pre-employment Medical Test | DBL Group',
+          subject: `Pre-employment Medical Test${refNo ? ` | ${refNo}` : ''} | DBL Group`,
           text: mail.text,
           html: mail.html,
         });
@@ -2030,6 +2055,9 @@ export class OnboardingService {
       offerDeclineReason: ob.offerDeclineReason,
       cocSentAt: ob.cocSentAt?.toISOString() ?? null,
       cocSignedAt: ob.cocSignedAt?.toISOString() ?? null,
+      offerJoiningTentative: ob.offerJoiningTentative?.toISOString() ?? null,
+      offerSignedAt: ob.offerSignedFileId ? true : false,
+      signatureOnFile: ob.docs.some((d) => d.label === SIGNATURE_DOC_LABEL),
       submitted: ob.docs.map((d) => ({
         id: d.id,
         label: d.label,
@@ -2041,6 +2069,22 @@ export class OnboardingService {
   async publicUpload(token: string, label: string, file?: UploadedDoc) {
     if (!file) throw new BadRequestException('Please attach a file');
     if (!label?.trim()) throw new BadRequestException('Missing document label');
+
+    // One item on the checklist is a picture rather than a document, and it is
+    // the one every later form signs with — so its shape is checked here,
+    // where it arrives, rather than at each place it is used.
+    if (label.trim() === SIGNATURE_DOC_LABEL) {
+      const size = imageSize(file.buffer);
+      if (!size) {
+        throw new BadRequestException(
+          'Your signature must be a PNG or JPEG image.',
+        );
+      }
+      const ratioError = signatureRatioError(size.width, size.height);
+      if (ratioError) throw new BadRequestException(ratioError);
+    } else if (file.mimetype !== 'application/pdf') {
+      throw new BadRequestException('Please upload this document as a PDF.');
+    }
     const ob = await this.prisma.onboarding.findFirst({
       where: tokenLookupWhere(token),
       include: { candidate: { include: { requisition: true } } },
@@ -2106,7 +2150,87 @@ export class OnboardingService {
     return { ok: true };
   }
 
-  async publicAcceptOffer(token: string) {
+  /**
+   * Download the offer letter from the candidate's own page.
+   *
+   * Rendered from the letter that was sent, so what they print and sign is the
+   * document they were emailed rather than a fresh one that may have moved on.
+   */
+  async publicOfferLetterPdf(token: string): Promise<Buffer | null> {
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
+      select: { offerLetterHtml: true, offerSentAt: true },
+    });
+    if (!ob?.offerSentAt || !ob.offerLetterHtml) {
+      throw new NotFoundException('No offer letter has been issued yet');
+    }
+    return this.pdf.fromHtml(ob.offerLetterHtml, {
+      headerHtml: letterheadHeaderHtml(),
+      footerHtml: letterheadFooterHtml(),
+      margin: { ...LETTERHEAD_PDF_MARGIN },
+      stripSelectors: [...LETTERHEAD_IN_FLOW_SELECTORS],
+      fitToPages: 1,
+    });
+  }
+
+  /**
+   * The candidate returns their signed copy of the offer.
+   *
+   * Optional, and separate from accepting: plenty of people accept online and
+   * post the signed paper later, and a system that refuses the acceptance
+   * until the scan arrives simply loses the acceptance.
+   */
+  async publicUploadSignedOffer(token: string, file?: UploadedDoc) {
+    if (!file) throw new BadRequestException('Please attach the signed offer');
+    if (file.mimetype !== 'application/pdf') {
+      throw new BadRequestException('Please upload the signed offer as a PDF.');
+    }
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('This link is not valid');
+    if (!ob.offerSentAt) {
+      throw new BadRequestException('No offer has been sent to you yet');
+    }
+
+    const filed = await this.fileWithJoiningDocs(
+      ob.candidate.requisition,
+      ob.candidate.name,
+      {
+        name: `Offer Letter — signed by ${ob.candidate.name}.pdf`,
+        mimeType: 'application/pdf',
+        buffer: file.buffer,
+      },
+    );
+    if (!filed) {
+      throw new ServiceUnavailableException(
+        'We could not file that just now. Please try again in a moment.',
+      );
+    }
+    await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: { offerSignedFileId: filed.id, offerSignedUrl: filed.url },
+    });
+    const hrIds = await this.permissions.recruitmentRecipients(
+      ob.candidate.requisition.unitFactory,
+      ob.candidate.requisition.recruiterId,
+    );
+    await this.notifications.notifyMany(hrIds, {
+      type: 'onboarding',
+      title: 'Signed offer received',
+      message: `${ob.candidate.name} returned their signed offer letter.`,
+      link: `/onboarding/manage/${ob.candidateId}`,
+    });
+    this.notifications.broadcastChange(
+      'candidate',
+      ob.candidate.requisitionId,
+      { action: 'offer_signed_uploaded' },
+    );
+    return { ok: true };
+  }
+
+  async publicAcceptOffer(token: string, joiningTentative?: string) {
     const ob = await this.prisma.onboarding.findFirst({
       where: tokenLookupWhere(token),
       include: { candidate: { include: { requisition: true } } },
@@ -2119,10 +2243,20 @@ export class OnboardingService {
         'You have already declined this offer. Please contact DBL Group HR if you would like to reconsider.',
       );
     }
+    // The date they expect to start. Asked for at acceptance because that is
+    // the moment they know it, and HR plans joining formalities around it.
+    const tentative = joiningTentative ? new Date(joiningTentative) : null;
+    if (joiningTentative && Number.isNaN(tentative!.getTime())) {
+      throw new BadRequestException('That joining date is not a valid date.');
+    }
     if (!ob.offerAcceptedAt) {
       await this.prisma.onboarding.update({
         where: { id: ob.id },
-        data: { offerAcceptedAt: new Date(), status: 'offer_accepted' },
+        data: {
+          offerAcceptedAt: new Date(),
+          status: 'offer_accepted',
+          ...(tentative ? { offerJoiningTentative: tentative } : {}),
+        },
       });
       // Offer accepted → notify Head of Talent Acquisition + medical officers (triggers medical).
       const unit = ob.candidate.requisition.unitFactory;
@@ -2216,6 +2350,40 @@ export class OnboardingService {
     return { ok: true, alreadyDeclined: false };
   }
 
+  /**
+   * The DBL employee ID for this hire, set by the recruiter.
+   *
+   * Lives on the candidate, not on a form: the Code of Conduct prints it, the
+   * personnel file is filed under it, and a number typed separately into each
+   * of those is a number that will disagree with itself.
+   */
+  async setEmployeeId(candidateId: string, userId: string, employeeId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const value = employeeId.trim();
+    if (!value) {
+      throw new BadRequestException(
+        'Enter the employee ID, or leave it unset.',
+      );
+    }
+    const clash = await this.prisma.candidate.findFirst({
+      where: { employeeId: value, id: { not: cand.id }, deletedAt: null },
+      select: { name: true },
+    });
+    if (clash) {
+      throw new BadRequestException(
+        `That employee ID is already assigned to ${clash.name}.`,
+      );
+    }
+    await this.prisma.candidate.update({
+      where: { id: cand.id },
+      data: { employeeId: value },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'employee_id',
+    });
+    return this.getByCandidate(candidateId, userId);
+  }
+
   // --- Code of Conduct -----------------------------------------------------
 
   /**
@@ -2290,11 +2458,25 @@ export class OnboardingService {
    * smear. The completed form is filed with their joining documents, which is
    * where anyone will look for it afterwards.
    */
-  async publicSignCoc(token: string, file?: UploadedDoc) {
-    if (!file) throw new BadRequestException('Please attach your signature');
+  /**
+   * The candidate acknowledges the Code of Conduct.
+   *
+   * No upload: their signature was collected once with their joining
+   * documents, and asking for it again is asking the same person for the same
+   * picture twice. It is read from that document and drawn onto the form.
+   *
+   * The acknowledgement is recorded BEFORE the PDF is produced. Rendering
+   * needs a browser, and a browser that will not start is our problem, not a
+   * reason to refuse what the candidate just did — HR can re-file the form
+   * afterwards, but nobody can un-say the acknowledgement.
+   */
+  async publicAcknowledgeCoc(token: string) {
     const ob = await this.prisma.onboarding.findFirst({
       where: tokenLookupWhere(token),
-      include: { candidate: { include: { requisition: true } } },
+      include: {
+        candidate: { include: { requisition: true } },
+        docs: true,
+      },
     });
     if (!ob) throw new NotFoundException('This link is not valid');
     if (!ob.cocSentAt) {
@@ -2304,64 +2486,69 @@ export class OnboardingService {
     }
     if (ob.cocSignedAt) return { ok: true, alreadySigned: true };
 
-    const size = imageSize(file.buffer);
-    if (!size) {
+    const signature = ob.docs.find((d) => d.label === SIGNATURE_DOC_LABEL);
+    if (!signature?.fileId) {
       throw new BadRequestException(
-        'That file is not a readable PNG or JPEG image.',
+        'Please upload your signature in the documents list above first — it is used to sign this form.',
       );
     }
-    const ratioError = signatureRatioError(size.width, size.height);
-    if (ratioError) throw new BadRequestException(ratioError);
 
     const signedAt = new Date();
-    const dataUri = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-    const form = buildCocForm({
-      employeeName: ob.candidate.name,
-      signatureDataUri: dataUri,
-      signedAt,
-    });
-    const pdf = await this.pdf.fromHtml(form, {
-      margin: { top: '16mm', bottom: '14mm', left: '18mm', right: '18mm' },
-      fitToPages: 1,
-    });
-    if (!pdf) {
-      throw new ServiceUnavailableException(
-        'We could not produce your signed form just now. Please try again in a moment.',
-      );
-    }
-
-    const filed = await this.fileWithJoiningDocs(
-      ob.candidate.requisition,
-      ob.candidate.name,
-      {
-        name: `Code of Conduct — ${ob.candidate.name}.pdf`,
-        mimeType: 'application/pdf',
-        buffer: pdf,
-      },
-    );
-
     await this.prisma.onboarding.update({
       where: { id: ob.id },
-      data: {
-        cocSignedAt: signedAt,
-        cocFileId: filed?.id ?? null,
-        cocUrl: filed?.url ?? null,
-      },
+      data: { cocSignedAt: signedAt },
     });
-    if (filed) {
-      // Filed as a document in its own right: it belongs in the candidate's
-      // paperwork, not only in a column. Verified on arrival — the candidate
-      // signed it, there is nothing for HR to check it against.
-      await this.prisma.onboardingDoc.create({
-        data: {
-          onboardingId: ob.id,
-          label: COC_DOC_LABEL,
-          fileId: filed.id,
-          url: filed.url,
-          mimeType: 'application/pdf',
-          status: 'verified',
-        },
+
+    // Everything below is filing, and filing is allowed to fail.
+    try {
+      const { buffer, mimeType } = await this.drive.getFileBuffer(
+        signature.fileId,
+      );
+      const form = buildCocForm({
+        employeeName: ob.candidate.name,
+        employeeId: ob.candidate.employeeId,
+        signatureDataUri: `data:${mimeType};base64,${buffer.toString('base64')}`,
+        signedAt,
       });
+      const pdf = await this.pdf.fromHtml(form, {
+        margin: { top: '16mm', bottom: '14mm', left: '18mm', right: '18mm' },
+        fitToPages: 1,
+      });
+      if (pdf) {
+        const filed = await this.fileWithJoiningDocs(
+          ob.candidate.requisition,
+          ob.candidate.name,
+          {
+            name: `Code of Conduct — ${ob.candidate.name}.pdf`,
+            mimeType: 'application/pdf',
+            buffer: pdf,
+          },
+        );
+        if (filed) {
+          await this.prisma.onboarding.update({
+            where: { id: ob.id },
+            data: { cocFileId: filed.id, cocUrl: filed.url },
+          });
+          await this.prisma.onboardingDoc.create({
+            data: {
+              onboardingId: ob.id,
+              label: COC_DOC_LABEL,
+              fileId: filed.id,
+              url: filed.url,
+              mimeType: 'application/pdf',
+              status: 'verified',
+            },
+          });
+        }
+      } else {
+        this.logger.warn(
+          `CoC signed for ${ob.candidateId} but the PDF could not be rendered — HR can re-file it.`,
+        );
+      }
+    } catch (e) {
+      this.logger.error(
+        `CoC signed for ${ob.candidateId}, filing failed: ${(e as Error).message}`,
+      );
     }
 
     const hrIds = await this.permissions.recruitmentRecipients(
@@ -2376,7 +2563,7 @@ export class OnboardingService {
     });
     this.notifications.broadcastChange(
       'candidate',
-      ob.candidate.requisitionId,
+      ob.candidate.requisition.id,
       { action: 'coc_signed' },
     );
     return { ok: true, alreadySigned: false };

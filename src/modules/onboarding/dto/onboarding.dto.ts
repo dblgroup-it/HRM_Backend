@@ -282,6 +282,12 @@ export class SendMedicalLetterDto {
   @IsNotEmpty()
   examAt!: string;
 
+  /**
+   * The letter's reference. Left out, the next number in DBL's register is
+   * issued; supplied, that is what the letter and both emails carry.
+   */
+  @IsOptional() @IsString() @MaxLength(40) refNo?: string;
+
   /** Defaults to MEDICAL_TEST_VENUE, and to whatever was used last time. */
   @IsOptional() @IsString() @MaxLength(500) venue?: string;
 
@@ -351,4 +357,21 @@ export class DeclineOfferDto {
   @MinLength(3)
   @MaxLength(1000)
   reason!: string;
+}
+
+/** What the candidate tells us when accepting. */
+export class AcceptOfferDto {
+  /** The date they expect to join — theirs to give, so it is not required. */
+  @IsOptional()
+  @IsDateString()
+  joiningTentative?: string;
+}
+
+/** The DBL employee ID a recruiter assigns to a hire. */
+export class EmployeeIdDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MinLength(1)
+  @MaxLength(30)
+  employeeId!: string;
 }

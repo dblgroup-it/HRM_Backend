@@ -73,6 +73,16 @@ export const PDF_UPLOAD = {
   fileFilter: allow(['application/pdf']),
 };
 
+/**
+ * A joining document: a PDF, or an image for the one item that is a picture —
+ * the candidate's signature. Which labels may be an image is decided by the
+ * service, not here; multer only knows what a file is.
+ */
+export const JOINING_DOC_UPLOAD = {
+  limits: { fileSize: 5 * MB, files: 1 },
+  fileFilter: allow(['application/pdf', ...SIGNATURE_MIME]),
+};
+
 /** Profile pictures — 2 MB, images only. */
 export const IMAGE_UPLOAD = {
   limits: { fileSize: 2 * MB, files: 1 },

@@ -210,6 +210,14 @@ export function buildCandidateMedicalEmail(input: {
   examAt: Date;
   /** The same venue the clinic's letter names. */
   venue?: string;
+  /**
+   * The letter's reference.
+   *
+   * Carried into the candidate's email as well as the clinic's: it is what
+   * they are asked for at the desk, and a reference only the clinic holds is
+   * no use to the person turning up.
+   */
+  refNo?: string | null;
 }): {
   text: string;
   html: string;
@@ -218,6 +226,8 @@ export function buildCandidateMedicalEmail(input: {
   const docs = CANDIDATE_DOCUMENTS;
   const venue = input.venue?.trim() || MEDICAL_TEST_VENUE;
 
+  const ref = input.refNo?.trim() || '';
+
   const text = `Dear Sir,
 Greetings!
 
@@ -225,6 +235,7 @@ You are requested to be present for the pre-employment Medical Test on
 ${when} to the address given.
 
 ${venue}
+${ref ? `\nReference: ${ref}\n` : ''}
 
 Please bring the following documents with you
 ${docs.map((d, i) => `${i + 1}. ${d}`).join('\n')}
@@ -241,6 +252,7 @@ DBL Corporate HR`;
   </p>
 
   <p style="margin:14px 0 0;white-space:pre-line">${esc(venue)}</p>
+  ${ref ? `<p style="margin:12px 0 0">Reference: <strong>${esc(ref)}</strong></p>` : ''}
 
   <p style="margin:16px 0 6px">Please bring the following documents with you</p>
   <ol style="margin:0;padding-left:20px">
