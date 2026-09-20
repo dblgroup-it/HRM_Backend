@@ -250,6 +250,9 @@ model User {
   medicalSubmissions            Onboarding[]           @relation("OnboardingMedicalSubmittedBy")
   /// Medicals this user signed off centrally (Central Medical Officer).
   medicalApprovals              Onboarding[]           @relation("OnboardingMedicalApprovedBy")
+  facilityReviews               Onboarding[]           @relation("OnboardingFacilitiesReviewedBy")
+  offerSignatories              Onboarding[]           @relation("OnboardingOfferSignatory")
+  appointmentSignatories        Onboarding[]           @relation("OnboardingAppointmentSignatory")
   boardBatchesCreated           BoardApprovalBatch[]   @relation("BoardBatchCreatedBy")
   boardBatchesAsChro            BoardApprovalBatch[]   @relation("BoardBatchChro")
   auditLogs                     AuditLog[]             @relation("AuditLogActor")
@@ -602,6 +605,13 @@ model Candidate {
   /// It is the number the Code of Conduct and the personnel file are filed
   /// under, so it lives on the candidate rather than in one form's fields.
   employeeId            String?                @map("employee_id") @db.VarChar(30)
+  /// Who this hire reports to, chosen from the synced employee directory when
+  /// the placement is settled. Stored as a name + code snapshot rather than a
+  /// relation, exactly like Employee.lineManager*: the directory is ZingHR's
+  /// and a manager can leave without this record of the placement changing.
+  lineManagerName       String?                @map("line_manager_name") @db.VarChar(150)
+  lineManagerCode       String?                @map("line_manager_code") @db.VarChar(20)
+  lineManagerTitle      String?                @map("line_manager_title") @db.VarChar(150)
   bdjobsApplicationId   String?                @unique @map("bdjobs_application_id") @db.VarChar(100)
   /// Bdjobs inbound: the applicant's Bdjobs profile ID.
   bdjobsApplicantId     String?                @map("bdjobs_applicant_id") @db.VarChar(100)
@@ -958,6 +968,22 @@ model Onboarding {
   /// The letter exactly as it was sent. A candidate holds a copy, so it must
   /// not change afterwards because a template or a salary did.
   offerLetterHtml       String?          @map("offer_letter_html")
+  /// The CHRO the letter goes out over. Chosen per letter rather than looked
+  /// up, because the group has had more than one holder of the role and a
+  /// letter must name the person who actually signed it. Their e-signature is
+  /// baked into offerLetterHtml at send time, so this is the record of who
+  /// was picked, not where the image came from.
+  offerSignatoryId      String?          @map("offer_signatory_id")
+  offerSignatory        User?            @relation("OnboardingOfferSignatory", fields: [offerSignatoryId], references: [id], onDelete: SetNull)
+  appointmentSignatoryId String?         @map("appointment_signatory_id")
+  appointmentSignatory  User?            @relation("OnboardingAppointmentSignatory", fields: [appointmentSignatoryId], references: [id], onDelete: SetNull)
+  /// The offer as the candidate accepted it: the letter they were sent, with
+  /// their own e-signature and joining date filled into the acceptance box,
+  /// rendered at the moment they accept and filed with their joining docs.
+  /// Distinct from offerSigned*, which is a scan they post back by hand —
+  /// either, both or neither can exist.
+  offerAcceptedFileId   String?          @map("offer_accepted_file_id")
+  offerAcceptedUrl      String?          @map("offer_accepted_url")
   candidateAddress      String?          @map("candidate_address") @db.VarChar(300)
   appointmentRef        String?          @map("appointment_ref") @db.VarChar(60)
   appointmentSentAt     DateTime?        @map("appointment_sent_at")
@@ -1005,6 +1031,18 @@ model Onboarding {
   medicalCmoNote               String?         @map("medical_cmo_note")
   medicalClearedById           String?         @map("medical_cleared_by_id")
   medicalClearedBy             User?           @relation("OnboardingMedicalClearedBy", fields: [medicalClearedById], references: [id], onDelete: SetNull)
+  /// HR has looked at what this hire is entitled to — car, accommodation,
+  /// SIM, laptop — and said so.
+  ///
+  /// A deliberate stop rather than something derived. A candidate entitled to
+  /// nothing used to fall straight from document verification into medical
+  /// with the facility step never opened, which is exactly the case where
+  /// somebody should have confirmed there is genuinely nothing to arrange.
+  /// Medical is gated on this (see MEDICAL_DUE), so it cannot be skipped by
+  /// being empty.
+  facilitiesReviewedAt         DateTime?       @map("facilities_reviewed_at")
+  facilitiesReviewedById       String?         @map("facilities_reviewed_by_id")
+  facilitiesReviewedBy         User?           @relation("OnboardingFacilitiesReviewedBy", fields: [facilitiesReviewedById], references: [id], onDelete: SetNull)
   hrVerifiedAt                 DateTime?       @map("hr_verified_at")
   /// AI cross-verification of submitted docs vs the candidate's profile:
   /// { verdict, overview, findings: [{doc, severity, detail}] }

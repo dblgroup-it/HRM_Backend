@@ -5,11 +5,41 @@ const MB = 1024 * 1024;
 type MulterFile = { mimetype: string; originalname: string };
 type FilterCb = (error: Error | null, acceptFile: boolean) => void;
 
-function allow(types: string[]) {
-  const label =
-    types.length === 1 && types[0] === 'application/pdf'
-      ? 'PDF only'
-      : 'PDF, Word, Excel or images';
+/**
+ * `types` -> the sentence a rejected upload is told.
+ *
+ * Derived rather than fixed: every narrower list used to be described as
+ * "PDF, Word, Excel or images", so a candidate refused for sending a .docx
+ * was told .docx was allowed. Callers pass `label` where the set has a name
+ * worth using; otherwise the extensions are read off the list itself.
+ */
+function describe(types: string[]): string {
+  if (types.length === 1 && types[0] === 'application/pdf') return 'PDF only';
+  const names: Record<string, string> = {
+    'application/pdf': 'PDF',
+    'application/msword': 'Word',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      'Word',
+    'application/vnd.ms-excel': 'Excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+      'Excel',
+    'text/csv': 'CSV',
+    'image/png': 'PNG',
+    'image/jpeg': 'JPG',
+    'image/jpg': 'JPG',
+    'image/webp': 'WebP',
+  };
+  const seen: string[] = [];
+  for (const t of types) {
+    const n = names[t];
+    if (n && !seen.includes(n)) seen.push(n);
+  }
+  if (!seen.length) return 'a supported file type';
+  if (seen.length === 1) return seen[0];
+  return `${seen.slice(0, -1).join(', ')} or ${seen[seen.length - 1]}`;
+}
+
+function allow(types: string[], label = describe(types)) {
   return (_req: unknown, file: MulterFile, cb: FilterCb): void => {
     if (types.includes(file.mimetype)) cb(null, true);
     else
@@ -61,7 +91,7 @@ export const SIGNATURE_UPLOAD = {
   fileFilter: allow(SIGNATURE_MIME),
 };
 
-/** CVs / joining documents — 10 MB, PDF/Word/images. */
+/** CVs and attachments — 10 MB, PDF/Word/images. */
 export const DOC_UPLOAD = {
   limits: { fileSize: 10 * MB, files: 1 },
   fileFilter: allow(DOC_MIME),
@@ -74,9 +104,13 @@ export const PDF_UPLOAD = {
 };
 
 /**
- * A joining document: a PDF, or an image for the one item that is a picture —
- * the candidate's signature. Which labels may be an image is decided by the
- * service, not here; multer only knows what a file is.
+ * A joining document: a PDF or a photograph.
+ *
+ * Most of the checklist is paper the candidate is holding, so a phone photo
+ * of a certificate is what they actually have — insisting on PDF sent them
+ * off to find a converter. The same set covers the one item that is always a
+ * picture, their signature; which labels may be an image is decided by the
+ * service, not here, because multer only knows what a file is.
  */
 export const JOINING_DOC_UPLOAD = {
   limits: { fileSize: 5 * MB, files: 1 },

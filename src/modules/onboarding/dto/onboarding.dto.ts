@@ -241,6 +241,18 @@ export class OfferLetterDto {
   format!: 'junior' | 'senior';
 
   /**
+   * The CHRO this letter is issued over.
+   *
+   * Required. It used to be whichever `chro` assignment the database returned
+   * first, so nothing on screen told HR whose name would appear at the bottom
+   * of a contract. Whether that person has an e-signature on file is a
+   * separate matter — the letter prints an empty rule for a wet signature.
+   */
+  @IsString()
+  @MaxLength(60)
+  signatoryUserId!: string;
+
+  /**
    * Which of the requisition's designations this person is hired at.
    *
    * A requisition may offer several levels because the level depends on who is
@@ -339,6 +351,11 @@ export class SetFixedDesignationDto {
 
 /** The appointment letter, issued after joining. */
 export class AppointmentLetterDto {
+  /** The CHRO this letter is issued over — see OfferLetterDto. */
+  @IsString()
+  @MaxLength(60)
+  signatoryUserId!: string;
+
   /** See OfferLetterDto.fixedDesignation — the appointment letter prints the same. */
   @IsOptional() @IsString() @MaxLength(150) fixedDesignation?: string;
   @IsOptional() @IsString() @MaxLength(60) reference?: string;
@@ -367,11 +384,44 @@ export class AcceptOfferDto {
   joiningTentative?: string;
 }
 
-/** The DBL employee ID a recruiter assigns to a hire. */
+/**
+ * The placement: the number this hire is filed under and who they report to.
+ *
+ * One payload because they are settled in one conversation — "they're
+ * 15107556, reporting to Kamal" — and two endpoints would let a file exist
+ * with an ID and no manager for as long as somebody forgot the second save.
+ * The line manager is a snapshot off the synced directory, so all three
+ * fields travel together or not at all.
+ */
 export class EmployeeIdDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MinLength(1)
   @MaxLength(30)
   employeeId!: string;
+
+  /**
+   * Who the hire reports to, taken from the synced employee directory.
+   *
+   * Optional: the ID is often settled before the reporting line is, and
+   * refusing the ID until somebody knows the manager would just mean nobody
+   * records either. Sending an empty string clears it.
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MaxLength(150)
+  lineManagerName?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MaxLength(20)
+  lineManagerCode?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MaxLength(150)
+  lineManagerTitle?: string;
 }

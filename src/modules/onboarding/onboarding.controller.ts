@@ -252,14 +252,20 @@ export class OnboardingController {
     return this.onboarding.sendAppointmentLetter(id, user.id, dto);
   }
 
-  /** Assign this candidate their DBL employee ID. */
+  /** Settle the placement — employee ID and reporting line. */
   @Patch('candidates/:id/onboarding/employee-id')
   setEmployeeId(
     @Param('id') id: string,
     @Body() dto: EmployeeIdDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.onboarding.setEmployeeId(id, user.id, dto.employeeId);
+    return this.onboarding.setEmployeeId(id, user.id, dto);
+  }
+
+  /** Who HR may issue this candidate's letters over (CHRO role holders). */
+  @Get('candidates/:id/onboarding/signatories')
+  letterSignatories(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.letterSignatories(id, user.id);
   }
 
   /** Send the Code of Conduct acknowledgement for the candidate to sign. */
@@ -307,6 +313,12 @@ export class OnboardingController {
   @Post('candidates/:id/onboarding/skip-verification')
   skipVerification(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.onboarding.skipVerification(id, user.id);
+  }
+
+  /** HR has been through this hire's facility entitlements — unlocks medical. */
+  @Post('candidates/:id/onboarding/facilities/review')
+  reviewFacilities(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.reviewFacilities(id, user.id);
   }
 
   @Post('candidates/:id/onboarding/archive')

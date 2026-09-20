@@ -87,6 +87,65 @@ export interface LetterInput {
   benefits?: string[];
   signatoryName: string;
   signatoryTitle: string;
+  /**
+   * The signatory's e-signature as a data URI, when they have one on file.
+   *
+   * Inlined rather than linked because the letter is stored, emailed and
+   * printed to PDF: a URL would be an image the recipient's mail client
+   * cannot fetch and the archived copy would lose. Null simply leaves the
+   * ruled line blank for a wet signature, which is how these went out before.
+   */
+  signatorySignature?: string | null;
+  /**
+   * The candidate's own e-signature, and the date they gave.
+   *
+   * Set only when rendering the counter-signed copy at the moment they accept
+   * online; a letter going *out* leaves both blank for them to fill in.
+   */
+  candidateSignature?: string | null;
+  candidateAcceptedDate?: Date | null;
+}
+
+/**
+ * Where the candidate's half of the letter goes.
+ *
+ * The letter is stored exactly as it was sent and must stay that way, so when
+ * they accept online we render a *copy* with their signature and date filled
+ * in. That fill needs somewhere to aim at: these two markers are it, and
+ * `applyCandidateAcceptance` in accepted-offer.ts rewrites what is between
+ * them. Anything else would mean pattern-matching a row of underscores in
+ * stored HTML, which breaks the first time the template is reworded.
+ */
+export const ACCEPT_SIGN_MARKER = 'dbl-accept-sign';
+export const ACCEPT_DATE_MARKER = 'dbl-accept-date';
+
+/** The blank a candidate signing on paper writes their joining date on. */
+export const ACCEPT_DATE_BLANK = '______________________';
+
+/**
+ * A signature image sitting on the ruled line, or nothing.
+ *
+ * Fixed height so one person's 900x300 crop and another's phone photo print
+ * at the same size, and `margin-bottom:-2px` so the ink meets the rule rather
+ * than floating above it.
+ */
+export function signatureInk(dataUri?: string | null): string {
+  if (!dataUri) return '';
+  return `<img src="${dataUri}" alt="" style="height:44px;width:auto;max-width:220px;display:block;margin-bottom:-2px">`;
+}
+
+/** The candidate's signature slot — empty on a letter going out. */
+function candidateSignSlot(input: LetterInput): string {
+  return `<span class="${ACCEPT_SIGN_MARKER}">${signatureInk(input.candidateSignature)}</span>`;
+}
+
+/** The joining date they gave, or the blank rule they write it on. */
+function candidateDateSlot(input: LetterInput): string {
+  const when = input.candidateAcceptedDate;
+  const filled = when
+    ? `<strong>${esc(fmtJoining(when))}</strong>`
+    : ACCEPT_DATE_BLANK;
+  return `<span class="${ACCEPT_DATE_MARKER}">${filled}</span>`;
 }
 
 /** The letterhead date — "September 5, 2026". */
@@ -235,7 +294,7 @@ function signatures(input: LetterInput): string {
       <td style="width:50%;vertical-align:top;line-height:1.5">
         I agree with the terms &amp; conditions and<br>
         hereby accept the employment offer. My<br>
-        Expected date of join ______________________
+        Expected date of join ${candidateDateSlot(input)}
       </td>
     </tr>
     <tr>
@@ -243,12 +302,14 @@ function signatures(input: LetterInput): string {
       <td></td>
     </tr>
     <tr>
-      <td style="padding-top:56px">
+      <td style="padding-top:12px">
+        <div style="height:44px">${signatureInk(input.signatorySignature)}</div>
         <div style="border-top:1px solid #000;width:230px"></div>
         <div style="font-weight:700;margin-top:4px">${esc(input.signatoryName)}</div>
         <div>${esc(input.signatoryTitle)}</div>
       </td>
-      <td style="padding-top:56px">
+      <td style="padding-top:12px">
+        <div style="height:44px">${candidateSignSlot(input)}</div>
         <div style="border-top:1px solid #000;width:270px"></div>
         <div style="font-weight:700;margin-top:4px;text-align:center;width:270px">${esc(input.candidateName)}</div>
       </td>
@@ -473,12 +534,14 @@ export function buildAppointmentLetter(input: LetterInput): string {
       <td style="width:50%">Accepted by,</td>
     </tr>
     <tr>
-      <td style="padding-top:56px">
+      <td style="padding-top:12px">
+        <div style="height:44px">${signatureInk(input.signatorySignature)}</div>
         <div style="border-top:1px solid #000;width:230px"></div>
         <div style="font-weight:700;margin-top:4px">${esc(input.signatoryName)}</div>
         <div>${esc(input.signatoryTitle)}</div>
       </td>
-      <td style="padding-top:56px">
+      <td style="padding-top:12px">
+        <div style="height:44px">${candidateSignSlot(input)}</div>
         <div style="border-top:1px solid #000;width:270px"></div>
         <div style="font-weight:700;margin-top:4px;text-align:center;width:270px">${esc(input.candidateName)}</div>
       </td>

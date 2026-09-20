@@ -25,6 +25,7 @@ import {
   type LetterInput,
 } from './letters';
 import { buildOfferEmail, offerEmailHtml, offerEmailText } from './offer-email';
+import { applyCandidateAcceptance } from './accepted-offer';
 import { hrVerifyBlocker, missingDocs, pendingDocs } from './hr-verify';
 import { buildCocForm } from './coc-form';
 import { ReferenceCheckService } from './reference-check.service';
@@ -42,6 +43,7 @@ import { MailService } from '../integrations/mail/mail.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
 import {
+  EmployeeIdDto,
   ManualCrossCheckDto,
   MedicalDto,
   MedicalExamDto,
@@ -65,6 +67,18 @@ import {
   type CmoDecision,
   type ProposedMedical,
 } from './medical-approval';
+
+/**
+ * The role whose holders may be named as the signatory on a letter, and the
+ * title printed under their name.
+ *
+ * The title is fixed rather than read from their employee record: it is the
+ * office that signs an offer, and a designation string out of ZingHR ("CHRO",
+ * "Chief People Officer") would put whatever happens to be typed there onto a
+ * contract.
+ */
+export const CHRO_ROLE_KEY = 'chro';
+export const CHRO_SIGNATORY_TITLE = 'Chief Human Resources Officer';
 
 /** Role keys allowed to record medical clearance (configurable / either name). */
 export const MEDICAL_ROLE_KEYS = ['medical_officer', 'medical_team'];
@@ -99,10 +113,15 @@ export const MEDICAL_DUE: Prisma.OnboardingWhereInput = {
         { docs: { some: {}, every: { status: 'verified' } } },
       ],
     },
+    // Facility requirements looked at and signed off. A hire entitled to
+    // nothing has an empty panel, which used to mean the step passed itself
+    // and the candidate landed in the medical queue with nobody having
+    // confirmed there was genuinely nothing to arrange. There is no derived
+    // version of that confirmation, so it is a stamp somebody sets.
+    { facilitiesReviewedAt: { not: null } },
   ],
 };
 
-/** The standard joining-document checklist shown to a selected candidate. */
 /** The signed Code of Conduct, filed like any other joining document. */
 export const COC_DOC_LABEL = 'Code of Conduct (signed)';
 
@@ -113,28 +132,62 @@ export const COC_DOC_LABEL = 'Code of Conduct (signed)';
  * every form that needs a signature (the Code of Conduct, the offer
  * acceptance) reads it from this one place rather than asking again.
  */
-export const SIGNATURE_DOC_LABEL = 'Signature (3:1 image)';
+export const SIGNATURE_DOC_LABEL = 'Signature';
+
+/**
+ * One line of DBL's joining-document checklist.
+ *
+ * Split into a short `label` and a `hint` because the two were previously one
+ * string: "Four Passport-size photographs, white background (lab print)" is a
+ * sentence, not a name, and nine of them stacked in a column is a wall of
+ * text nobody reads. The label is what the row is filed under — it is stored
+ * on OnboardingDoc and matched by every completeness check — so it is kept
+ * short and stable; the hint carries the detail the candidate actually needs
+ * while they are looking for the paper.
+ */
+export interface JoiningDocSpec {
+  label: string;
+  hint: string;
+}
 
 /**
  * DBL's joining-document checklist, in the order HR reads it out.
  *
- * Transcribed from their list. The three marked "For Experienced Candidates"
- * are in OPTIONAL_DOCS instead: a fresher has none of them, and a checklist
- * that can never be completed stops meaning anything.
+ * The three marked "for experienced candidates" are in OPTIONAL_JOINING_DOCS
+ * instead: a fresher has none of them, and a checklist that can never be
+ * completed stops meaning anything.
  */
-export const REQUIRED_DOCS = [
-  'Four Passport-size photographs, white background (lab print)',
-  'All relevant education certificates and marksheets (main copy & photocopy)',
-  'Experience certificates',
-  'Copy of NID & Birth Registration / Passport (at least one)',
-  'Copy of residence proof (any government bill)',
-  SIGNATURE_DOC_LABEL,
+export const REQUIRED_JOINING_DOCS: readonly JoiningDocSpec[] = [
+  {
+    label: 'Passport Photographs',
+    hint: 'Four copies · white background · lab print',
+  },
+  {
+    label: 'Academic Certificates',
+    hint: 'Every certificate and marksheet — main copy and photocopy',
+  },
+  {
+    label: 'Experience Certificates',
+    hint: 'One from each previous employer',
+  },
+  {
+    label: 'National ID or Passport',
+    hint: 'NID and birth registration, or passport — at least one',
+  },
+  {
+    label: 'Proof of Residence',
+    hint: 'Any recent government utility bill',
+  },
+  {
+    label: SIGNATURE_DOC_LABEL,
+    hint: 'A photo or scan of your signature — you crop it here',
+  },
 ];
 
 /**
  * Documents a candidate provides if they have them.
  *
- * Deliberately a separate list rather than more entries in REQUIRED_DOCS.
+ * Deliberately a separate list rather than more entries in the required one.
  * Progress, the "all uploaded" flag and the gate that opens the medical step
  * all count the required list, so an optional document added there would mean
  * nobody could ever reach complete — a fresh graduate has no pay slip, and the
@@ -143,10 +196,50 @@ export const REQUIRED_DOCS = [
  * They are uploaded, stored and verified exactly like the rest; they simply do
  * not hold anything up by being absent.
  */
-export const OPTIONAL_DOCS = [
-  'Relieving letter and last pay slip from the previous employer (experienced candidates)',
-  'Copy of TIN / last tax return submission (experienced candidates, if any)',
-  'Pay slip / salary certificate / statement (experienced candidates)',
+export const OPTIONAL_JOINING_DOCS: readonly JoiningDocSpec[] = [
+  {
+    label: 'Relieving Letter & Last Pay Slip',
+    hint: 'From your previous employer',
+  },
+  {
+    label: 'TIN or Last Tax Return',
+    hint: 'Your most recent submission, if you have one',
+  },
+  {
+    label: 'Salary Certificate',
+    hint: 'Pay slip, salary certificate or salary statement',
+  },
+];
+
+/** Just the labels — what every completeness check compares against. */
+export const REQUIRED_DOCS = REQUIRED_JOINING_DOCS.map((d) => d.label);
+export const OPTIONAL_DOCS = OPTIONAL_JOINING_DOCS.map((d) => d.label);
+
+/**
+ * label -> hint, sent alongside the two lists.
+ *
+ * A map rather than a richer list shape so both checklist payloads stay
+ * `string[]` and every existing client keeps working unchanged.
+ */
+export const DOC_HINTS: Record<string, string> = Object.fromEntries(
+  [...REQUIRED_JOINING_DOCS, ...OPTIONAL_JOINING_DOCS].map((d) => [
+    d.label,
+    d.hint,
+  ]),
+);
+
+/**
+ * What a joining document may be uploaded as.
+ *
+ * PDF plus photographs: most of this list is paper the candidate is holding,
+ * and a phone photo of a certificate is what they actually have. Demanding a
+ * PDF meant they went and found a converter, or gave up and emailed HR.
+ */
+export const JOINING_DOC_MIME = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
 ];
 
 /** Multer file subset we use for document uploads. */
@@ -214,6 +307,12 @@ type OnboardingWithDocs = Prisma.OnboardingGetPayload<{
 }> & {
   /** Present only where the query includes it. */
   medicalClearedBy?: { name: string } | null;
+  /** Present only where the query includes it. */
+  facilitiesReviewedBy?: { name: string } | null;
+  /** Present only where the query includes it. */
+  offerSignatory?: { name: string } | null;
+  /** Present only where the query includes it. */
+  appointmentSignatory?: { name: string } | null;
 };
 
 @Injectable()
@@ -281,6 +380,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     return {
@@ -298,6 +400,8 @@ export class OnboardingService {
       itWebhook: Boolean(this.config.get<string>('it.webhookUrl')),
       requiredDocs: REQUIRED_DOCS,
       optionalDocs: OPTIONAL_DOCS,
+      /** The line of guidance under each label. */
+      docHints: DOC_HINTS,
       candidate: {
         id: cand.id,
         name: cand.name,
@@ -307,6 +411,10 @@ export class OnboardingService {
         source: cand.source,
         /** Assigned by the recruiter; printed on the Code of Conduct. */
         employeeId: cand.employeeId,
+        /** Who they report to, settled with the employee ID. */
+        lineManagerName: cand.lineManagerName ?? null,
+        lineManagerCode: cand.lineManagerCode ?? null,
+        lineManagerTitle: cand.lineManagerTitle ?? null,
         matchScore: cand.matchScore,
         matchSummary: cand.matchSummary ?? '',
         requisitionId: cand.requisitionId,
@@ -421,6 +529,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     await this.notifyMedicalTeamIfDue(ob.id);
@@ -440,11 +551,58 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     await this.notifyMedicalTeamIfDue(ob.id);
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'verification_skipped',
+    });
+    return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * HR confirms they have been through this hire's facility entitlements.
+   *
+   * Idempotent on purpose: the first stamp is the one that counts, and a
+   * second click should not quietly rewrite who reviewed it and when.
+   */
+  async reviewFacilities(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    const updated = ob.facilitiesReviewedAt
+      ? await this.prisma.onboarding.findUniqueOrThrow({
+          where: { id: ob.id },
+          include: {
+            docs: { orderBy: { createdAt: 'asc' } },
+            medicalClearedBy: { select: { name: true } },
+            facilitiesReviewedBy: { select: { name: true } },
+            offerSignatory: { select: { name: true } },
+            appointmentSignatory: { select: { name: true } },
+          },
+        })
+      : await this.prisma.onboarding.update({
+          where: { id: ob.id },
+          data: {
+            facilitiesReviewedAt: new Date(),
+            facilitiesReviewedById: userId,
+          },
+          include: {
+            docs: { orderBy: { createdAt: 'asc' } },
+            medicalClearedBy: { select: { name: true } },
+            facilitiesReviewedBy: { select: { name: true } },
+            offerSignatory: { select: { name: true } },
+            appointmentSignatory: { select: { name: true } },
+          },
+        });
+    // This is the last gate before medical, so it is also the moment the
+    // medical team can finally be told — for a candidate whose documents
+    // settled first, this review is what makes them due.
+    await this.notifyMedicalTeamIfDue(ob.id);
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'facilities_reviewed',
     });
     return { onboarding: this.serialize(updated, cand.name, cand.email) };
   }
@@ -478,6 +636,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     if (!ob)
@@ -670,10 +831,19 @@ export class OnboardingService {
         offerBenefits: dto.benefits ?? [],
         candidateAddress: dto.address?.trim() || null,
         offerLetterHtml: letter,
+        offerSignatoryId: dto.signatoryUserId,
+        // A fresh offer supersedes whatever they signed against the last one.
+        offerAcceptedFileId: null,
+        offerAcceptedUrl: null,
+        offerSignedFileId: null,
+        offerSignedUrl: null,
       },
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -704,6 +874,7 @@ export class OnboardingService {
           reference: dto.reference,
           joiningDate: dto.joiningDate,
           address: dto.address,
+          signatoryUserId: dto.signatoryUserId,
         }),
       ),
     };
@@ -735,6 +906,7 @@ export class OnboardingService {
         reference: dto.reference,
         joiningDate: dto.joiningDate,
         address: dto.address,
+        signatoryUserId: dto.signatoryUserId,
       }),
     );
 
@@ -792,6 +964,7 @@ export class OnboardingService {
         appointmentSentAt: new Date(),
         appointmentRef: dto.reference?.trim() || null,
         appointmentLetterHtml: letter,
+        appointmentSignatoryId: dto.signatoryUserId,
         ...(dto.address?.trim()
           ? { candidateAddress: dto.address.trim() }
           : {}),
@@ -799,6 +972,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -922,10 +1098,7 @@ export class OnboardingService {
     // letter is rendered; read here so every format prints the same title.
     const fixedDesignation =
       dto.fixedDesignation?.trim() || ob.fixedDesignation?.trim() || null;
-    const chro = await this.prisma.roleAssignment.findFirst({
-      where: { role: { key: 'chro' } },
-      select: { user: { select: { name: true } } },
-    });
+    const signatory = await this.resolveSignatory(dto.signatoryUserId);
     return {
       candidateName: cand.name,
       salutation: dto.salutation ?? null,
@@ -945,9 +1118,115 @@ export class OnboardingService {
       probationMonths: dto.probationMonths ?? ob.offerProbationMonths ?? 6,
       noticeDays: dto.noticeDays ?? ob.offerNoticeDays ?? 15,
       benefits: dto.benefits ?? ob.offerBenefits ?? [],
-      signatoryName: chro?.user.name ?? 'Chief Human Resources Officer',
-      signatoryTitle: 'Chief Human Resources Officer',
+      signatoryName: signatory.name,
+      signatoryTitle: CHRO_SIGNATORY_TITLE,
+      signatorySignature: signatory.signature,
     };
+  }
+
+  /**
+   * Who the letter goes out over, and their e-signature if they have one.
+   *
+   * The CHRO used to be "whichever `chro` role assignment came back first",
+   * which is a guess the moment the group has two holders, and nothing on the
+   * screen said which one the letter would name. HR now picks, and the pick
+   * is required — but a missing *signature* is not an error: plenty of these
+   * are still signed in ink over the printed name, which is exactly what an
+   * empty rule is for.
+   */
+  private async resolveSignatory(
+    userId: string | undefined,
+  ): Promise<{ id: string; name: string; signature: string | null }> {
+    const id = userId?.trim();
+    if (!id) {
+      throw new BadRequestException(
+        'Choose the CHRO this letter goes out over.',
+      );
+    }
+    const holders = await this.chroHolderIds();
+    if (!holders.includes(id)) {
+      throw new BadRequestException(
+        'That person does not hold the CHRO role, so the letter cannot be issued over their name.',
+      );
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, signatureFileId: true },
+    });
+    if (!user) throw new BadRequestException('That signatory no longer exists.');
+    return {
+      id: user.id,
+      name: user.name,
+      signature: await this.signatureDataUri(user.signatureFileId),
+    };
+  }
+
+  /** User ids holding the `chro` role, in no particular order. */
+  private async chroHolderIds(): Promise<string[]> {
+    const rows = await this.prisma.roleAssignment.findMany({
+      where: { role: { key: CHRO_ROLE_KEY } },
+      select: { userId: true },
+    });
+    return [...new Set(rows.map((r) => r.userId))];
+  }
+
+  /**
+   * Who HR may choose to sign a letter.
+   *
+   * `hasSignature` is deliberately part of the answer: it is the difference
+   * between a letter that prints ready to send and one somebody has to sign
+   * by hand, and HR should see that before they pick rather than after they
+   * preview.
+   */
+  async letterSignatories(candidateId: string, userId: string) {
+    await this.requireCandidate(candidateId, userId);
+    const ids = await this.chroHolderIds();
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids }, status: 'ACTIVE' },
+      select: {
+        id: true,
+        name: true,
+        employeeCode: true,
+        signatureFileId: true,
+        employee: { select: { designation: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+    return {
+      title: CHRO_SIGNATORY_TITLE,
+      signatories: users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        employeeCode: u.employeeCode,
+        designation: u.employee?.designation ?? CHRO_SIGNATORY_TITLE,
+        hasSignature: Boolean(u.signatureFileId),
+      })),
+    };
+  }
+
+  /**
+   * A stored signature image as an inline data URI.
+   *
+   * Letters are emailed, archived and printed, so the image has to travel
+   * inside the document. A Drive read that fails must not take the letter
+   * down with it — an unsigned letter over a printed name is the normal
+   * fallback, not an error.
+   */
+  private async signatureDataUri(
+    fileId: string | null | undefined,
+  ): Promise<string | null> {
+    if (!fileId) return null;
+    try {
+      const { buffer, mimeType } = await this.drive.getFileBuffer(fileId);
+      return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    } catch (e) {
+      this.logger.warn(
+        `Could not read signature ${fileId} — the letter will print an empty rule: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
   }
 
   /**
@@ -968,6 +1247,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     if (!alreadyAccepted) {
@@ -1028,6 +1310,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     // Auto-reject all remaining applied candidates for this requisition.
@@ -1106,6 +1391,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1186,6 +1474,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1265,6 +1556,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
         candidate: {
           include: {
             requisition: {
@@ -2039,6 +2333,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
         candidate: {
           include: {
             requisition: {
@@ -2057,6 +2354,7 @@ export class OnboardingService {
       status: ob.status,
       requiredDocs: REQUIRED_DOCS,
       optionalDocs: OPTIONAL_DOCS,
+      docHints: DOC_HINTS,
       offerSentAt: ob.offerSentAt?.toISOString() ?? null,
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
       offerDeclinedAt: ob.offerDeclinedAt?.toISOString() ?? null,
@@ -2090,8 +2388,10 @@ export class OnboardingService {
       }
       const ratioError = signatureRatioError(size.width, size.height);
       if (ratioError) throw new BadRequestException(ratioError);
-    } else if (file.mimetype !== 'application/pdf') {
-      throw new BadRequestException('Please upload this document as a PDF.');
+    } else if (!JOINING_DOC_MIME.includes(file.mimetype)) {
+      throw new BadRequestException(
+        'Please upload this document as a PDF, JPG or PNG.',
+      );
     }
     const ob = await this.prisma.onboarding.findFirst({
       where: tokenLookupWhere(token),
@@ -2258,12 +2558,26 @@ export class OnboardingService {
       throw new BadRequestException('That joining date is not a valid date.');
     }
     if (!ob.offerAcceptedAt) {
+      const acceptedAt = new Date();
+      // Their acceptance, on the letter, signed. Produced here rather than
+      // asked for as another upload: they already gave us a signature with
+      // their joining documents, and the thing HR needs on file is the offer
+      // itself coming back accepted — not a second copy of the signature.
+      const countersigned = await this.buildAcceptedOfferCopy(ob, {
+        joiningTentative: tentative ?? ob.offerJoiningTentative,
+      });
       await this.prisma.onboarding.update({
         where: { id: ob.id },
         data: {
-          offerAcceptedAt: new Date(),
+          offerAcceptedAt: acceptedAt,
           status: 'offer_accepted',
           ...(tentative ? { offerJoiningTentative: tentative } : {}),
+          ...(countersigned
+            ? {
+                offerAcceptedFileId: countersigned.id,
+                offerAcceptedUrl: countersigned.url,
+              }
+            : {}),
         },
       });
       // Offer accepted → notify Head of Talent Acquisition + medical officers (triggers medical).
@@ -2365,9 +2679,17 @@ export class OnboardingService {
    * personnel file is filed under it, and a number typed separately into each
    * of those is a number that will disagree with itself.
    */
-  async setEmployeeId(candidateId: string, userId: string, employeeId: string) {
+  /**
+   * Settle the placement: the employee ID, and who the hire reports to.
+   *
+   * One call because they are decided together. The line manager is a
+   * name/code snapshot off the synced directory rather than a relation — the
+   * directory is ZingHR's, and a manager leaving must not rewrite the record
+   * of who this person was placed under.
+   */
+  async setEmployeeId(candidateId: string, userId: string, dto: EmployeeIdDto) {
     const cand = await this.requireCandidate(candidateId, userId);
-    const value = employeeId.trim();
+    const value = dto.employeeId.trim();
     if (!value) {
       throw new BadRequestException(
         'Enter the employee ID, or leave it unset.',
@@ -2382,9 +2704,17 @@ export class OnboardingService {
         `That employee ID is already assigned to ${clash.name}.`,
       );
     }
+    const manager = dto.lineManagerName?.trim() ?? '';
     await this.prisma.candidate.update({
       where: { id: cand.id },
-      data: { employeeId: value },
+      data: {
+        employeeId: value,
+        // An empty name clears the whole snapshot: a code with no name is a
+        // row nobody can read, and the three are only ever set together.
+        lineManagerName: manager || null,
+        lineManagerCode: manager ? dto.lineManagerCode?.trim() || null : null,
+        lineManagerTitle: manager ? dto.lineManagerTitle?.trim() || null : null,
+      },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'employee_id',
@@ -2449,6 +2779,9 @@ export class OnboardingService {
       include: {
         docs: { orderBy: { createdAt: 'asc' } },
         medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -2588,6 +2921,73 @@ export class OnboardingService {
    * unit. Returns null when Drive is unavailable rather than throwing: losing
    * the filing copy must not lose the thing itself.
    */
+  /**
+   * The offer letter as the candidate accepted it.
+   *
+   * The stored `offerLetterHtml` is the letter as it went out, and it must
+   * stay that way — so this renders a *copy* with their signature and joining
+   * date dropped into the acceptance box, files it with their joining
+   * documents, and leaves the original untouched.
+   *
+   * Every part of it is best-effort. A candidate's acceptance is the thing
+   * that matters and it is already recorded by the time this runs: no
+   * signature on file, no Chromium, no Drive — none of those are a reason to
+   * refuse the acceptance and send them back to the portal to try again.
+   */
+  private async buildAcceptedOfferCopy(
+    ob: {
+      id: string;
+      offerLetterHtml: string | null;
+      candidate: {
+        name: string;
+        requisition: Parameters<RecruitmentService['ensureWorkspace']>[0];
+      };
+    },
+    opts: { joiningTentative: Date | null },
+  ): Promise<{ id: string; url: string } | null> {
+    if (!ob.offerLetterHtml) return null;
+    try {
+      const signatureDoc = await this.prisma.onboardingDoc.findFirst({
+        where: { onboardingId: ob.id, label: SIGNATURE_DOC_LABEL },
+        orderBy: { createdAt: 'desc' },
+        select: { fileId: true },
+      });
+      const ink = await this.signatureDataUri(signatureDoc?.fileId);
+      const html = applyCandidateAcceptance(ob.offerLetterHtml, {
+        signature: ink,
+        joiningDate: opts.joiningTentative,
+      });
+      // The letter was sent before the acceptance slots existed, so there is
+      // nowhere to put their signature. Their acceptance still stands; there
+      // is simply no counter-signed copy to file for it.
+      if (!html) return null;
+      const pdf = await this.pdf.fromHtml(html, {
+        headerHtml: letterheadHeaderHtml(),
+        footerHtml: letterheadFooterHtml(),
+        margin: { ...LETTERHEAD_PDF_MARGIN },
+        stripSelectors: [...LETTERHEAD_IN_FLOW_SELECTORS],
+        fitToPages: 1,
+      });
+      if (!pdf) return null;
+      return await this.fileWithJoiningDocs(
+        ob.candidate.requisition,
+        ob.candidate.name,
+        {
+          name: `Offer Letter (accepted) — ${ob.candidate.name}.pdf`,
+          mimeType: 'application/pdf',
+          buffer: pdf,
+        },
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Could not file the accepted offer copy for ${ob.id}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
+  }
+
   private async fileWithJoiningDocs(
     requisition: Parameters<RecruitmentService['ensureWorkspace']>[0],
     candidateName: string,
@@ -2987,6 +3387,27 @@ export class OnboardingService {
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
       offerDeclinedAt: ob.offerDeclinedAt?.toISOString() ?? null,
       offerDeclineReason: ob.offerDeclineReason,
+      offerJoiningTentative: ob.offerJoiningTentative?.toISOString() ?? null,
+      /**
+       * The two ways a signed offer comes back, kept apart.
+       *
+       * `offerAcceptedUrl` is the copy this system produced when they
+       * accepted online, carrying their e-signature. `offerSignedUrl` is a
+       * scan they posted back by hand. Either, both or neither can exist, and
+       * HR wants to see whichever it has — `offerSignedUrl` was previously
+       * stored but never serialized, so the link to it never appeared.
+       */
+      offerAcceptedUrl:
+        this.files.url(ob.offerAcceptedFileId, 'onboarding-doc', {
+          filename: 'Offer letter (accepted)',
+        }) ?? null,
+      offerSignedUrl:
+        this.files.url(ob.offerSignedFileId, 'onboarding-doc', {
+          filename: 'Signed offer letter',
+        }) ?? null,
+      /** Whose name the letters were issued over. */
+      offerSignatoryName: ob.offerSignatory?.name ?? null,
+      appointmentSignatoryName: ob.appointmentSignatory?.name ?? null,
       // What final verification is still waiting on, worked out in one place so
       // the modal cannot disagree with the endpoint that refuses.
       missingDocs: missingDocs(REQUIRED_DOCS, ob),
@@ -3047,6 +3468,9 @@ export class OnboardingService {
       // So HR can see the request actually reached the medical team, rather
       // than assuming it did.
       medicalNotifiedAt: ob.medicalNotifiedAt?.toISOString() ?? null,
+      // Facility requirements signed off — what unlocks medical.
+      facilitiesReviewedAt: ob.facilitiesReviewedAt?.toISOString() ?? null,
+      facilitiesReviewedByName: ob.facilitiesReviewedBy?.name ?? null,
       hrVerifiedAt: ob.hrVerifiedAt?.toISOString() ?? null,
       crossCheck: ob.crossCheck as {
         verdict?: string;
