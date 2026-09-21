@@ -1254,8 +1254,8 @@ export class OnboardingService {
    * All four are required before final verification — they print on the
    * appointment letter and go onto the payroll record, and an OCR misread of
    * a Bengali name or one digit of the number is not something anybody
-   * catches from a thumbnail. Saved as they type rather than in one
-   * submission, so a half-filled form is not lost.
+   * catches from a thumbnail. Takes any subset, so a half-filled form can be
+   * saved and finished later; the portal sends all four from its Save button.
    */
   async publicSaveNid(token: string, dto: NidParticularsDto) {
     const ob = await this.prisma.onboarding.findFirst({

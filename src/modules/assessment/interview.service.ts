@@ -41,6 +41,12 @@ import {
   CalendarService,
   type CalendarEventInput,
 } from '../integrations/google/calendar.service';
+import { listTests, unmarkedTests } from './tests-gate';
+import {
+  formatSlotShort,
+  panelNotice,
+  type PanelEmailInput,
+} from './interview-panel-email';
 import {
   BulkScheduleInterviewDto,
   DelegationTestsDto,
@@ -64,6 +70,22 @@ const roundInclude = {
 type RoundFull = Prisma.InterviewRoundGetPayload<{
   include: typeof roundInclude;
 }>;
+
+/** The requisition fields a panel notice prints. */
+const PANEL_REQ_SELECT = {
+  code: true,
+  designation: true,
+  department: true,
+  unitFactory: true,
+} satisfies Prisma.RequisitionSelect;
+
+/**
+ * A panelist's own marking sheet. Falls back to the in-app list only if no
+ * token was minted, which would itself be a bug — but a link to something is
+ * better than a notification with nowhere to go.
+ */
+const evaluatePath = (token: string | null | undefined) =>
+  token ? `/evaluate/${token}` : '/my-interviews';
 
 /**
  * How long an emailed evaluation link stays usable.
@@ -215,7 +237,7 @@ export class InterviewService {
     );
     if (synced) round = synced;
 
-    await this.notifyScheduled(round, cand.requisition.designation, dto);
+    await this.notifyScheduled(round, cand.requisition, dto);
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'interview_scheduled',
     });
@@ -288,7 +310,7 @@ export class InterviewService {
       where: { id: { in: roundIds } },
       include: {
         candidate: { select: { name: true } },
-        requisition: { select: { designation: true } },
+        requisition: { select: PANEL_REQ_SELECT },
         evaluationTokens: { select: { panelistUserId: true, token: true } },
       },
     });
@@ -300,30 +322,31 @@ export class InterviewService {
       .filter((r): r is (typeof rounds)[number] => Boolean(r));
     if (!ordered.length) return;
 
-    const designation = ordered[0].requisition.designation;
+    const req = ordered[0].requisition;
     const kindLabel = kind.toLowerCase();
+    // The bell shows names and times; the per-candidate links live in the
+    // email and on My Interviews, where they are clickable.
+    const names = ordered
+      .map((r) => `${r.candidate.name} (${formatSlotShort(r.scheduledAt)})`)
+      .join(', ');
 
     for (const userId of panelistUserIds) {
-      const lines = ordered.map((r, i) => {
-        const token = r.evaluationTokens.find(
-          (t) => t.panelistUserId === userId,
-        )?.token;
-        const when = r.scheduledAt
-          ? new Date(r.scheduledAt).toLocaleString('en-GB', {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            })
-          : 'time to be confirmed';
-        const link = token ? `/evaluate/${token}` : '/my-interviews';
-        return `${i + 1}. ${r.candidate.name} — ${when}\n   Mark here: ${link}`;
-      });
       await this.notifications.notify(userId, {
         type: 'interview_assigned',
         title: `${ordered.length} interviews to conduct`,
-        message: `${designation} — ${kindLabel} interviews:\n${lines.join('\n')}`,
-        // The list itself carries a link per candidate; this one is the
-        // landing place for the message as a whole.
+        message: `${req.designation} — ${kindLabel} interviews: ${names}.`,
         link: '/my-interviews',
+        email: panelNotice(
+          kind,
+          req,
+          ordered.map((r) => ({
+            round: r,
+            path: evaluatePath(
+              r.evaluationTokens.find((t) => t.panelistUserId === userId)
+                ?.token,
+            ),
+          })),
+        ),
       });
     }
   }
@@ -343,7 +366,7 @@ export class InterviewService {
       where: { id: roundId },
       include: {
         requisition: {
-          select: { unitFactory: true, designation: true, recruiterId: true },
+          select: { ...PANEL_REQ_SELECT, recruiterId: true },
         },
         candidate: { select: { name: true } },
         panelists: { select: { userId: true } },
@@ -380,21 +403,17 @@ export class InterviewService {
       select: { panelistUserId: true, token: true },
     });
     const tokenFor = new Map(tokens.map((t) => [t.panelistUserId, t.token]));
-    const when = round.scheduledAt
-      ? new Date(round.scheduledAt).toLocaleString('en-GB', {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-        })
-      : 'a time to be confirmed';
+    const when = formatSlotShort(round.scheduledAt);
 
     // Only the new people. The ones already on the panel have their link.
     for (const userId of fresh) {
-      const token = tokenFor.get(userId);
+      const path = evaluatePath(tokenFor.get(userId));
       await this.notifications.notify(userId, {
         type: 'interview_assigned',
         title: 'Added to an interview panel',
         message: `${round.candidate.name} · ${round.requisition.designation} — ${round.kind.toLowerCase()} interview on ${when}.`,
-        link: token ? `/evaluate/${token}` : '/my-interviews',
+        link: path,
+        email: panelNotice(round.kind, round.requisition, [{ round, path }]),
       });
     }
 
@@ -424,6 +443,18 @@ export class InterviewService {
       round.requisition,
       userId,
     );
+
+    // A mark from any interviewer means the candidate was in the room. The
+    // button is hidden once marks exist; this is the same rule for a stale
+    // tab or a direct call.
+    if (dto.status === 'absent') {
+      const marked = await this.prisma.evaluation.count({ where: { roundId } });
+      if (marked > 0) {
+        throw new BadRequestException(
+          `${marked} interviewer${marked === 1 ? ' has' : 's have'} already marked this candidate, so they attended — they cannot be recorded absent.`,
+        );
+      }
+    }
 
     const newPanelistIds = dto.panelistUserIds
       ? [...new Set(dto.panelistUserIds)]
@@ -965,9 +996,10 @@ export class InterviewService {
 
   private async notifyScheduled(
     round: RoundFull,
-    designation: string,
+    req: PanelEmailInput['requisition'],
     dto: ScheduleInterviewDto,
   ) {
+    const { designation } = req;
     const when = round.scheduledAt
       ? new Date(round.scheduledAt).toLocaleString('en-GB', {
           dateStyle: 'medium',
@@ -999,15 +1031,13 @@ export class InterviewService {
       const tokenFor = new Map(tokens.map((t) => [t.panelistUserId, t.token]));
 
       for (const p of round.panelists) {
-        const token = tokenFor.get(p.userId);
+        const path = evaluatePath(tokenFor.get(p.userId));
         await this.notifications.notify(p.userId, {
           type: 'interview_assigned',
           title: 'Interview to conduct',
-          message: `${round.candidate.name} · ${designation} — ${kindLabel} interview on ${when}.`,
-          // Falls back to the in-app list only if no token was minted, which
-          // would itself be a bug — but a link to something is better than a
-          // notification with nowhere to go.
-          link: token ? `/evaluate/${token}` : '/my-interviews',
+          message: `${round.candidate.name} · ${designation} — ${kindLabel} interview on ${formatSlotShort(round.scheduledAt)}.`,
+          link: path,
+          email: panelNotice(round.kind, req, [{ round, path }]),
         });
       }
     }
@@ -1359,6 +1389,27 @@ export class InterviewService {
       }
       throw new BadRequestException(
         `${cand.name} is not at the interview stage, so a first-interview outcome cannot be recorded.`,
+      );
+    }
+
+    // Every test HR assigned is marked or skipped before anyone decides —
+    // either verdict, since a rejection is read downstream just the same.
+    const fx = await this.prisma.salaryFixation.findUnique({
+      where: { candidateId: cand.id },
+      select: {
+        writtenTestEnabled: true,
+        writtenTestObtained: true,
+        computerTestEnabled: true,
+        computerTestObtained: true,
+        aiTestEnabled: true,
+        aiTestObtained: true,
+      },
+    });
+    const unmarked = unmarkedTests(fx);
+    if (unmarked.length) {
+      const one = unmarked.length === 1;
+      throw new BadRequestException(
+        `Enter ${cand.name}'s ${listTests(unmarked)} test mark${one ? '' : 's'} — or skip ${one ? 'that test' : 'those tests'} under Test marks — before deciding.`,
       );
     }
 
@@ -1883,7 +1934,7 @@ export class InterviewService {
       where: { id: candidateId },
       include: {
         requisition: {
-          select: { unitFactory: true, designation: true, recruiterId: true },
+          select: { ...PANEL_REQ_SELECT, recruiterId: true },
         },
       },
     });

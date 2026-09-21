@@ -5,11 +5,24 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { EventsGateway } from './events.gateway';
 
+export interface NotifyEmail {
+  subject: string;
+  html: string;
+  text: string;
+}
+
 export interface NotifyInput {
   type: string;
   title: string;
   message: string;
   link?: string;
+  /**
+   * A purpose-built email in place of the generic wrapper, for messages whose
+   * email needs more than a title and a line — a list of candidates, say.
+   * Given the recipient's name and the app origin, so it can greet them and
+   * build absolute links. Still subject to their opt-in; never persisted.
+   */
+  email?: (to: { name: string; origin: string }) => NotifyEmail;
 }
 
 export interface BroadcastChangeOptions<T = unknown> {
@@ -30,8 +43,9 @@ export class NotificationsService {
 
   /** Persist a notification for a user, push it live, and optionally email it. */
   async notify(userId: string, input: NotifyInput): Promise<void> {
+    const { email: _email, ...data } = input;
     const notification = await this.prisma.notification.create({
-      data: { userId, ...input },
+      data: { userId, ...data },
     });
     this.gateway.emitToUser(userId, 'notification', notification);
     this.emailIfEnabled(userId, input);
@@ -49,6 +63,13 @@ export class NotificationsService {
         if (!user?.email || !user.emailNotifications) return;
         const origin =
           this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
+        if (input.email) {
+          await this.mail.send({
+            to: user.email,
+            ...input.email({ name: user.name, origin }),
+          });
+          return;
+        }
         const link = input.link ? `${origin}${input.link}` : origin;
         await this.mail.send({
           to: user.email,
