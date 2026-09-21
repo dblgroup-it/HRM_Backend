@@ -30,6 +30,8 @@ import {
 export interface CommitteeScore {
   evaluatorId: string;
   evaluatorName: string;
+  /** Which session this mark was given in — the UI groups on it. */
+  roundId: string;
   roundKind: string;
   total: number;
   max: number;
@@ -66,7 +68,7 @@ export class SalaryFixationService {
     }
     const committee = await this.getCommitteeScores(cand.id);
     const screening = await this.settings.getScreeningConfig();
-    return this.buildView(record, committee, screening, cand.salaryExpectation);
+    return this.buildView(record, committee, screening, candidatePackageOf(cand));
   }
 
   /**
@@ -186,7 +188,7 @@ export class SalaryFixationService {
 
     const committee = await this.getCommitteeScores(cand.id);
     const screening = await this.settings.getScreeningConfig();
-    return this.buildView(saved, committee, screening, cand.salaryExpectation);
+    return this.buildView(saved, committee, screening, candidatePackageOf(cand));
   }
 
   async finalize(candidateId: string, userId: string) {
@@ -205,7 +207,7 @@ export class SalaryFixationService {
       record,
       committee,
       screening,
-      cand.salaryExpectation,
+      candidatePackageOf(cand),
     );
 
     if (view.status === SalaryFixationStatus.screening_failed) {
@@ -239,7 +241,7 @@ export class SalaryFixationService {
       finalized,
       committee,
       screening,
-      cand.salaryExpectation,
+      candidatePackageOf(cand),
     );
   }
 
@@ -265,7 +267,7 @@ export class SalaryFixationService {
       record,
       committee,
       screening,
-      cand.salaryExpectation,
+      candidatePackageOf(cand),
     );
 
     if (view.proposedSalary == null) {
@@ -287,7 +289,7 @@ export class SalaryFixationService {
       updated,
       committee,
       screening,
-      cand.salaryExpectation,
+      candidatePackageOf(cand),
     );
   }
 
@@ -340,6 +342,16 @@ export class SalaryFixationService {
   /** Every distinct evaluator (across all of the candidate's interview rounds)
    * who submitted their evaluation — every submission scores the same fixed
    * criteria, so it counts toward salary fixation automatically. */
+  /**
+   * Every mark this candidate was given, in every session.
+   *
+   * This used to keep only each evaluator's most recent evaluation, so a
+   * panelist who sat on both the first and the second interview had their
+   * first-round mark silently dropped — and a whole round could disappear
+   * from the screen if the same three people ran it. HR could not see what
+   * the first panel thought, and the average was computed from a set nobody
+   * had chosen. Every row is returned now; the caller groups by round.
+   */
   private async getCommitteeScores(
     candidateId: string,
   ): Promise<CommitteeScore[]> {
@@ -347,25 +359,43 @@ export class SalaryFixationService {
       where: { round: { candidateId } },
       include: {
         evaluator: { select: { name: true } },
-        round: { select: { kind: true } },
+        round: { select: { id: true, kind: true, scheduledAt: true } },
       },
-      orderBy: { submittedAt: 'desc' },
+      // Oldest session first, so the list reads first -> second -> final.
+      orderBy: [{ round: { scheduledAt: 'asc' } }, { submittedAt: 'asc' }],
     });
 
-    const byEvaluator = new Map<string, CommitteeScore>();
-    for (const ev of evaluations) {
-      // Rows are ordered newest-first — the first one seen per evaluator wins.
-      if (byEvaluator.has(ev.evaluatorId)) continue;
-      byEvaluator.set(ev.evaluatorId, {
-        evaluatorId: ev.evaluatorId,
-        evaluatorName: ev.evaluator.name,
-        roundKind: ev.round.kind.toLowerCase(),
-        total: ev.total,
-        max: TOTAL_MAX,
-        submittedAt: ev.submittedAt.toISOString(),
-      });
+    return evaluations.map((ev) => ({
+      evaluatorId: ev.evaluatorId,
+      evaluatorName: ev.evaluator.name,
+      roundId: ev.round.id,
+      roundKind: ev.round.kind.toLowerCase(),
+      total: ev.total,
+      max: TOTAL_MAX,
+      submittedAt: ev.submittedAt.toISOString(),
+    }));
+  }
+
+  /**
+   * The committee average: each session averaged, then the sessions averaged.
+   *
+   * Not a flat mean over every evaluation. A first interview run by three
+   * people and a final run by one are one session each — pooling the marks
+   * would let the larger panel outvote the later, more senior one three to
+   * one, which is not how the decision is actually made.
+   */
+  static averageAcrossRounds(committee: CommitteeScore[]): number | null {
+    if (!committee.length) return null;
+    const byRound = new Map<string, number[]>();
+    for (const c of committee) {
+      const list = byRound.get(c.roundId);
+      if (list) list.push(c.total);
+      else byRound.set(c.roundId, [c.total]);
     }
-    return [...byEvaluator.values()];
+    const roundMeans = [...byRound.values()].map(
+      (totals) => totals.reduce((a, b) => a + b, 0) / totals.length,
+    );
+    return roundMeans.reduce((a, b) => a + b, 0) / roundMeans.length;
   }
 
   /** Recompute screening status, average, band and proposed salary — never client-supplied. */
@@ -397,7 +427,19 @@ export class SalaryFixationService {
     } | null,
     committee: CommitteeScore[],
     screening: ScreeningConfig,
-    salaryExpectation: number | null,
+    /**
+     * What the candidate told the interviewer, taken in the room.
+     *
+     * Shown beside our own figure so both sides of the negotiation are on
+     * one screen: what they earn now, what they asked for, and what comes
+     * with it. HR was otherwise opening the interview notes in another tab
+     * to find out what they were bidding against.
+     */
+    candidatePackage: {
+      presentSalary: number | null;
+      salaryExpectation: number | null;
+      salaryBenefitsNote: string | null;
+    },
   ) {
     const base = record ?? {
       jobGrade: null,
@@ -451,9 +493,8 @@ export class SalaryFixationService {
     // Finalizing is blocked separately below and in finalize() itself, so
     // this doesn't let a failed candidate slip through.
     if (committee.length > 0) {
-      averageScore =
-        committee.reduce((sum, c) => sum + c.total, 0) / committee.length;
-      computedBand = bandFromScore(Math.round(averageScore));
+      averageScore = SalaryFixationService.averageAcrossRounds(committee);
+      computedBand = bandFromScore(Math.round(averageScore ?? 0));
       const effectiveBand = base.bandOverride ?? computedBand;
       if (base.jobGrade && isJobGrade(base.jobGrade)) {
         autoProposedSalary = bandSalary(base.jobGrade, effectiveBand);
@@ -508,7 +549,11 @@ export class SalaryFixationService {
       proposedSalaryOverride: base.proposedSalaryOverride,
       /** What the candidate asked for — separate from our proposed figure,
        * so both sides of the negotiation are visible side by side. */
-      salaryExpectation,
+      salaryExpectation: candidatePackage.salaryExpectation,
+      /** What they are on today — the floor any offer has to clear. */
+      presentSalary: candidatePackage.presentSalary,
+      /** Allowances and perks they said their current package includes. */
+      salaryBenefitsNote: candidatePackage.salaryBenefitsNote,
       status,
       offeredAt: base.offeredAt?.toISOString() ?? null,
       offeredById: base.offeredById,
@@ -838,4 +883,23 @@ export class SalaryFixationService {
       'manage salary fixation',
     );
   }
+}
+
+/**
+ * The candidate's own salary story, as one object.
+ *
+ * Pulled out so every call site passes the same three fields — they were a
+ * single loose `salaryExpectation` argument before, and adding the other two
+ * inline at six call sites is how one of them ends up out of step.
+ */
+function candidatePackageOf(cand: {
+  presentSalary: number | null;
+  salaryExpectation: number | null;
+  salaryBenefitsNote: string | null;
+}) {
+  return {
+    presentSalary: cand.presentSalary,
+    salaryExpectation: cand.salaryExpectation,
+    salaryBenefitsNote: cand.salaryBenefitsNote,
+  };
 }

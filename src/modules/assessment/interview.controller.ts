@@ -22,6 +22,9 @@ import {
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
+  AddPanelistsDto,
+  CandidatePackageDto,
+  RejectAtInterviewDto,
 } from './dto/interview.dto';
 
 @Controller()
@@ -163,6 +166,45 @@ export class InterviewController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.interviews.update(roundId, user.id, dto);
+  }
+
+  /**
+   * Add someone to a panel that already exists — including mid-session.
+   *
+   * Not PATCH /interviews/:roundId: that replaces the panel wholesale and
+   * re-notifies everyone on it. This appends and tells only the newcomers.
+   */
+  @Post('interviews/:roundId/panelists')
+  addPanelists(
+    @Param('roundId') roundId: string,
+    @Body() dto: AddPanelistsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.addPanelists(roundId, dto.panelistUserIds, user.id);
+  }
+
+  /** What the candidate earns now and what they are asking for. */
+  @Patch('candidates/:candidateId/package')
+  setPackage(
+    @Param('candidateId') candidateId: string,
+    @Body() dto: CandidatePackageDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.setCandidatePackage(candidateId, user.id, dto);
+  }
+
+  /** Turn the candidate down from the interview screen, at any round. */
+  @Post('candidates/:candidateId/interview-reject')
+  rejectAtInterview(
+    @Param('candidateId') candidateId: string,
+    @Body() dto: RejectAtInterviewDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.rejectAtInterview(
+      candidateId,
+      { id: user.id, name: user.name },
+      dto.reason,
+    );
   }
 
   @Delete('interviews/:roundId')

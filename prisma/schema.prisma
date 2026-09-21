@@ -118,6 +118,10 @@ enum InterviewStatus {
   SCHEDULED
   COMPLETED
   CANCELLED
+  /// The candidate did not turn up. Distinct from CANCELLED, which is the
+  /// company calling it off — this one is a fact about the candidate and the
+  /// panel's time, and HR reads the two very differently.
+  ABSENT
 }
 
 enum EvalTokenStatus {
@@ -576,7 +580,19 @@ model Candidate {
   /// Postal address the AI read off the CV — prefills the offer letter.
   cvAddress             String?                @map("cv_address") @db.VarChar(300)
   notes                 String?
+  /// What they are on now, and what they are asking for.
+  ///
+  /// Both are taken in the interview room, by whoever runs the session —
+  /// usually factory HR on the first interview. They are facts about the
+  /// candidate rather than about one round, so they live here and not on
+  /// InterviewRound: asking again at the second interview would get the same
+  /// two numbers, and storing them twice invites them to disagree.
+  presentSalary         Float?                 @map("present_salary")
   salaryExpectation     Float?                 @map("salary_expectation")
+  /// Allowances, transport, accommodation, bonuses — whatever the candidate
+  /// says their current package includes beyond the cash figure. Free text on
+  /// purpose: it is what they told the interviewer, not a structured claim.
+  salaryBenefitsNote    String?                @map("salary_benefits_note")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
   matchScore            Float?                 @map("match_score")
   matchSummary          String?                @map("match_summary")
@@ -1043,6 +1059,21 @@ model Onboarding {
   facilitiesReviewedAt         DateTime?       @map("facilities_reviewed_at")
   facilitiesReviewedById       String?         @map("facilities_reviewed_by_id")
   facilitiesReviewedBy         User?           @relation("OnboardingFacilitiesReviewedBy", fields: [facilitiesReviewedById], references: [id], onDelete: SetNull)
+  /// The lab prints, handed over on paper. The soft copy is uploaded like
+  /// any other document; this is HR ticking off that the physical set
+  /// arrived, which no upload can evidence.
+  photosHardCopyAt             DateTime?       @map("photos_hard_copy_at")
+  /// The candidate's particulars exactly as printed on their NID, typed by
+  /// them next to the scan.
+  ///
+  /// Typed rather than read off the image: these four go onto the
+  /// appointment letter and the payroll record, and an OCR misread of a
+  /// Bengali name or a digit of the NID number is not something anybody
+  /// catches by looking at a thumbnail.
+  nidName                      String?         @map("nid_name") @db.VarChar(150)
+  nidAddress                   String?         @map("nid_address")
+  nidDob                       DateTime?       @map("nid_dob") @db.Date
+  nidNumber                    String?         @map("nid_number") @db.VarChar(40)
   hrVerifiedAt                 DateTime?       @map("hr_verified_at")
   /// AI cross-verification of submitted docs vs the candidate's profile:
   /// { verdict, overview, findings: [{doc, severity, detail}] }
@@ -1127,7 +1158,16 @@ model OnboardingDoc {
   id           String              @id @default(cuid())
   onboardingId String              @map("onboarding_id")
   onboarding   Onboarding          @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
-  label        String              @db.VarChar(100)
+  /// Which slot on the checklist this fills — 'ssc_certificate',
+  /// 'professional_cert', and so on (see JOINING_DOCS).
+  ///
+  /// Matching used to be on `label`, which meant rewording a checklist item
+  /// orphaned every document already filed under the old words. The key is
+  /// stable and never shown; the label is what people read, and for the
+  /// repeatable slots it is the name the candidate typed ("PMP", "Six
+  /// Sigma Green Belt"), so several rows can share one key.
+  docKey       String?             @map("doc_key") @db.VarChar(60)
+  label        String              @db.VarChar(150)
   fileId       String              @map("file_id") @db.VarChar(100)
   url          String
   mimeType     String              @map("mime_type") @db.VarChar(100)
@@ -1137,6 +1177,7 @@ model OnboardingDoc {
   createdAt    DateTime            @default(now()) @map("created_at")
 
   @@index([onboardingId])
+  @@index([onboardingId, docKey])
   @@map("onboarding_docs")
 }
 

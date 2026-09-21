@@ -222,17 +222,18 @@ export class FacilityProvisioningService {
             <b>${cand.name}</b> has been selected for <b>${cand.requisition.designation}</b>
             (${cand.requisition.unitFactory}${cand.requisition.department ? ` — ${cand.requisition.department}` : ''})
             and will need <b>${FACILITY_LABEL[key]}</b> arranged before joining.<br><br>
-            Once it's arranged, please confirm using the button below. If you cannot
-            arrange it, use the second link to tell HR why.`,
+            Once it's arranged, please confirm using the button below. If there is
+            a problem, reply to this email or speak to HR.`,
             {
               label: `Confirm ${FACILITY_LABEL[key]} arranged`,
               url: confirmUrl,
             },
-            // Same page, decline form already open — so refusing is one click too.
-            {
-              label: 'I cannot arrange this',
-              url: `${confirmUrl}?action=decline`,
-            },
+            // No "I cannot arrange this" link. Refusing a facility is a
+            // conversation with HR, not a one-click answer from an inbox —
+            // and a decline landing in the system with a typed reason and
+            // nobody told tended to stall the joining date silently. The
+            // decline path still exists on the page itself and in the API
+            // for anyone who genuinely has to use it.
           ),
         });
       } catch (e) {
@@ -420,15 +421,13 @@ export class FacilityProvisioningService {
   private emailHtml(
     bodyHtml: string,
     cta?: { label: string; url: string },
-    secondary?: { label: string; url: string },
   ): string {
-    // Both actions sit together, with the paste-the-link fallback after them —
-    // otherwise the second choice reads as an afterthought below the footer text.
+    // One action only. There used to be a red "I cannot arrange this" link
+    // beside it; refusing a facility is a conversation with HR rather than a
+    // one-click answer from an inbox, and a decline arriving with a typed
+    // reason and nobody told stalled the joining date silently.
     const button = cta
-      ? `<tr><td style="padding:8px 28px ${secondary ? '12px' : '28px'}"><a href="${cta.url}" style="display:inline-block;background:#1877c0;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:bold">${cta.label}</a></td></tr>`
-      : '';
-    const secondaryRow = secondary
-      ? `<tr><td style="padding:0 28px 24px;font-size:13px"><a href="${secondary.url}" style="color:#b91c1c;text-decoration:underline">${secondary.label}</a></td></tr>`
+      ? `<tr><td style="padding:8px 28px 28px"><a href="${cta.url}" style="display:inline-block;background:#1877c0;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:bold">${cta.label}</a></td></tr>`
       : '';
     const fallback = cta
       ? `<tr><td style="padding:0 28px 28px;font-size:12px;color:#94a3b8">Or paste this link into your browser:<br><span style="color:#64748b">${cta.url}</span></td></tr>`
@@ -439,7 +438,6 @@ export class FacilityProvisioningService {
           <tr><td style="background:#1877c0;padding:18px 28px;color:#fff;font-size:18px;font-weight:bold">DBL Group — HR</td></tr>
           <tr><td style="padding:28px 28px 16px;font-size:14px;line-height:1.7;color:#334155">${bodyHtml}</td></tr>
           ${button}
-          ${secondaryRow}
           ${fallback}
           <tr><td style="padding:18px 28px;background:#f8fafc;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0">This message was sent by DBL Group HR. Please do not share this link.</td></tr>
         </table>

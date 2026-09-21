@@ -32,6 +32,7 @@ import {
   MedicalDecisionBulkDto,
   SendMedicalLetterDto,
   EmployeeIdDto,
+  PhotosHardCopyDto,
 } from './dto/onboarding.dto';
 
 /** Phase 4 & 5 — document verification, offer & onboarding (authenticated HR). */
@@ -298,6 +299,22 @@ export class OnboardingController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.onboarding.manualCrossCheck(id, dto, user);
+  }
+
+  /** HR ticks off that the physical photographs arrived. */
+  @Patch('candidates/:id/onboarding/photos-hard-copy')
+  setPhotosHardCopy(
+    @Param('id') id: string,
+    @Body() dto: PhotosHardCopyDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.onboarding.setPhotosHardCopy(id, user.id, dto.received);
+  }
+
+  /** Email the candidate the documents still outstanding. */
+  @Post('candidates/:id/onboarding/chase-docs')
+  chaseDocs(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.chasePendingDocs(id, user.id);
   }
 
   @Post('candidates/:id/onboarding/hr-verify')

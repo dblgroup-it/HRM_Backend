@@ -25,6 +25,16 @@ export interface ExtractInput {
   base64: string;
 }
 
+/** What the vision model made of a supposed passport photograph. */
+export interface PortraitVerdict {
+  /** A photograph of a person's face — one or several prints of the same. */
+  isPortrait: boolean;
+  /** 0–1. Below the caller's bar, the verdict is not acted on. */
+  confidence: number;
+  /** One short sentence, shown to the candidate when it is refused. */
+  reason: string;
+}
+
 export interface ExtractResult {
   summary: string;
   fields: Record<string, string>;
@@ -379,6 +389,80 @@ export class AiGraderService {
         ? await this.callClaudeVision(prompt, input.mimeType, input.base64)
         : await this.callGeminiVision(prompt, input.mimeType, input.base64);
     return this.parseExtract(raw);
+  }
+
+  /**
+   * Is this actually a photograph of a face?
+   *
+   * Returns `null` whenever it cannot say — not configured, the request
+   * failed, the answer did not parse. The caller treats that as "allow":
+   * refusing a candidate's photograph because a third-party API was down
+   * would stop their onboarding dead, and there is nobody to appeal to from
+   * the portal. Only a confident, explicit "no" is worth acting on.
+   */
+  async verifyPortrait(input: {
+    mimeType: string;
+    base64: string;
+  }): Promise<PortraitVerdict | null> {
+    if (!this.isConfigured()) return null;
+    if (!input.mimeType.startsWith('image/')) return null;
+
+    const prompt = `You are checking a photograph a job candidate uploaded as their passport photograph for an employee record.
+
+Answer ONLY with compact JSON and nothing else:
+{"isPortrait":<true|false>,"confidence":<0-1>,"reason":"<one short sentence>"}
+
+Set isPortrait to TRUE when the image shows a real human face suitable for an ID photo. All of these are TRUE:
+- one person's head and shoulders, facing the camera
+- a sheet or grid containing several copies of the SAME passport photo (labs print them four-up)
+- a photo of a printed passport photo, or a slightly skewed phone snapshot of one
+
+Set isPortrait to FALSE when there is no usable human face, for example:
+- a document, certificate, marksheet, form, letter or screenshot
+- a landscape, object, animal, logo, or blank/black page
+- a group photo where no single person is the clear subject
+- so blurred, dark or cropped that no face can be made out
+
+Judge only whether it is a usable face photograph. Do NOT judge who the person is, their appearance, age, sex, race, attractiveness or suitability for the job.`;
+
+    try {
+      const raw =
+        this.provider === 'claude'
+          ? await this.callClaudeVision(prompt, input.mimeType, input.base64)
+          : await this.callGeminiVision(prompt, input.mimeType, input.base64);
+      return this.parsePortrait(raw);
+    } catch (e) {
+      this.logger.warn(
+        `Portrait check failed, allowing the upload: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /** `null` when the model's answer cannot be read as a verdict. */
+  private parsePortrait(raw: string): PortraitVerdict | null {
+    const match = /\{[\s\S]*\}/.exec(raw ?? '');
+    if (!match) return null;
+    try {
+      const parsed = JSON.parse(match[0]) as Partial<PortraitVerdict>;
+      if (typeof parsed.isPortrait !== 'boolean') return null;
+      const confidence =
+        typeof parsed.confidence === 'number' && parsed.confidence >= 0
+          ? Math.min(parsed.confidence, 1)
+          : 0;
+      return {
+        isPortrait: parsed.isPortrait,
+        confidence,
+        reason:
+          typeof parsed.reason === 'string' && parsed.reason.trim()
+            ? parsed.reason.trim().slice(0, 200)
+            : 'It does not look like a photograph of a face.',
+      };
+    } catch {
+      return null;
+    }
   }
 
   private buildExtractPrompt(label: string): string {

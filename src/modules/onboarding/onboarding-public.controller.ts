@@ -23,6 +23,7 @@ import {
   AcceptOfferDto,
   DeclineOfferDto,
   UploadDocDto,
+  NidParticularsDto,
 } from './dto/onboarding.dto';
 
 /**
@@ -49,7 +50,15 @@ export class OnboardingPublicController {
     @Body() dto: UploadDocDto,
     @UploadedFile() file?: UploadedDoc,
   ) {
-    return this.onboarding.publicUpload(token, dto.label, file);
+    return this.onboarding.publicUpload(token, dto.docKey, file, dto.label);
+  }
+
+  /** The four NID particulars, typed by the candidate beside the scan. */
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post(':token/nid')
+  saveNid(@Param('token') token: string, @Body() dto: NidParticularsDto) {
+    return this.onboarding.publicSaveNid(token, dto);
   }
 
   @Public()

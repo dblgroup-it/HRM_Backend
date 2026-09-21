@@ -108,8 +108,9 @@ export class UpdateInterviewDto {
   @IsString()
   location?: string;
 
+  /** `absent` is the candidate not turning up — see InterviewStatus. */
   @IsOptional()
-  @IsIn(['scheduled', 'completed', 'cancelled'])
+  @IsIn(['scheduled', 'completed', 'cancelled', 'absent'])
   status?: string;
 
   @IsOptional()
@@ -176,4 +177,45 @@ export class DelegateWorkloadDto {
   @ArrayMaxSize(100)
   @IsString({ each: true })
   userIds!: string[];
+}
+
+/** People to add to a panel that is already arranged. */
+export class AddPanelistsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  panelistUserIds!: string[];
+}
+
+/**
+ * What the candidate is on now and what they want, taken in the room.
+ *
+ * Deliberately has no field for the salary DBL will offer: that is fixed by
+ * Corporate HR against the grade and the committee's marks, on the Salary
+ * Fixation screen. An interviewer recording a "final" figure would be making
+ * a promise nobody authorised.
+ */
+export class CandidatePackageDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  presentSalary?: number | null;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salaryExpectation?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  salaryBenefitsNote?: string | null;
+}
+
+/** Why the candidate is being turned down at the interview stage. */
+export class RejectAtInterviewDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  reason?: string;
 }

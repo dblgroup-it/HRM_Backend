@@ -26,8 +26,25 @@ import {
 } from './letters';
 import { buildOfferEmail, offerEmailHtml, offerEmailText } from './offer-email';
 import { applyCandidateAcceptance } from './accepted-offer';
-import { hrVerifyBlocker, missingDocs, pendingDocs } from './hr-verify';
+import {
+  hrVerifyBlocker,
+  missingDocs,
+  pendingDocs,
+  rejectedDocs,
+} from './hr-verify';
 import { buildCocForm } from './coc-form';
+import { portraitRejection } from './portrait-gate';
+import {
+  COC_DOC_KEY as COC_KEY,
+  COC_DOC_LABEL as COC_LABEL,
+  DOC_SECTIONS as SECTIONS,
+  JOINING_DOCS as DOC_CATALOGUE,
+  LEGACY_LABEL_TO_KEY,
+  REQUIRED_DOC_KEYS as REQ_KEYS,
+  SIGNATURE_DOC_KEY as SIG_KEY,
+  docLabel as labelForKey,
+  docSpec,
+} from './joining-docs';
 import { ReferenceCheckService } from './reference-check.service';
 import { signatureRatioError } from '../../common/signature.util';
 import { imageSize } from '../../common/upload/image-size';
@@ -45,6 +62,7 @@ import { RecruitmentService } from '../candidates/recruitment.service';
 import {
   EmployeeIdDto,
   ManualCrossCheckDto,
+  NidParticularsDto,
   MedicalDto,
   MedicalExamDto,
   NotifyItDto,
@@ -122,111 +140,21 @@ export const MEDICAL_DUE: Prisma.OnboardingWhereInput = {
   ],
 };
 
-/** The signed Code of Conduct, filed like any other joining document. */
-export const COC_DOC_LABEL = 'Code of Conduct (signed)';
-
 /**
- * The candidate's e-signature, collected as a joining document.
- *
- * It is a document like the rest — the candidate uploads it once, here — and
- * every form that needs a signature (the Code of Conduct, the offer
- * acceptance) reads it from this one place rather than asking again.
+ * The joining-document checklist now lives in joining-docs.ts as one keyed
+ * catalogue. Re-exported here because the rest of the codebase — and the
+ * tests — already import these names from this module.
  */
-export const SIGNATURE_DOC_LABEL = 'Signature';
-
-/**
- * One line of DBL's joining-document checklist.
- *
- * Split into a short `label` and a `hint` because the two were previously one
- * string: "Four Passport-size photographs, white background (lab print)" is a
- * sentence, not a name, and nine of them stacked in a column is a wall of
- * text nobody reads. The label is what the row is filed under — it is stored
- * on OnboardingDoc and matched by every completeness check — so it is kept
- * short and stable; the hint carries the detail the candidate actually needs
- * while they are looking for the paper.
- */
-export interface JoiningDocSpec {
-  label: string;
-  hint: string;
-}
-
-/**
- * DBL's joining-document checklist, in the order HR reads it out.
- *
- * The three marked "for experienced candidates" are in OPTIONAL_JOINING_DOCS
- * instead: a fresher has none of them, and a checklist that can never be
- * completed stops meaning anything.
- */
-export const REQUIRED_JOINING_DOCS: readonly JoiningDocSpec[] = [
-  {
-    label: 'Passport Photographs',
-    hint: 'Four copies · white background · lab print',
-  },
-  {
-    label: 'Academic Certificates',
-    hint: 'Every certificate and marksheet — main copy and photocopy',
-  },
-  {
-    label: 'Experience Certificates',
-    hint: 'One from each previous employer',
-  },
-  {
-    label: 'National ID or Passport',
-    hint: 'NID and birth registration, or passport — at least one',
-  },
-  {
-    label: 'Proof of Residence',
-    hint: 'Any recent government utility bill',
-  },
-  {
-    label: SIGNATURE_DOC_LABEL,
-    hint: 'A photo or scan of your signature — you crop it here',
-  },
-];
-
-/**
- * Documents a candidate provides if they have them.
- *
- * Deliberately a separate list rather than more entries in the required one.
- * Progress, the "all uploaded" flag and the gate that opens the medical step
- * all count the required list, so an optional document added there would mean
- * nobody could ever reach complete — a fresh graduate has no pay slip, and the
- * checklist would sit at 5 of 7 forever with nothing anyone could do about it.
- *
- * They are uploaded, stored and verified exactly like the rest; they simply do
- * not hold anything up by being absent.
- */
-export const OPTIONAL_JOINING_DOCS: readonly JoiningDocSpec[] = [
-  {
-    label: 'Relieving Letter & Last Pay Slip',
-    hint: 'From your previous employer',
-  },
-  {
-    label: 'TIN or Last Tax Return',
-    hint: 'Your most recent submission, if you have one',
-  },
-  {
-    label: 'Salary Certificate',
-    hint: 'Pay slip, salary certificate or salary statement',
-  },
-];
-
-/** Just the labels — what every completeness check compares against. */
-export const REQUIRED_DOCS = REQUIRED_JOINING_DOCS.map((d) => d.label);
-export const OPTIONAL_DOCS = OPTIONAL_JOINING_DOCS.map((d) => d.label);
-
-/**
- * label -> hint, sent alongside the two lists.
- *
- * A map rather than a richer list shape so both checklist payloads stay
- * `string[]` and every existing client keeps working unchanged.
- */
-export const DOC_HINTS: Record<string, string> = Object.fromEntries(
-  [...REQUIRED_JOINING_DOCS, ...OPTIONAL_JOINING_DOCS].map((d) => [
-    d.label,
-    d.hint,
-  ]),
-);
+export {
+  COC_DOC_KEY,
+  COC_DOC_LABEL,
+  DOC_SECTIONS,
+  JOINING_DOCS,
+  REQUIRED_DOC_KEYS,
+  SIGNATURE_DOC_KEY,
+  docLabel,
+  docSpec,
+} from './joining-docs';
 
 /**
  * What a joining document may be uploaded as.
@@ -398,10 +326,9 @@ export class OnboardingService {
        */
       pdfReady: await this.pdf.isAvailable(),
       itWebhook: Boolean(this.config.get<string>('it.webhookUrl')),
-      requiredDocs: REQUIRED_DOCS,
-      optionalDocs: OPTIONAL_DOCS,
-      /** The line of guidance under each label. */
-      docHints: DOC_HINTS,
+      /** The whole checklist, in order, with its sections. */
+      docCatalogue: DOC_CATALOGUE,
+      docSections: SECTIONS,
       candidate: {
         id: cand.id,
         name: cand.name,
@@ -409,6 +336,16 @@ export class OnboardingService {
         phone: cand.phone ?? '',
         stage: cand.stage.toLowerCase(),
         source: cand.source,
+        /**
+         * The candidate's own face, taken from the passport photographs
+         * they uploaded.
+         *
+         * They already send one as a joining document, so asking again for
+         * a profile picture would be asking twice for the same thing. Only
+         * an image qualifies — the slot also accepts a PDF scan of the four
+         * lab prints, and a PDF in an <img> is a broken icon.
+         */
+        photoUrl: this.candidatePhotoUrl(ob?.docs ?? []),
         /** Assigned by the recruiter; printed on the Code of Conduct. */
         employeeId: cand.employeeId,
         /** Who they report to, settled with the employee ID. */
@@ -997,13 +934,24 @@ export class OnboardingService {
    * reading, which is why it comes last and why HR sees it in an editable
    * field before the letter goes anywhere.
    */
+  /**
+   * The address to print, best source first.
+   *
+   * The NID sits above the CV because it is the document the candidate
+   * copied by hand off their own identity card for this very file — where
+   * the CV address is whatever they wrote months ago applying, and the AI
+   * reading of it is a guess on top of that. What HR typed still wins: they
+   * are looking at the letter.
+   */
   private resolveAddress(
     typed: string | null | undefined,
     saved: string | null,
     cand: { cvProfile?: unknown; cvAddress?: string | null },
+    nidAddress?: string | null,
   ): string | null {
     if (typed?.trim()) return typed.trim();
     if (saved?.trim()) return saved.trim();
+    if (nidAddress?.trim()) return nidAddress.trim();
     const profile = cand.cvProfile as
       | { contact?: { currentAddress?: string; permanentAddress?: string } }
       | null
@@ -1091,6 +1039,9 @@ export class OnboardingService {
       offerBenefits: string[];
       candidateAddress: string | null;
       fixedDesignation?: string | null;
+      /** Taken from the NID the candidate filed, when they filed one. */
+      nidName?: string | null;
+      nidAddress?: string | null;
     },
     dto: Partial<OfferLetterDto> & { format: LetterFormat },
   ): Promise<LetterInput> {
@@ -1100,9 +1051,22 @@ export class OnboardingService {
       dto.fixedDesignation?.trim() || ob.fixedDesignation?.trim() || null;
     const signatory = await this.resolveSignatory(dto.signatoryUserId);
     return {
-      candidateName: cand.name,
+      /**
+       * The name as printed on their NID, when they have given it.
+       *
+       * The candidate record carries whatever a recruiter typed off a CV —
+       * often an informal or shortened form. An employment contract should
+       * carry the legal name, and this is the only place we have it from the
+       * person themselves.
+       */
+      candidateName: ob.nidName?.trim() || cand.name,
       salutation: dto.salutation ?? null,
-      address: this.resolveAddress(dto.address, ob.candidateAddress, cand),
+      address: this.resolveAddress(
+        dto.address,
+        ob.candidateAddress,
+        cand,
+        ob.nidAddress,
+      ),
       // The level this person is actually hired at. Falls back to the
       // requisition's primary designation, which is every candidate on a
       // single-designation requisition.
@@ -1284,6 +1248,171 @@ export class OnboardingService {
     return { onboarding: this.serialize(updated, cand.name, cand.email) };
   }
 
+  /**
+   * The candidate's NID particulars, typed by them beside the scan.
+   *
+   * All four are required before final verification — they print on the
+   * appointment letter and go onto the payroll record, and an OCR misread of
+   * a Bengali name or one digit of the number is not something anybody
+   * catches from a thumbnail. Saved as they type rather than in one
+   * submission, so a half-filled form is not lost.
+   */
+  async publicSaveNid(token: string, dto: NidParticularsDto) {
+    const ob = await this.prisma.onboarding.findFirst({
+      where: tokenLookupWhere(token),
+      select: { id: true, candidateId: true },
+    });
+    if (!ob) throw new NotFoundException('This link is not valid');
+
+    const dob = dto.dateOfBirth?.trim();
+    if (dob && Number.isNaN(new Date(dob).getTime())) {
+      throw new BadRequestException('That date of birth is not a valid date.');
+    }
+    const saved = await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: {
+        ...(dto.name !== undefined ? { nidName: dto.name?.trim() || null } : {}),
+        ...(dto.address !== undefined
+          ? { nidAddress: dto.address?.trim() || null }
+          : {}),
+        ...(dto.dateOfBirth !== undefined
+          ? // A date-only value: built at UTC midnight so a server east of
+            // UTC does not store the previous day (see parseZingDate).
+            { nidDob: dob ? new Date(`${dob.slice(0, 10)}T00:00:00Z`) : null }
+          : {}),
+        ...(dto.number !== undefined
+          ? { nidNumber: dto.number?.trim() || null }
+          : {}),
+      },
+      select: {
+        nidName: true,
+        nidAddress: true,
+        nidDob: true,
+        nidNumber: true,
+        candidate: { select: { requisitionId: true } },
+      },
+    });
+    this.notifications.broadcastChange(
+      'candidate',
+      saved.candidate.requisitionId,
+      { action: 'nid_saved' },
+    );
+    return {
+      name: saved.nidName ?? '',
+      address: saved.nidAddress ?? '',
+      dateOfBirth: saved.nidDob ? saved.nidDob.toISOString().slice(0, 10) : '',
+      number: saved.nidNumber ?? '',
+    };
+  }
+
+  /**
+   * HR ticks off that the physical photographs arrived.
+   *
+   * The lab prints are handed over on paper as well as uploaded, and no
+   * upload can evidence that — so it is HR's to record, not the candidate's.
+   */
+  async setPhotosHardCopy(candidateId: string, userId: string, received: boolean) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    const updated = await this.prisma.onboarding.update({
+      where: { id: ob.id },
+      data: { photosHardCopyAt: received ? new Date() : null },
+      include: {
+        docs: { orderBy: { createdAt: 'asc' } },
+        medicalClearedBy: { select: { name: true } },
+        facilitiesReviewedBy: { select: { name: true } },
+        offerSignatory: { select: { name: true } },
+        appointmentSignatory: { select: { name: true } },
+      },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'photos_hard_copy',
+    });
+    return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * Chase the candidate for what is still outstanding.
+   *
+   * Sent from the final-verification screen, which is where HR discovers the
+   * file is short — until now the only way to act on that was to leave, open
+   * a mail client and write the list out by hand, which meant it mostly did
+   * not happen and the hire sat still. The list is the server's own answer,
+   * so it cannot disagree with what the gate is refusing on.
+   */
+  async chasePendingDocs(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    if (!cand.email) {
+      throw new BadRequestException(
+        'This candidate has no email address on file.',
+      );
+    }
+    if (!this.mail.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'Email is not configured on this server, so nothing can be sent.',
+      );
+    }
+
+    const docs = await this.prisma.onboardingDoc.findMany({
+      where: { onboardingId: ob.id },
+      select: { docKey: true, label: true, status: true },
+    });
+    const outstanding = missingDocs(REQ_KEYS, { docs }, labelForKey);
+    const rejected = rejectedDocs({ docs });
+    if (!outstanding.length && !rejected.length) {
+      throw new BadRequestException(
+        'Nothing is outstanding — there is nothing to chase them for.',
+      );
+    }
+
+    const link = this.publicLink(ob.token ?? '');
+    const bullet = (items: string[]) =>
+      items.map((d) => `<li>${d}</li>`).join('');
+    const bodyHtml = `
+      <p>Dear ${cand.name},</p>
+      <p>Thank you for the documents you have sent so far. To complete your
+         joining formalities we still need the following:</p>
+      ${outstanding.length ? `<p><strong>Not yet received</strong></p><ul>${bullet(outstanding)}</ul>` : ''}
+      ${rejected.length ? `<p><strong>Sent back — please upload again</strong></p><ul>${bullet(rejected)}</ul></p>` : ''}
+      <p>You can upload them on your own secure page using the button below.</p>`;
+    const text = [
+      `Dear ${cand.name},`,
+      '',
+      'To complete your joining formalities we still need the following:',
+      ...(outstanding.length
+        ? ['', 'Not yet received:', ...outstanding.map((d) => `  - ${d}`)]
+        : []),
+      ...(rejected.length
+        ? [
+            '',
+            'Sent back — please upload again:',
+            ...rejected.map((d) => `  - ${d}`),
+          ]
+        : []),
+      '',
+      `Upload them here: ${link}`,
+      '',
+      'Best regards,',
+      'DBL Group Recruitment',
+    ].join('\n');
+
+    await this.mail.send({
+      to: cand.email,
+      subject: `Documents still needed — ${cand.requisition.designation} | DBL Group`,
+      text,
+      html: this.emailHtml(bodyHtml, {
+        label: 'Upload my documents',
+        url: link,
+      }),
+    });
+
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'docs_chased',
+    });
+    return { ok: true, outstanding, rejected };
+  }
+
   // --- HR: final verify + archive (Stage D) --------------------------------
 
   async hrVerify(candidateId: string, userId: string) {
@@ -1295,14 +1424,26 @@ export class OnboardingService {
     // certificate later" is not something it should be possible to do silently.
     const docs = await this.prisma.onboardingDoc.findMany({
       where: { onboardingId: ob.id },
-      select: { label: true, status: true },
+      select: { docKey: true, label: true, status: true },
     });
-    const blocker = hrVerifyBlocker(REQUIRED_DOCS, {
-      docs,
-      docsSkippedAt: ob.docsSkippedAt,
-      verificationSkippedAt: ob.verificationSkippedAt,
-      medicalStatus: ob.medicalStatus,
+    const referenceCheckCount = await this.prisma.referenceCheck.count({
+      where: { candidateId: cand.id },
     });
+    const blocker = hrVerifyBlocker(
+      REQ_KEYS,
+      {
+        docs,
+        docsSkippedAt: ob.docsSkippedAt,
+        verificationSkippedAt: ob.verificationSkippedAt,
+        medicalStatus: ob.medicalStatus,
+        nidName: ob.nidName,
+        nidAddress: ob.nidAddress,
+        nidDob: ob.nidDob,
+        nidNumber: ob.nidNumber,
+        referenceCheckCount,
+      },
+      labelForKey,
+    );
     if (blocker) throw new BadRequestException(blocker);
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
@@ -2352,9 +2493,8 @@ export class OnboardingService {
       designation: ob.candidate.requisition.designation,
       unit: ob.candidate.requisition.unitFactory,
       status: ob.status,
-      requiredDocs: REQUIRED_DOCS,
-      optionalDocs: OPTIONAL_DOCS,
-      docHints: DOC_HINTS,
+      docCatalogue: DOC_CATALOGUE,
+      docSections: SECTIONS,
       offerSentAt: ob.offerSentAt?.toISOString() ?? null,
       offerAcceptedAt: ob.offerAcceptedAt?.toISOString() ?? null,
       offerDeclinedAt: ob.offerDeclinedAt?.toISOString() ?? null,
@@ -2363,23 +2503,74 @@ export class OnboardingService {
       cocSignedAt: ob.cocSignedAt?.toISOString() ?? null,
       offerJoiningTentative: ob.offerJoiningTentative?.toISOString() ?? null,
       offerSignedAt: ob.offerSignedFileId ? true : false,
-      signatureOnFile: ob.docs.some((d) => d.label === SIGNATURE_DOC_LABEL),
+      signatureOnFile: ob.docs.some((d) => d.docKey === SIG_KEY),
+      /** HR has the lab prints in hand — the candidate cannot assert this. */
+      photosHardCopyAt: ob.photosHardCopyAt?.toISOString() ?? null,
+      /** Typed by the candidate beside their NID scan. */
+      nid: {
+        name: ob.nidName ?? '',
+        address: ob.nidAddress ?? '',
+        dateOfBirth: ob.nidDob ? ob.nidDob.toISOString().slice(0, 10) : '',
+        number: ob.nidNumber ?? '',
+      },
       submitted: ob.docs.map((d) => ({
         id: d.id,
+        docKey: d.docKey,
         label: d.label,
         status: d.status,
       })),
     };
   }
 
-  async publicUpload(token: string, label: string, file?: UploadedDoc) {
+  /**
+   * A document arriving from the candidate's own page.
+   *
+   * Filed against a catalogue key rather than a label. The label is still
+   * stored and shown, but for the repeatable slots it is the name the
+   * candidate typed ("PMP", "Six Sigma Green Belt") — several rows share one
+   * key, and matching on the words would have made each one its own orphan.
+   */
+  async publicUpload(
+    token: string,
+    docKeyRaw: string,
+    file?: UploadedDoc,
+    customLabel?: string,
+  ) {
     if (!file) throw new BadRequestException('Please attach a file');
-    if (!label?.trim()) throw new BadRequestException('Missing document label');
+    const docKey = docKeyRaw?.trim();
+    const spec = docSpec(docKey);
+    if (!spec) {
+      throw new BadRequestException('That is not a document we asked for.');
+    }
+    // A repeatable slot is named by the candidate; a fixed one always shows
+    // the catalogue's own wording, whatever the client sends.
+    const label = spec.repeatable
+      ? customLabel?.trim().slice(0, 150) || spec.label
+      : spec.label;
 
     // One item on the checklist is a picture rather than a document, and it is
     // the one every later form signs with — so its shape is checked here,
     // where it arrives, rather than at each place it is used.
-    if (label.trim() === SIGNATURE_DOC_LABEL) {
+    if (spec.imageOnly && !file.mimetype.startsWith('image/')) {
+      throw new BadRequestException(
+        `${spec.label} must be a photograph — send a JPG or PNG, not a PDF.`,
+      );
+    }
+    // Is it actually a face? This image becomes the candidate's picture
+    // across the system, so a certificate dropped into the slot by mistake
+    // would end up as somebody's avatar and print on their summary. The
+    // check allows anything it cannot confidently rule out — see
+    // portrait-gate.ts for why the bar sits where it does.
+    if (spec.verifyPortrait) {
+      const refusal = portraitRejection(
+        await this.ai.verifyPortrait({
+          mimeType: file.mimetype,
+          base64: file.buffer.toString('base64'),
+        }),
+      );
+      if (refusal) throw new BadRequestException(refusal);
+    }
+    if (docKey === SIG_KEY) {
       const size = imageSize(file.buffer);
       if (!size) {
         throw new BadRequestException(
@@ -2417,6 +2608,7 @@ export class OnboardingService {
     const createdDoc = await this.prisma.onboardingDoc.create({
       data: {
         onboardingId: ob.id,
+        docKey,
         label,
         fileId: uploaded.id,
         url: uploaded.url,
@@ -2827,7 +3019,7 @@ export class OnboardingService {
     }
     if (ob.cocSignedAt) return { ok: true, alreadySigned: true };
 
-    const signature = ob.docs.find((d) => d.label === SIGNATURE_DOC_LABEL);
+    const signature = ob.docs.find((d) => d.docKey === SIG_KEY);
     if (!signature?.fileId) {
       throw new BadRequestException(
         'Please upload your signature in the documents list above first — it is used to sign this form.',
@@ -2873,7 +3065,8 @@ export class OnboardingService {
           await this.prisma.onboardingDoc.create({
             data: {
               onboardingId: ob.id,
-              label: COC_DOC_LABEL,
+              docKey: COC_KEY,
+              label: COC_LABEL,
               fileId: filed.id,
               url: filed.url,
               mimeType: 'application/pdf',
@@ -2948,7 +3141,7 @@ export class OnboardingService {
     if (!ob.offerLetterHtml) return null;
     try {
       const signatureDoc = await this.prisma.onboardingDoc.findFirst({
-        where: { onboardingId: ob.id, label: SIGNATURE_DOC_LABEL },
+        where: { onboardingId: ob.id, docKey: SIG_KEY },
         orderBy: { createdAt: 'desc' },
         select: { fileId: true },
       });
@@ -2986,6 +3179,30 @@ export class OnboardingService {
       );
       return null;
     }
+  }
+
+  /**
+   * A usable portrait from the passport-photograph slot, or null.
+   *
+   * Newest first: a replacement upload should win. Served through the same
+   * short-lived grant as every other joining document — the file is private
+   * on Drive and a raw link would ask the viewer to request access.
+   */
+  private candidatePhotoUrl(
+    docs: { docKey: string | null; mimeType: string; fileId: string; createdAt: Date }[],
+  ): string | null {
+    const photo = [...docs]
+      .filter(
+        (d) =>
+          d.docKey === 'passport_photos' && d.mimeType.startsWith('image/'),
+      )
+      .sort((a, z) => z.createdAt.getTime() - a.createdAt.getTime())[0];
+    if (!photo) return null;
+    return (
+      this.files.url(photo.fileId, 'onboarding-doc', {
+        filename: 'Photograph',
+      }) ?? null
+    );
   }
 
   private async fileWithJoiningDocs(
@@ -3410,7 +3627,7 @@ export class OnboardingService {
       appointmentSignatoryName: ob.appointmentSignatory?.name ?? null,
       // What final verification is still waiting on, worked out in one place so
       // the modal cannot disagree with the endpoint that refuses.
-      missingDocs: missingDocs(REQUIRED_DOCS, ob),
+      missingDocs: missingDocs(REQ_KEYS, ob, labelForKey),
       pendingDocs: pendingDocs(ob),
       cocSentAt: ob.cocSentAt?.toISOString() ?? null,
       cocSignedAt: ob.cocSignedAt?.toISOString() ?? null,
@@ -3471,6 +3688,13 @@ export class OnboardingService {
       // Facility requirements signed off — what unlocks medical.
       facilitiesReviewedAt: ob.facilitiesReviewedAt?.toISOString() ?? null,
       facilitiesReviewedByName: ob.facilitiesReviewedBy?.name ?? null,
+      photosHardCopyAt: ob.photosHardCopyAt?.toISOString() ?? null,
+      nid: {
+        name: ob.nidName ?? '',
+        address: ob.nidAddress ?? '',
+        dateOfBirth: ob.nidDob ? ob.nidDob.toISOString().slice(0, 10) : '',
+        number: ob.nidNumber ?? '',
+      },
       hrVerifiedAt: ob.hrVerifiedAt?.toISOString() ?? null,
       crossCheck: ob.crossCheck as {
         verdict?: string;
@@ -3489,6 +3713,7 @@ export class OnboardingService {
       // minted because the caller already passed this record's access check.
       docs: ob.docs.map((d) => ({
         id: d.id,
+        docKey: d.docKey ?? LEGACY_LABEL_TO_KEY[d.label] ?? null,
         label: d.label,
         url:
           this.files.url(

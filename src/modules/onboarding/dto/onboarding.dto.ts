@@ -23,10 +23,22 @@ const emptyToNull = () =>
   Transform(({ value }) => (value === '' ? null : value));
 
 export class UploadDocDto {
+  /** Which checklist slot this fills — see JOINING_DOCS. */
   @IsString()
   @MinLength(1)
-  @MaxLength(120)
-  label!: string;
+  @MaxLength(60)
+  docKey!: string;
+
+  /**
+   * What to call it, for the repeatable slots only.
+   *
+   * A professional certification is named by the candidate ("PMP"); a fixed
+   * slot always prints the catalogue's own wording whatever arrives here.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  label?: string;
 }
 
 export class VerifyDocDto {
@@ -424,4 +436,24 @@ export class EmployeeIdDto {
   @IsString()
   @MaxLength(150)
   lineManagerTitle?: string;
+}
+
+/**
+ * The candidate's particulars exactly as printed on their NID.
+ *
+ * Every field optional on the wire because the form saves as they type — a
+ * half-filled form must not be rejected and lost. Completeness is enforced
+ * at final verification instead, which is the point where it matters.
+ */
+export class NidParticularsDto {
+  @IsOptional() @IsString() @MaxLength(150) name?: string;
+  @IsOptional() @IsString() @MaxLength(500) address?: string;
+  @IsOptional() @IsString() @MaxLength(30) dateOfBirth?: string;
+  @IsOptional() @IsString() @MaxLength(40) number?: string;
+}
+
+/** HR ticking off that the physical photographs arrived. */
+export class PhotosHardCopyDto {
+  @IsBoolean()
+  received!: boolean;
 }

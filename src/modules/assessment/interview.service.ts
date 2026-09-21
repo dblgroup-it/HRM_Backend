@@ -27,6 +27,7 @@ import type { Response } from 'express';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { rejectBlocker } from './reject-guard';
 import { PermissionsService } from '../rbac/permissions.service';
 import { sameUnit } from '../../common/util/normalize-unit';
 import { NotificationsService } from '../realtime/notifications.service';
@@ -46,6 +47,9 @@ import {
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
+  AddPanelistsDto,
+  CandidatePackageDto,
+  RejectAtInterviewDto,
 } from './dto/interview.dto';
 
 const roundInclude = {
@@ -224,24 +228,184 @@ export class InterviewService {
     return serializeRound(fresh ?? round);
   }
 
+  /**
+   * Schedule the same session for several candidates.
+   *
+   * The panel is told ONCE, about all of them. Previously each round notified
+   * independently, so a panelist scheduled against eight candidates received
+   * eight separate emails within a second of each other — each one a link and
+   * a name, none of them a usable list of the day's interviews. They now get
+   * a single message naming every candidate, in slot order, each with their
+   * own evaluation link.
+   *
+   * Sequential rather than parallel: `schedule()` refuses a second round of
+   * the same kind for one candidate, and two overlapping calls could both
+   * pass that check before either wrote. It also keeps the candidates in the
+   * order the recruiter chose, which is the order of the time slots.
+   */
   async bulkSchedule(
     actor: { id: string; name: string },
     dto: BulkScheduleInterviewDto,
   ) {
-    const results = await Promise.all(
-      dto.candidateIds.map((candidateId, i) =>
-        this.schedule(candidateId, actor, {
+    const results: Awaited<ReturnType<typeof this.schedule>>[] = [];
+    for (const [i, candidateId] of dto.candidateIds.entries()) {
+      results.push(
+        await this.schedule(candidateId, actor, {
           kind: dto.kind,
           mode: dto.mode,
           scheduledAt: dto.scheduledAts?.[i],
           location: dto.location,
           panelistUserIds: dto.panelistUserIds,
           notifyCandidate: dto.notifyCandidate,
-          notifyPanel: dto.notifyPanel,
+          // Held back and sent once below, covering the whole batch.
+          notifyPanel: false,
         }),
-      ),
-    );
+      );
+    }
+    if (dto.notifyPanel !== false && results.length) {
+      await this.notifyPanelOfBatch(
+        [...new Set(dto.panelistUserIds)],
+        results.map((r) => r.id),
+        dto.kind,
+      );
+    }
     return results;
+  }
+
+  /**
+   * One message per panelist covering every candidate in a bulk schedule.
+   *
+   * Each candidate's link is that panelist's own evaluation token — the links
+   * differ per person, so this cannot be a single shared message to everyone.
+   * What it collapses is the per-candidate fan-out, not the per-person one.
+   */
+  private async notifyPanelOfBatch(
+    panelistUserIds: string[],
+    roundIds: string[],
+    kind: string,
+  ) {
+    const rounds = await this.prisma.interviewRound.findMany({
+      where: { id: { in: roundIds } },
+      include: {
+        candidate: { select: { name: true } },
+        requisition: { select: { designation: true } },
+        evaluationTokens: { select: { panelistUserId: true, token: true } },
+      },
+    });
+    // Back into the order the recruiter scheduled them, which is slot order —
+    // findMany does not promise to preserve the `in` list's order.
+    const byId = new Map(rounds.map((r) => [r.id, r]));
+    const ordered = roundIds
+      .map((id) => byId.get(id))
+      .filter((r): r is (typeof rounds)[number] => Boolean(r));
+    if (!ordered.length) return;
+
+    const designation = ordered[0].requisition.designation;
+    const kindLabel = kind.toLowerCase();
+
+    for (const userId of panelistUserIds) {
+      const lines = ordered.map((r, i) => {
+        const token = r.evaluationTokens.find(
+          (t) => t.panelistUserId === userId,
+        )?.token;
+        const when = r.scheduledAt
+          ? new Date(r.scheduledAt).toLocaleString('en-GB', {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })
+          : 'time to be confirmed';
+        const link = token ? `/evaluate/${token}` : '/my-interviews';
+        return `${i + 1}. ${r.candidate.name} — ${when}\n   Mark here: ${link}`;
+      });
+      await this.notifications.notify(userId, {
+        type: 'interview_assigned',
+        title: `${ordered.length} interviews to conduct`,
+        message: `${designation} — ${kindLabel} interviews:\n${lines.join('\n')}`,
+        // The list itself carries a link per candidate; this one is the
+        // landing place for the message as a whole.
+        link: '/my-interviews',
+      });
+    }
+  }
+
+  /**
+   * Add people to a panel that is already arranged.
+   *
+   * Separate from `update()`, which REPLACES the panel wholesale — passing a
+   * grown list through that path deletes and recreates every panelist row,
+   * and re-notifies people who were already invited and may already have
+   * marked. This only ever appends, mints tokens for the newcomers, and tells
+   * them alone. Allowed while a session is running, which is the point: a
+   * third interviewer walking into the room is normal.
+   */
+  async addPanelists(roundId: string, userIds: string[], actorId: string) {
+    const round = await this.prisma.interviewRound.findUnique({
+      where: { id: roundId },
+      include: {
+        requisition: {
+          select: { unitFactory: true, designation: true, recruiterId: true },
+        },
+        candidate: { select: { name: true } },
+        panelists: { select: { userId: true } },
+      },
+    });
+    if (!round) throw new NotFoundException('Interview not found');
+    await this.requireInterviewAccess(
+      round.candidateId,
+      round.requisition,
+      actorId,
+    );
+    if (round.status === 'CANCELLED') {
+      throw new BadRequestException(
+        'This interview was cancelled — reschedule it before adding anyone.',
+      );
+    }
+
+    const already = new Set(round.panelists.map((p) => p.userId));
+    const fresh = [...new Set(userIds)].filter((id) => !already.has(id));
+    if (!fresh.length) {
+      throw new BadRequestException(
+        'Everyone you picked is already on this panel.',
+      );
+    }
+
+    await this.prisma.interviewPanelist.createMany({
+      data: fresh.map((userId) => ({ roundId, userId })),
+      skipDuplicates: true,
+    });
+    await this.generateEvalTokens(roundId, fresh, round.scheduledAt);
+
+    const tokens = await this.prisma.evaluationToken.findMany({
+      where: { roundId, panelistUserId: { in: fresh } },
+      select: { panelistUserId: true, token: true },
+    });
+    const tokenFor = new Map(tokens.map((t) => [t.panelistUserId, t.token]));
+    const when = round.scheduledAt
+      ? new Date(round.scheduledAt).toLocaleString('en-GB', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        })
+      : 'a time to be confirmed';
+
+    // Only the new people. The ones already on the panel have their link.
+    for (const userId of fresh) {
+      const token = tokenFor.get(userId);
+      await this.notifications.notify(userId, {
+        type: 'interview_assigned',
+        title: 'Added to an interview panel',
+        message: `${round.candidate.name} · ${round.requisition.designation} — ${round.kind.toLowerCase()} interview on ${when}.`,
+        link: token ? `/evaluate/${token}` : '/my-interviews',
+      });
+    }
+
+    this.notifications.broadcastChange('candidate', round.requisitionId, {
+      action: 'interview_updated',
+    });
+    const updated = await this.prisma.interviewRound.findUnique({
+      where: { id: roundId },
+      include: roundInclude,
+    });
+    return updated ? serializeRound(updated) : { id: roundId };
   }
 
   async update(roundId: string, userId: string, dto: UpdateInterviewDto) {
@@ -1076,6 +1240,100 @@ export class InterviewService {
    * but deliberately narrow: it moves the stage and nothing else, so a
    * delegate cannot edit the candidate's record through it.
    */
+  /**
+   * What the candidate earns now, what they want, and what comes with it.
+   *
+   * Recorded by whoever is running the session — in practice factory HR on
+   * the first interview, which is the only time anybody asks. Kept on the
+   * candidate rather than the round: the answers do not change between the
+   * first interview and the second, and two copies would eventually differ.
+   *
+   * There is deliberately no field here for the salary DBL will pay. That is
+   * settled by Corporate HR against the grade and the committee's marks on
+   * the Salary Fixation screen; an interviewer writing a figure into this
+   * form would be making a promise nobody authorised.
+   */
+  async setCandidatePackage(
+    candidateId: string,
+    actorId: string,
+    dto: CandidatePackageDto,
+  ) {
+    const cand = await this.loadCandidate(candidateId, actorId);
+    // `null` clears, `undefined` leaves alone — the form sends only what it
+    // touched, so a blank benefits note must not wipe a salary figure.
+    const data: Prisma.CandidateUpdateInput = {};
+    if (dto.presentSalary !== undefined) data.presentSalary = dto.presentSalary;
+    if (dto.salaryExpectation !== undefined) {
+      data.salaryExpectation = dto.salaryExpectation;
+    }
+    if (dto.salaryBenefitsNote !== undefined) {
+      data.salaryBenefitsNote = dto.salaryBenefitsNote?.trim() || null;
+    }
+    const updated = await this.prisma.candidate.update({
+      where: { id: cand.id },
+      data,
+      select: {
+        id: true,
+        presentSalary: true,
+        salaryExpectation: true,
+        salaryBenefitsNote: true,
+      },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'candidate_package',
+    });
+    return updated;
+  }
+
+  /**
+   * Turn a candidate down from the interview screen, at any round.
+   *
+   * `recordFirstInterviewOutcome` covers the delegated first interview and
+   * refuses once the candidate has moved past it. This is the other case:
+   * Corporate HR sitting on the second or final round deciding not to
+   * proceed. Same fields, so the rejection reads the same wherever it is
+   * shown; `rejectionStage` records which screen it came from.
+   */
+  async rejectAtInterview(
+    candidateId: string,
+    actor: { id: string; name: string },
+    reason?: string,
+  ) {
+    const cand = await this.loadCandidate(candidateId, actor.id);
+    // One rule, in reject-guard.ts, so this cannot drift from what the
+    // tests pin — it was got wrong in both directions before.
+    const onboarding = await this.prisma.onboarding.findUnique({
+      where: { candidateId: cand.id },
+      select: { status: true, offerSentAt: true },
+    });
+    const blocker = rejectBlocker({
+      name: cand.name,
+      stage: cand.stage,
+      onboarding,
+    });
+    if (blocker) throw new BadRequestException(blocker);
+
+    const note = reason?.trim();
+    const updated = await this.prisma.candidate.update({
+      where: { id: cand.id },
+      data: {
+        stage: 'REJECTED',
+        rejectedAt: new Date(),
+        rejectedById: actor.id,
+        rejectionStage: 'interview',
+        rejectionReason: note || null,
+        notes: note
+          ? `${cand.notes ? cand.notes + '\n' : ''}Rejected at interview (${actor.name}): ${note}`
+          : cand.notes,
+      },
+      select: { id: true, name: true, stage: true },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'candidate_rejected',
+    });
+    return updated;
+  }
+
   async recordFirstInterviewOutcome(
     candidateId: string,
     outcome: 'final' | 'rejected',
@@ -1596,6 +1854,12 @@ export class InterviewService {
         rejectionStage: r.candidate.rejectionStage,
         rejectionReason: r.candidate.rejectionReason,
         rejectedByName: r.candidate.rejectedBy?.name ?? null,
+        // What they earn now and want, as told to whoever interviewed them.
+        // Shown on the card so the interviewer can see at a glance whether
+        // anybody has asked yet.
+        presentSalary: r.candidate.presentSalary,
+        salaryExpectation: r.candidate.salaryExpectation,
+        salaryBenefitsNote: r.candidate.salaryBenefitsNote,
       },
       // So the worklist can show "not scheduled yet" versus an existing round.
       rounds: r.candidate.interviews.map((i) => ({

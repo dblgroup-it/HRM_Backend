@@ -397,18 +397,38 @@ function formatZingDate(date: Date): string {
   return `${dd}-${mm}-${date.getFullYear()}`;
 }
 
-function parseZingDate(value: string | null): Date | null {
+/**
+ * A ZingHR date, as the calendar day it names — never shifted by a timezone.
+ *
+ * `dateOfBirth` and `joiningDate` are `@db.Date`: a calendar day with no time
+ * and no zone. `new Date(y, m, d)` builds LOCAL midnight, so on a server east
+ * of UTC — Dhaka is +6 — 15 May became 2026-05-14T18:00:00Z, and Postgres
+ * stored the DATE as the 14th. Every synced birthday and joining date read
+ * back a day early. Building at UTC midnight instead stores the day that was
+ * actually sent.
+ *
+ * The .NET `/Date(ms)/` form is an absolute instant, so it is read in UTC and
+ * then flattened to that UTC day for the same reason.
+ */
+export function parseZingDate(value: string | null): Date | null {
   if (!value) return null;
 
   const dotNet = /\/Date\((\d+)\)\//.exec(value);
-  if (dotNet) return new Date(Number(dotNet[1]));
+  if (dotNet) return utcDay(new Date(Number(dotNet[1])));
 
   const dmy = /^(\d{2})[-/](\d{2})[-/](\d{4})$/.exec(value.trim());
   if (dmy) {
     const [, dd, mm, yyyy] = dmy;
-    return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    return new Date(Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)));
   }
 
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return Number.isNaN(parsed.getTime()) ? null : utcDay(parsed);
+}
+
+/** Midnight UTC on the day this instant falls on, in UTC. */
+function utcDay(d: Date): Date {
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
 }
