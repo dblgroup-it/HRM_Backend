@@ -3,6 +3,7 @@ import { tokenLookupWhere } from '../../common/crypto/action-token';
 import {
   daysSince,
   delegationProgress,
+  NOT_LIVE,
   type DelegationStage,
 } from './delegation-progress';
 
@@ -42,6 +43,7 @@ import {
   type CalendarEventInput,
 } from '../integrations/google/calendar.service';
 import { listTests, unmarkedTests } from './tests-gate';
+import { benefitsConflict, normaliseBenefits } from './candidate-benefits';
 import {
   formatSlotShort,
   panelNotice,
@@ -170,12 +172,13 @@ export class InterviewService {
 
     // Two people handed the same candidate would otherwise each arrange their
     // own session, and neither would know — the candidate ends up with two
-    // conflicting invitations for the same round.
+    // conflicting invitations for the same round. A no-show does not count:
+    // the absent round stays on record and a fresh one is booked beside it.
     const existingSameKind = await this.prisma.interviewRound.findFirst({
       where: {
         candidateId: cand.id,
         kind: dto.kind.toUpperCase() as InterviewKind,
-        status: { not: 'CANCELLED' },
+        status: { notIn: [...NOT_LIVE] },
       },
       include: { createdBy: { select: { name: true } } },
     });
@@ -456,6 +459,30 @@ export class InterviewService {
       }
     }
 
+    // Undoing an absence (or a cancellation) once a replacement session has
+    // been booked would leave two live rounds of the same kind — the thing
+    // schedule() refuses.
+    const reviving =
+      NOT_LIVE.includes(round.status) &&
+      dto.status !== undefined &&
+      !NOT_LIVE.includes(dto.status.toUpperCase() as InterviewStatus);
+    if (reviving) {
+      const replacement = await this.prisma.interviewRound.findFirst({
+        where: {
+          candidateId: round.candidateId,
+          kind: round.kind,
+          id: { not: roundId },
+          status: { notIn: [...NOT_LIVE] },
+        },
+        select: { id: true },
+      });
+      if (replacement) {
+        throw new BadRequestException(
+          `Another ${round.kind.toLowerCase()} interview has already been arranged for this candidate. Remove that one first if this session is the one that stands.`,
+        );
+      }
+    }
+
     const newPanelistIds = dto.panelistUserIds
       ? [...new Set(dto.panelistUserIds)]
       : null;
@@ -643,6 +670,7 @@ export class InterviewService {
     if (!round.panelists.some((p) => p.userId === userId)) {
       throw new ForbiddenException('You are not on this interview panel');
     }
+    if (round.status === 'ABSENT') throw new BadRequestException(ABSENT_NO_MARKS);
 
     const already = await this.prisma.evaluation.findUnique({
       where: { roundId_evaluatorId: { roundId, evaluatorId: userId } },
@@ -804,7 +832,9 @@ export class InterviewService {
   async submitEvalByToken(token: string, dto: SubmitEvaluationDto) {
     const et = await this.prisma.evaluationToken.findFirst({
       where: tokenLookupWhere(token),
-      include: { round: { select: { id: true, requisitionId: true } } },
+      include: {
+        round: { select: { id: true, requisitionId: true, status: true } },
+      },
     });
 
     if (!et) throw new NotFoundException('Evaluation link not found');
@@ -812,6 +842,9 @@ export class InterviewService {
       throw new GoneException(
         'This evaluation link has expired. Please contact HR.',
       );
+    }
+    if (et.round.status === 'ABSENT') {
+      throw new BadRequestException(ABSENT_NO_MARKS);
     }
 
     // Idempotency: if already in DB, mark token and return gracefully.
@@ -1299,6 +1332,11 @@ export class InterviewService {
     if (dto.salaryBenefitsNote !== undefined) {
       data.salaryBenefitsNote = dto.salaryBenefitsNote?.trim() || null;
     }
+    if (dto.salaryBenefits !== undefined) {
+      const conflict = benefitsConflict(dto.salaryBenefits);
+      if (conflict) throw new BadRequestException(conflict);
+      data.salaryBenefits = normaliseBenefits(dto.salaryBenefits);
+    }
     const updated = await this.prisma.candidate.update({
       where: { id: cand.id },
       data,
@@ -1307,6 +1345,7 @@ export class InterviewService {
         presentSalary: true,
         salaryExpectation: true,
         salaryBenefitsNote: true,
+        salaryBenefits: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1771,6 +1810,9 @@ export class InterviewService {
         candidate: {
           include: {
             interviews: {
+              // Oldest first, so the board can take the newest first round
+              // as the one that stands after a no-show is rebooked.
+              orderBy: { createdAt: 'asc' },
               select: {
                 id: true,
                 kind: true,
@@ -1911,6 +1953,7 @@ export class InterviewService {
         presentSalary: r.candidate.presentSalary,
         salaryExpectation: r.candidate.salaryExpectation,
         salaryBenefitsNote: r.candidate.salaryBenefitsNote,
+        salaryBenefits: r.candidate.salaryBenefits,
       },
       // So the worklist can show "not scheduled yet" versus an existing round.
       rounds: r.candidate.interviews.map((i) => ({
@@ -1993,6 +2036,13 @@ export class InterviewService {
     await this.requireRecruitmentAccess(req, userId);
   }
 }
+
+/**
+ * The mirror of the rule in update(): marks mean the candidate attended, so a
+ * round recorded absent takes none — the emailed links outlive the absence.
+ */
+const ABSENT_NO_MARKS =
+  'This candidate was recorded absent for this interview, so there is nothing to mark. Ask whoever ran it to undo the absence if they did attend.';
 
 function serializeRound(r: RoundFull) {
   const evaluated = new Set(r.evaluations.map((e) => e.evaluatorId));

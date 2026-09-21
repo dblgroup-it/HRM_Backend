@@ -439,6 +439,7 @@ export class SalaryFixationService {
       presentSalary: number | null;
       salaryExpectation: number | null;
       salaryBenefitsNote: string | null;
+      salaryBenefits: string[];
     },
   ) {
     const base = record ?? {
@@ -554,6 +555,8 @@ export class SalaryFixationService {
       presentSalary: candidatePackage.presentSalary,
       /** Allowances and perks they said their current package includes. */
       salaryBenefitsNote: candidatePackage.salaryBenefitsNote,
+      /** The same, as ticked keys — lunch, pick and drop, housing, tax. */
+      salaryBenefits: candidatePackage.salaryBenefits,
       status,
       offeredAt: base.offeredAt?.toISOString() ?? null,
       offeredById: base.offeredById,
@@ -888,7 +891,7 @@ export class SalaryFixationService {
 /**
  * The candidate's own salary story, as one object.
  *
- * Pulled out so every call site passes the same three fields — they were a
+ * Pulled out so every call site passes the same fields — they were a
  * single loose `salaryExpectation` argument before, and adding the other two
  * inline at six call sites is how one of them ends up out of step.
  */
@@ -896,10 +899,12 @@ function candidatePackageOf(cand: {
   presentSalary: number | null;
   salaryExpectation: number | null;
   salaryBenefitsNote: string | null;
+  salaryBenefits: string[];
 }) {
   return {
     presentSalary: cand.presentSalary,
     salaryExpectation: cand.salaryExpectation,
     salaryBenefitsNote: cand.salaryBenefitsNote,
+    salaryBenefits: cand.salaryBenefits,
   };
 }

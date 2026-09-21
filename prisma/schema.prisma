@@ -593,6 +593,10 @@ model Candidate {
   /// says their current package includes beyond the cash figure. Free text on
   /// purpose: it is what they told the interviewer, not a structured claim.
   salaryBenefitsNote    String?                @map("salary_benefits_note")
+  /// The same story as ticks: lunch, pick and drop, profit share, housing,
+  /// tax. Keys from src/modules/assessment/candidate-benefits.ts — the note
+  /// above stays for anything the list does not cover.
+  salaryBenefits        String[]               @default([]) @map("salary_benefits")
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
   matchScore            Float?                 @map("match_score")
   matchSummary          String?                @map("match_summary")

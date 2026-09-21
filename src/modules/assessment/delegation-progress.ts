@@ -18,6 +18,12 @@ export const DELEGATION_STAGES = [
 
 export type DelegationStage = (typeof DELEGATION_STAGES)[number];
 
+/**
+ * Rounds that did not happen: called off by us, or the candidate never came.
+ * Neither counts as arranged, and neither stops a fresh round being booked.
+ */
+export const NOT_LIVE: readonly InterviewStatus[] = ['CANCELLED', 'ABSENT'];
+
 export const DELEGATION_STAGE_LABEL: Record<DelegationStage, string> = {
   sent: 'No action yet',
   scheduled: 'Interview scheduled',
@@ -75,8 +81,10 @@ export function delegationProgress(
     return done('decided');
   }
 
-  // Cancelled rounds do not count as arranged — that is back to square one.
-  const live = input.rounds.filter((r) => r.status !== 'CANCELLED');
+  // Cancelled and no-show rounds do not count as arranged — that is back to
+  // square one. A no-show's slot has passed, so letting it through would read
+  // as "interviewed, marks pending" for marks that are never coming.
+  const live = input.rounds.filter((r) => !NOT_LIVE.includes(r.status));
   if (live.length === 0) return done('sent');
 
   if (live.some((r) => r.evaluationCount > 0)) {

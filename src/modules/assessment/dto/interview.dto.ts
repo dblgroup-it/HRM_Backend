@@ -14,6 +14,8 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+import { CANDIDATE_BENEFITS } from '../candidate-benefits';
+
 /**
  * Which screening tests these candidates must sit, set at hand-off time.
  *
@@ -210,6 +212,12 @@ export class CandidatePackageDto {
   @IsString()
   @MaxLength(1000)
   salaryBenefitsNote?: string | null;
+
+  /** Ticked benefits, by key. Sent whole: an empty array clears them. */
+  @IsOptional()
+  @IsArray()
+  @IsIn(CANDIDATE_BENEFITS, { each: true })
+  salaryBenefits?: string[];
 }
 
 /** Why the candidate is being turned down at the interview stage. */

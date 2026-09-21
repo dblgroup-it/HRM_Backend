@@ -86,6 +86,27 @@ describe('delegationProgress', () => {
     ).toBe('sent');
   });
 
+  it('ignores a no-show — the slot passed, but nobody was interviewed', () => {
+    expect(
+      at({
+        rounds: [
+          { status: 'ABSENT', scheduledAt: ago(2), evaluationCount: 0 },
+        ],
+      }).stage,
+    ).toBe('sent');
+  });
+
+  it('follows the session rebooked after a no-show', () => {
+    const p = at({
+      rounds: [
+        { status: 'ABSENT', scheduledAt: ago(2), evaluationCount: 0 },
+        { status: 'SCHEDULED', scheduledAt: ahead(3), evaluationCount: 0 },
+      ],
+    });
+    expect(p.stage).toBe('scheduled');
+    expect(p.scheduledAt).toBe(ahead(3).toISOString());
+  });
+
   it('takes the earliest upcoming sitting when several are booked', () => {
     const p = at({
       rounds: [
