@@ -29,7 +29,7 @@ const employeeInclude = {
  */
 export type EmployeeListView = Omit<
   EmployeeView,
-  'dateOfBirth' | 'phone' | 'email'
+  'dateOfBirth' | 'phone' | 'email' | 'signatureUrl'
 >;
 
 export interface EmployeeView {
@@ -39,8 +39,15 @@ export interface EmployeeView {
   employeeCode: string;
   name: string;
   avatarUrl: string | null;
-  /** The person's e-signature, or null when they have none. */
+  /**
+   * A link to the person's own e-signature — null for anybody else's.
+   *
+   * A signature is the mark that signs their letters and forms, so the image
+   * itself is theirs alone. Use `hasSignature` to show whether one is on file.
+   */
   signatureUrl: string | null;
+  /** Whether a signature is on file, which everybody may know. */
+  hasSignature: boolean;
   /** True when they uploaded it themselves; HR may not then replace it. */
   signatureSelfUploaded: boolean;
   email: string | null;
@@ -151,6 +158,42 @@ export class EmployeesService {
   }
 
   /**
+   * The departments employees are actually in, for the directory filter.
+   *
+   * Deliberately not `getStructure`, which also folds in every department
+   * configured on the organogram — those may have no synced employee in them,
+   * and offering one filters the directory to nothing. This asks the only
+   * question the filter needs: which values does the `department` column
+   * hold? The count rides along so the dropdown can say how many are behind
+   * each choice.
+   *
+   * Trimmed and merged case-insensitively, because ZingHR's free-text
+   * department names arrive with stray whitespace and inconsistent casing —
+   * "Finance" and "FINANCE " are one department to a person reading the list,
+   * and two entries that each return half the people is worse than useless.
+   * The first spelling seen alphabetically wins, and the filter matches
+   * insensitively anyway (`findAll`), so either spelling finds both.
+   */
+  async listDepartments(): Promise<{ name: string; count: number }[]> {
+    const rows = await this.prisma.employee.groupBy({
+      by: ['department'],
+      _count: { _all: true },
+    });
+
+    const merged = new Map<string, { name: string; count: number }>();
+    for (const row of rows) {
+      const name = row.department?.trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const existing = merged.get(key);
+      if (existing) existing.count += row._count._all;
+      else merged.set(key, { name, count: row._count._all });
+    }
+
+    return [...merged.values()].sort((a, z) => a.name.localeCompare(z.name));
+  }
+
+  /**
    * Department → Section → Designation hierarchy derived from the synced ZingHR
    * employee data, optionally scoped to a unit. Powers the cascading dropdowns
    * on the requisition form.
@@ -240,21 +283,17 @@ export class EmployeesService {
    * the critical finding, an unauthenticated-in-practice PATCH that let any
    * signed-in user rewrite any of ~4,600 HR master records, and it stays shut.
    *
-   * `actorId` is kept on the signature: callers pass it, and a future rule
-   * about who sees what belongs here rather than in a new code path.
+   * `actorId` decides one thing: whether the e-signature image is returned.
+   * Only the owner's own request gets it — see `toView`.
    */
-  async findOne(
-    id: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    actorId?: string,
-  ): Promise<EmployeeView> {
+  async findOne(id: string, actorId?: string): Promise<EmployeeView> {
     const row = await this.prisma.employee.findUnique({
       where: { id },
       include: employeeInclude,
     });
     if (!row) throw new NotFoundException('Employee not found');
 
-    const view = this.toView(row);
+    const view = this.toView(row, actorId);
 
     // Resolve the line manager's profile id (by their employee code) so the
     // UI can link "Reports to" through to the manager.
@@ -329,7 +368,7 @@ export class EmployeesService {
               data: {
                 ...(dto.gender !== undefined ? { gender: dto.gender } : {}),
                 ...(dto.dateOfBirth !== undefined
-                  ? { dateOfBirth: new Date(dto.dateOfBirth) }
+                  ? { dateOfBirth: calendarDay(dto.dateOfBirth) }
                   : {}),
               },
             }),
@@ -340,8 +379,14 @@ export class EmployeesService {
     return this.findOne(id);
   }
 
+  /**
+   * @param viewerUserId who is asking, which decides whether the signature
+   *   image comes back. Omitted for the directory listing, where nobody's
+   *   does.
+   */
   private toView(
     row: Prisma.EmployeeGetPayload<{ include: typeof employeeInclude }>,
+    viewerUserId?: string,
   ): EmployeeView {
     return {
       id: row.id,
@@ -351,10 +396,28 @@ export class EmployeesService {
       avatarUrl: buildAvatarUrl(row.user.id, row.user.avatarFileId),
       email: row.user.email,
       phone: row.user.phone,
-      /** Their e-signature, shown and managed on the employee detail page. */
-      signatureUrl: this.grants.url(row.user.signatureFileId, 'signature', {
-        filename: `${row.user.name} signature`,
-      }),
+      /**
+       * Only ever your own.
+       *
+       * This used to be served to any signed-in user for any employee, and
+       * on the listing for all ~4,600 at once — a bulk export of every
+       * signature in the company to anyone with a login. A signature is not
+       * a profile detail like a phone number: it is the mark that goes on
+       * somebody's offer letter and joining forms, and having an image of it
+       * is most of what is needed to forge one.
+       *
+       * HR keeps its administrative powers — it may upload, replace or clear
+       * a signature, and `hasSignature` tells it which — but managing one
+       * has never required looking at it. Letters embed the signature
+       * server-side, so nothing downstream needs the image over the wire.
+       */
+      signatureUrl:
+        viewerUserId && row.userId === viewerUserId
+          ? this.grants.url(row.user.signatureFileId, 'signature', {
+              filename: `${row.user.name} signature`,
+            })
+          : null,
+      hasSignature: row.user.signatureFileId != null,
       /**
        * True when the person uploaded it themselves. The detail page uses this
        * to stop HR replacing a signature that is not theirs to change — the
@@ -393,10 +456,29 @@ export class EmployeesService {
  * has to be deleted here is obvious in review, whereas one that quietly rides
  * along in a shared serializer is not.
  */
+/**
+ * A date the user typed, as the calendar day they meant.
+ *
+ * `dateOfBirth` is `@db.Date` — a day, with no time and no zone. The form
+ * sends `YYYY-MM-DD`, which `new Date` reads as UTC midnight and is fine, but
+ * `@IsDateString` also accepts a zoned instant, and `1990-02-15T00:00+06:00`
+ * is 18:00Z on the 14th — Postgres would store the 14th. Reading the day off
+ * the front of the string cannot drift whatever follows it, and matches how
+ * the ZingHR sync normalises the same two columns.
+ */
+function calendarDay(value: string): Date {
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+  if (ymd) return new Date(Date.UTC(+ymd[1], +ymd[2] - 1, +ymd[3]));
+  return new Date(value);
+}
+
 function toListView(view: EmployeeView): EmployeeListView {
-  const { dateOfBirth, phone, email, ...rest } = view;
+  const { dateOfBirth, phone, email, signatureUrl, ...rest } = view;
   void dateOfBirth;
   void phone;
   void email;
+  // Null here already — the listing passes no viewer — but dropped from the
+  // shape as well, so no future caller can hand one out in bulk by accident.
+  void signatureUrl;
   return rest;
 }

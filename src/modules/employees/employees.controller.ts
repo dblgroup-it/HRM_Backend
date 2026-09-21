@@ -17,6 +17,12 @@ export class EmployeesController {
     return this.employeesService.findAll(query);
   }
 
+  /** The departments the directory filter offers — see listDepartments. */
+  @Get('departments')
+  departments() {
+    return this.employeesService.listDepartments();
+  }
+
   /** Dept → Section → Designation tree for the requisition form dropdowns. */
   @Get('structure')
   structure(@Query('unit') unit?: string) {

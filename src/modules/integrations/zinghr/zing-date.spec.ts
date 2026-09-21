@@ -47,6 +47,38 @@ describe('parseZingDate', () => {
     );
   });
 
+  // The form ZingHR actually sends. Left to `new Date`, V8 reads a zone-less
+  // string as LOCAL midnight, and taking its UTC parts in Dhaka gave the 14th.
+  it('reads "DD Mon YYYY" as that calendar day at UTC midnight', () => {
+    expect(iso(parseZingDate('15 Feb 2024'))).toBe('2024-02-15T00:00:00.000Z');
+    expect(iso(parseZingDate('10 Oct 1996'))).toBe('1996-10-10T00:00:00.000Z');
+    expect(iso(parseZingDate('01 Jan 1989'))).toBe('1989-01-01T00:00:00.000Z');
+  });
+
+  it('accepts the long month name and the hyphenated form', () => {
+    expect(iso(parseZingDate('15 February 2024'))).toBe(
+      '2024-02-15T00:00:00.000Z',
+    );
+    expect(iso(parseZingDate('15-Feb-2024'))).toBe('2024-02-15T00:00:00.000Z');
+  });
+
+  it('holds the day in Dhaka, where the bug was reported', () => {
+    // Every branch must be timezone-proof, so the suite runs the live format
+    // under the server timezone that produced the wrong data.
+    const before = process.env.TZ;
+    process.env.TZ = 'Asia/Dhaka';
+    try {
+      expect(parseZingDate('15 Feb 2024')!.getUTCDate()).toBe(15);
+      expect(parseZingDate('17 Feb 2024')!.getUTCDate()).toBe(17);
+    } finally {
+      process.env.TZ = before;
+    }
+  });
+
+  it('reads a bare ISO day as that day', () => {
+    expect(iso(parseZingDate('2024-02-15'))).toBe('2024-02-15T00:00:00.000Z');
+  });
+
   it('returns null for empty and unparseable input', () => {
     expect(parseZingDate(null)).toBeNull();
     expect(parseZingDate('')).toBeNull();

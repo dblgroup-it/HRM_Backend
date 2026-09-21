@@ -400,35 +400,76 @@ function formatZingDate(date: Date): string {
 /**
  * A ZingHR date, as the calendar day it names — never shifted by a timezone.
  *
- * `dateOfBirth` and `joiningDate` are `@db.Date`: a calendar day with no time
- * and no zone. `new Date(y, m, d)` builds LOCAL midnight, so on a server east
- * of UTC — Dhaka is +6 — 15 May became 2026-05-14T18:00:00Z, and Postgres
- * stored the DATE as the 14th. Every synced birthday and joining date read
- * back a day early. Building at UTC midnight instead stores the day that was
- * actually sent.
+ * `dateOfBirth` and `joiningDate` are `@db.Date`: a calendar day, no time, no
+ * zone. Every branch below therefore ends at `utcMidnight`, because a `Date`
+ * built at LOCAL midnight is 18:00Z the previous day in Dhaka (+6), and
+ * Postgres then stores the DATE one day early.
  *
- * The .NET `/Date(ms)/` form is an absolute instant, so it is read in UTC and
- * then flattened to that UTC day for the same reason.
+ * ZingHR sends `"15 Feb 2024"` — a bare day, no time and no zone. That is the
+ * only form the live payload contains (checked across all 10,098 employees),
+ * so it is parsed here by hand rather than left to `new Date`, whose handling
+ * of non-ISO strings is implementation-defined and, in V8, LOCAL. Reading the
+ * UTC parts of that local-midnight instant is what turned 15 Feb into 14 Feb
+ * on every synced record.
+ *
+ * The other branches are defensive: ZingHR does not currently send them, so
+ * they are kept as they were rather than re-interpreted on a guess.
  */
 export function parseZingDate(value: string | null): Date | null {
   if (!value) return null;
+  const text = value.trim();
+  if (!text) return null;
 
-  const dotNet = /\/Date\((\d+)\)\//.exec(value);
+  // .NET /Date(ms)/ — an absolute instant, flattened to the day it falls on.
+  const dotNet = /\/Date\((-?\d+)\)\//.exec(text);
   if (dotNet) return utcDay(new Date(Number(dotNet[1])));
 
-  const dmy = /^(\d{2})[-/](\d{2})[-/](\d{4})$/.exec(value.trim());
-  if (dmy) {
-    const [, dd, mm, yyyy] = dmy;
-    return new Date(Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)));
+  // 15-02-2024 or 15/02/2024
+  const dmy = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/.exec(text);
+  if (dmy) return utcMidnight(+dmy[3], +dmy[2] - 1, +dmy[1]);
+
+  // 2024-02-15
+  const ymd = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
+  if (ymd) return utcMidnight(+ymd[1], +ymd[2] - 1, +ymd[3]);
+
+  // 15 Feb 2024 / 15-Feb-2024 / 15 February 2024 — what ZingHR actually sends.
+  const named = /^(\d{1,2})[\s-]+([A-Za-z]{3,})[\s-]+(\d{4})$/.exec(text);
+  if (named) {
+    const month = MONTHS[named[2].slice(0, 3).toLowerCase()];
+    if (month !== undefined) return utcMidnight(+named[3], month, +named[1]);
   }
 
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : utcDay(parsed);
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // A string carrying no zone was read as LOCAL time, so its LOCAL parts are
+  // the day that was written; anything zoned is a real instant.
+  return ZONED.test(text)
+    ? utcDay(parsed)
+    : utcMidnight(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
 }
+
+const MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/** Does the string name a timezone, making it an instant rather than a day? */
+const ZONED = /(?:Z|GMT|UTC|[+-]\d{2}:?\d{2})\s*$/i;
 
 /** Midnight UTC on the day this instant falls on, in UTC. */
 function utcDay(d: Date): Date {
-  return new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
-  );
+  return utcMidnight(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/**
+ * Midnight UTC on a given calendar day.
+ *
+ * `setUTCFullYear` rather than passing the year straight to `Date.UTC`, which
+ * maps 0-99 onto 1900-1999 — a 1951 birthdate typed as "51" would silently
+ * become 1951 either way, but a genuine year 51 would not round-trip.
+ */
+function utcMidnight(year: number, month: number, day: number): Date {
+  const d = new Date(Date.UTC(2000, month, day));
+  d.setUTCFullYear(year);
+  return d;
 }

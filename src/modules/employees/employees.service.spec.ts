@@ -178,3 +178,80 @@ describe('EmployeesService.findOne — personal details', () => {
     expect(view.email).toBe('test.employee@example.invalid');
   });
 });
+
+/**
+ * A signature is only ever served to the person it belongs to.
+ *
+ * It shipped the other way: `findOne` took an `actorId` and deliberately
+ * ignored it, so any signed-in user could read any colleague's signature off
+ * the employee page, and the directory listing carried one for every employee
+ * in the company on a single request. Unlike a phone number — which the
+ * business decided is internal and lookupable, see the block above — a
+ * signature is the mark that goes on someone's offer letter, and a picture of
+ * it is most of what is needed to forge one.
+ *
+ * Note the split this pins: HR can still see *whether* a signature is on file
+ * and still manage it. It just cannot look at it.
+ */
+describe('EmployeesService — signature confidentiality', () => {
+  const row = {
+    id: 'emp-1',
+    userId: 'user-1',
+    employeeCode: '15100000',
+    designation: 'Officer',
+    lineManagerCode: null,
+    user: {
+      id: 'user-1',
+      name: 'Test Employee',
+      email: null,
+      phone: null,
+      signatureFileId: 'sig-file-1',
+      signatureUploadedById: 'user-1',
+      _count: { roleAssignments: 1 },
+    },
+  };
+
+  function build() {
+    const prisma = {
+      employee: {
+        findUnique: jest.fn().mockResolvedValue(row),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([row]),
+        count: jest.fn().mockResolvedValue(1),
+      },
+    } as unknown as PrismaService;
+    // A super user, to show that even bypassing every scope check does not
+    // hand over somebody else's signature — this is not a permission.
+    const perms = {
+      isSuperUser: jest.fn().mockResolvedValue(true),
+      isEmployeeAdmin: jest.fn().mockResolvedValue(true),
+      getUserPermissions: jest
+        .fn()
+        .mockResolvedValue({ isSuperUser: true, roles: [], unitIds: [] }),
+    } as unknown as PermissionsService;
+    return new EmployeesService(prisma, perms, grants());
+  }
+
+  it('gives the owner their own signature', async () => {
+    const view = await build().findOne('emp-1', 'user-1');
+    expect(view.signatureUrl).toBe('/api/files/grant-for-sig-file-1');
+    expect(view.hasSignature).toBe(true);
+  });
+
+  it('withholds it from a colleague, and from a super user', async () => {
+    const view = await build().findOne('emp-1', 'someone-else');
+    expect(view.signatureUrl).toBeNull();
+    // Still told one exists, so HR's manage/replace controls work.
+    expect(view.hasSignature).toBe(true);
+  });
+
+  it('withholds it when no actor is supplied', async () => {
+    expect((await build().findOne('emp-1')).signatureUrl).toBeNull();
+  });
+
+  it('never puts one on the directory listing', async () => {
+    const page = await build().findAll({ page: 1, pageSize: 20 } as never);
+    expect(page.items[0]).not.toHaveProperty('signatureUrl');
+    expect(page.items[0].hasSignature).toBe(true);
+  });
+});
