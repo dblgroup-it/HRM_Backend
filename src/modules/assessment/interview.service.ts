@@ -28,6 +28,7 @@ import type { Response } from 'express';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CandidatesService } from '../candidates/candidates.service';
 import { buildCandidateBrief } from './candidate-brief';
 import { rejectBlocker } from './reject-guard';
 import {
@@ -125,6 +126,7 @@ export class InterviewService {
     private readonly settings: SettingsService,
     private readonly files: FileGrantService,
     private readonly secureFiles: SecureFileService,
+    private readonly candidates: CandidatesService,
   ) {}
 
   async listForRequisition(reqId: string, userId: string) {
@@ -249,6 +251,11 @@ export class InterviewService {
     if (synced) round = synced;
 
     await this.notifyScheduled(round, cand.requisition, dto);
+    // Read the CV into structured facts now, in the background, so the
+    // panel's evaluation form already carries the candidate summary when
+    // they open it. Best-effort by design — a CV that cannot be read must
+    // never stop an interview being arranged.
+    this.candidates.scheduleCvProfile(cand.id);
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
       action: 'interview_scheduled',
     });
@@ -831,6 +838,15 @@ export class InterviewService {
       throw new GoneException(
         'This evaluation link has expired. Please contact HR.',
       );
+    }
+
+    // Backstop for a CV that was never read — an interview arranged before
+    // this existed, or an extraction that failed. It runs in the background,
+    // so this first open shows whatever is on file and the next one is
+    // complete; blocking the form on an AI call would be worse than a
+    // summary that fills in a minute later.
+    if (!et.round.candidate.cvProfile && et.round.candidate.cvFileId) {
+      this.candidates.scheduleCvProfile(et.round.candidate.id);
     }
 
     // Mark as opened on first access.

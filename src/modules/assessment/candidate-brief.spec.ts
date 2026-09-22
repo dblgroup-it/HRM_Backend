@@ -117,6 +117,29 @@ describe('buildCandidateBrief', () => {
     expect(brief.education.map((e) => e.degree)).toEqual(['MBA', 'Diploma']);
   });
 
+  it('tells a qualification from a course, the way the sheet prints them', () => {
+    const brief = buildCandidateBrief({
+      name: 'Asanka Alwis',
+      cvProfile: profile({
+        education: [
+          { institute: 'University of Bedfordshire, UK', degree: 'MBA', passYear: 2020 },
+          { institute: 'CQI & IRCA', degree: 'ISO 9001:2015 Lead Auditor', passYear: 2023 },
+          { institute: 'BAU', degree: 'Masters Of Science', passYear: 2019 },
+          { institute: 'Govt. College', degree: 'Higher Secondary School Certificate', passYear: 2015 },
+          { institute: 'Anexas Europe', degree: 'Lean Six Sigma Black Belt', passYear: 2021 },
+        ],
+      }),
+    });
+    const kindOf = (degree: string) =>
+      brief.education.find((e) => e.degree === degree)?.kind;
+    expect(kindOf('MBA')).toBe('degree');
+    expect(kindOf('Masters Of Science')).toBe('degree');
+    // Spelled out, not abbreviated — a CV writes it both ways.
+    expect(kindOf('Higher Secondary School Certificate')).toBe('degree');
+    expect(kindOf('ISO 9001:2015 Lead Auditor')).toBe('certification');
+    expect(kindOf('Lean Six Sigma Black Belt')).toBe('certification');
+  });
+
   it('says so plainly when there is no CV profile at all', () => {
     // A candidate a recruiter typed in by hand. The card renders nothing
     // rather than a scaffold of empty headings.

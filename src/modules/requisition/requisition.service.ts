@@ -1378,7 +1378,19 @@ export class RequisitionService {
     actorId: string,
   ): Promise<'holder' | 'hr' | 'super'> {
     if (await this.permissions.isSuperUser(actorId)) return 'super';
-    // The people who own the document, at any stage of its life.
+
+    /**
+     * Still open for change at all.
+     *
+     * Once the last approver has signed, the requisition is the document the
+     * chain approved and the offer is written from — so it stops being
+     * editable by the unit side. Corporate keeps the pen (below): a wrong
+     * grade still has to be fixable after approval, and every change they
+     * make is written into the activity log.
+     */
+    const inChain =
+      req.status === 'PENDING_JOB_ANALYSIS' || req.status === 'PENDING_APPROVAL';
+
     const [isCorporateHr, isChro, isFactoryHr] = await Promise.all([
       this.permissions.hasRoleForUnitName(actorId, 'corporate_hr', req.unitFactory),
       this.permissions.hasRoleForUnitName(actorId, 'chro', req.unitFactory),
@@ -1388,10 +1400,45 @@ export class RequisitionService {
       req.recruiterId === actorId ||
       (req.coverRecruiterId === actorId &&
         (!req.coverUntil || req.coverUntil.getTime() > Date.now()));
-    if (isCorporateHr || isChro || isFactoryHr || isRecruiter) return 'hr';
+
+    // Corporate and the recruiter running the hire own the document for its
+    // whole life.
+    if (isCorporateHr || isChro || isRecruiter) return 'hr';
+    // The unit's Factory HR owns it only while it is still in the chain.
+    if (isFactoryHr) {
+      if (inChain) return 'hr';
+      throw new ForbiddenException(
+        `${req.code} has been approved — it can no longer be changed here. Ask Head of Talent Acquisition or the assigned recruiter if something has to be corrected.`,
+      );
+    }
 
     await this.requireCurrentApprover(req, actorId);
     return 'holder';
+  }
+
+  /**
+   * May this person add or remove the requisition's files?
+   *
+   * The same rule as editing it, and for the same reason: the detailed JD is
+   * part of what the chain signed off. Attachments had no gate at all beyond
+   * "can you see this requisition", so anyone who could open an approved
+   * requisition could delete the JD out of it.
+   */
+  private async requireAttachmentAccess(
+    req: RequisitionFull,
+    actorId: string,
+    action: string,
+  ): Promise<void> {
+    try {
+      await this.requireEditAccess(req, actorId);
+    } catch (err) {
+      if (err instanceof ForbiddenException || err instanceof BadRequestException) {
+        throw new ForbiddenException(
+          `${err.message} (${action} on ${req.code})`,
+        );
+      }
+      throw err;
+    }
   }
 
   private async requireCurrentApprover(
@@ -1701,6 +1748,7 @@ export class RequisitionService {
   ) {
     if (!file) throw new BadRequestException('No file provided');
     const req = await this.load(id, actor.id);
+    await this.requireAttachmentAccess(req, actor.id, 'adding a file');
     const ws = await this.recruitment.ensureWorkspace(req);
     if (!ws) {
       throw new BadRequestException(
@@ -1749,6 +1797,7 @@ export class RequisitionService {
     actor: { id: string; name: string },
   ) {
     const req = await this.load(id, actor.id);
+    await this.requireAttachmentAccess(req, actor.id, 'removing a file');
     const list = readAttachments(req);
     if (!list.some((a) => a.fileId === fileId)) {
       throw new NotFoundException('Attachment not found');

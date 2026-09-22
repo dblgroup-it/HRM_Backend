@@ -33,6 +33,7 @@ import { SecureFileService } from '../../common/files/secure-file.service';
 import type { CvProfile } from './cv/cv-profile.types';
 import { buildCvDocument } from './cv/cv-document';
 import { cvProfileToText } from './cv/cv-text';
+import { extractedCvToProfile } from './cv/cv-extract';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import {
   BulkRejectDto,
@@ -1517,6 +1518,75 @@ export class CandidatesService {
    * shortlisted (Bdjobs forwards only its own shortlist) therefore gain a score
    * without being moved backwards into an AI stage.
    */
+  /**
+   * Make sure this candidate has a structured CV on file.
+   *
+   * Bdjobs sends fields; somebody who applied on the careers page sends a
+   * document, and a document is not something the interviewer's summary, the
+   * shortlisting sheet or the board papers can read. This reads it once with
+   * the AI and stores the result in the system's own shape.
+   *
+   * Never overwrites an existing profile: a structured intake is the
+   * authoritative one and a re-read of the same PDF would only add drift.
+   * Pass `force` where a recruiter has explicitly asked for a re-scan.
+   *
+   * Returns true when a profile is on file afterwards, false when there was
+   * nothing to read or the AI is off — callers treat it as best-effort.
+   */
+  async ensureCvProfile(candidateId: string, force = false): Promise<boolean> {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: { id: true, name: true, cvFileId: true, cvProfile: true },
+    });
+    if (!cand) return false;
+    if (cand.cvProfile && !force) return true;
+    if (!cand.cvFileId || !this.ai.isConfigured()) return false;
+
+    try {
+      const { buffer, mimeType } = await this.drive.getFileBuffer(cand.cvFileId);
+      const extracted = await this.ai.extractCvProfile({
+        mimeType,
+        base64: buffer.toString('base64'),
+      });
+      // A read that found nothing is not worth storing: it would look like a
+      // CV with no history rather than a CV nobody has read yet, and it would
+      // stop this ever trying again.
+      if (extracted.employment.length === 0 && extracted.education.length === 0) {
+        this.logger.warn(`CV extraction found nothing for ${cand.name}`);
+        return false;
+      }
+      const profile = extractedCvToProfile(extracted);
+      await this.prisma.candidate.update({
+        where: { id: cand.id },
+        data: {
+          cvProfile: profile as unknown as Prisma.InputJsonValue,
+          cvProfileAt: new Date(),
+          // Backfill only what nobody has typed in by hand.
+          ...(profile.contact.currentAddress
+            ? { cvAddress: profile.contact.currentAddress.slice(0, 300) }
+            : {}),
+        },
+      });
+      return true;
+    } catch (err) {
+      this.logger.warn(
+        `Could not read the CV for ${cand.name}: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Read the CV in the background, and say nothing if it fails.
+   *
+   * Called where somebody is about to need the summary — when an interview
+   * is arranged — so it is ready by the time the panel opens the form. It
+   * must never delay or fail the thing that triggered it.
+   */
+  scheduleCvProfile(candidateId: string): void {
+    void this.ensureCvProfile(candidateId).catch(() => undefined);
+  }
+
   private async runScreen(
     cand: Prisma.CandidateGetPayload<{ include: { requisition: true } }>,
   ): Promise<CandidateRow | null> {
@@ -1823,6 +1893,28 @@ export class CandidatesService {
    * Recruiter assigned to this requisition. Takes the requisition (not just
    * its unit) so the assigned recruiter is always considered.
    */
+  /**
+   * May this user act on this candidate? Public, because a controller
+   * sometimes needs the gate without the work behind it.
+   */
+  async requireCandidateAccess(candidateId: string, userId: string) {
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: {
+        requisition: {
+          select: {
+            unitFactory: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
+        },
+      },
+    });
+    if (!cand) throw new NotFoundException('Candidate not found');
+    await this.requireRecruitmentAccess(cand.requisition, userId);
+  }
+
   private async requireRecruitmentAccess(
     req: RecruitmentSubject,
     userId: string,

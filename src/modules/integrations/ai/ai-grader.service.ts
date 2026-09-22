@@ -83,6 +83,34 @@ export interface JobAnalysisInput {
   hint?: string | null;
 }
 
+/**
+ * A CV read off the document, in the shape the rest of the system already
+ * uses. Only the parts an interviewer reads are asked for — enough to build
+ * the summary block DBL's own shortlisting sheet prints.
+ */
+export interface ExtractedCv {
+  fullName?: string;
+  dateOfBirth?: string;
+  age?: number;
+  phone?: string;
+  email?: string;
+  address?: string;
+  education: {
+    degree?: string;
+    institute?: string;
+    year?: number;
+    result?: string;
+  }[];
+  employment: {
+    company?: string;
+    designation?: string;
+    from?: string;
+    to?: string;
+    current?: boolean;
+  }[];
+  totalExperienceLabel?: string;
+}
+
 export interface JobAnalysisResult {
   jobDescription: string;
   education: string;
@@ -625,6 +653,96 @@ Use clear field names that match the document, for example: Full Name, Document 
         ? await this.callClaude(prompt)
         : await this.callGemini(prompt);
     return this.parseRoleProfile(raw);
+  }
+
+  /**
+   * Read a CV document into structured facts.
+   *
+   * The interviewer's summary — age, education, every post held with its
+   * span, total service — can only be built from a `CvProfile`, and an
+   * uploaded PDF has none: Bdjobs sends fields, but somebody who applied on
+   * the careers page sends a document. This reads that document into the
+   * same shape, once, so every screen downstream keeps reading one thing.
+   *
+   * Dates come back as ISO where the CV gives a month and a year, because
+   * the spans are computed from them. A CV that only says "2019 - 2021" gets
+   * January of each, which is the convention the sheet already prints.
+   */
+  async extractCvProfile(input: {
+    mimeType: string;
+    base64: string;
+  }): Promise<ExtractedCv> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const prompt = `Read this CV and return what it says. Do not infer, guess or invent anything: if the CV does not state something, leave the field out.
+
+Return ONLY a compact JSON object:
+{"fullName":"<as written>","dateOfBirth":"<yyyy-mm-dd, only if the CV states a date of birth>","age":<number, only if the CV states an age>,"phone":"<primary number, with any country code as written>","email":"<primary email>","address":"<present/mailing address as one line>","education":[{"degree":"<e.g. MBA, B.Sc. in Textile Engineering, ISO 9001:2015 Lead Auditor>","institute":"<institution, with country if given>","year":<pass year as a number>,"result":"<CGPA/class, if stated>"}],"employment":[{"company":"<employer>","designation":"<job title>","from":"<yyyy-mm-dd, or yyyy-01-01 if only a year is given>","to":"<yyyy-mm-dd, omit if still there>","current":<true if this is their present job>}],"totalExperienceLabel":"<total years of work as the CV states it, e.g. '22 years', only if stated>"}
+
+Rules:
+- List education most recent first, and include professional certifications and training as education entries.
+- List employment most recent first, one entry per position — if somebody held two positions at the same company, that is two entries.
+- Use the CV's own wording for titles and company names.`;
+
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaudeVision(prompt, input.mimeType, input.base64)
+        : await this.callGeminiVision(prompt, input.mimeType, input.base64);
+    return this.parseExtractedCv(raw);
+  }
+
+  private parseExtractedCv(raw: string): ExtractedCv {
+    const str = (v: unknown): string | undefined => {
+      const t = typeof v === 'string' ? v.trim() : '';
+      return t ? t : undefined;
+    };
+    const num = (v: unknown): number | undefined => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      const obj = JSON.parse(match ? match[0] : raw) as Record<string, unknown>;
+      const rows = (v: unknown): Record<string, unknown>[] =>
+        Array.isArray(v)
+          ? v.filter(
+              (r): r is Record<string, unknown> =>
+                Boolean(r) && typeof r === 'object',
+            )
+          : [];
+      return {
+        fullName: str(obj.fullName),
+        dateOfBirth: str(obj.dateOfBirth),
+        age: num(obj.age),
+        phone: str(obj.phone),
+        email: str(obj.email),
+        address: str(obj.address),
+        totalExperienceLabel: str(obj.totalExperienceLabel),
+        education: rows(obj.education)
+          .map((e) => ({
+            degree: str(e.degree),
+            institute: str(e.institute),
+            year: num(e.year),
+            result: str(e.result),
+          }))
+          .filter((e) => e.degree || e.institute)
+          .slice(0, 20),
+        employment: rows(obj.employment)
+          .map((e) => ({
+            company: str(e.company),
+            designation: str(e.designation),
+            from: str(e.from),
+            to: str(e.to),
+            current: e.current === true,
+          }))
+          .filter((e) => e.company)
+          .slice(0, 25),
+      };
+    } catch {
+      this.logger.warn(`Could not parse AI CV extraction: ${raw.slice(0, 120)}`);
+      return { education: [], employment: [] };
+    }
   }
 
   /**

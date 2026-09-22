@@ -150,6 +150,22 @@ export class CandidatesController {
     return this.candidates.screenCandidate(id, user.id);
   }
 
+  /**
+   * Read this candidate's CV document into structured facts.
+   *
+   * What the interviewer's summary, the shortlisting sheet and the board
+   * papers all read. It runs by itself when an interview is arranged; this
+   * is the manual re-run for a CV that was replaced, or one the AI could not
+   * make sense of the first time.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Post('candidates/:id/cv/scan')
+  async scanCv(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    await this.candidates.requireCandidateAccess(id, user.id);
+    const read = await this.candidates.ensureCvProfile(id, true);
+    return { read };
+  }
+
   @Post('requisitions/:reqId/candidates')
   @UseInterceptors(FileInterceptor('cv', CV_UPLOAD))
   create(

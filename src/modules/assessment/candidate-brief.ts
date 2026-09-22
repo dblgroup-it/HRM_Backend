@@ -40,6 +40,15 @@ export interface CandidateBriefEducation {
   institute: string | null;
   year: number | null;
   result: string | null;
+  /**
+   * A qualification or a course.
+   *
+   * DBL's own shortlisting sheet prints these as two blocks — "Education"
+   * and "Professional Certifications" — because they are read differently:
+   * one says what somebody is qualified as, the other what they have kept
+   * up with. A CV lists them together, so they are separated here.
+   */
+  kind: 'degree' | 'certification';
 }
 
 export interface CandidateBriefJob {
@@ -106,6 +115,31 @@ function ageFrom(dateOfBirth?: string | null): number | null {
   return age > 0 && age < 100 ? age : null;
 }
 
+/**
+ * Degree or course?
+ *
+ * Matched on the award, which is the only thing that reliably distinguishes
+ * them — an institute name says nothing ("Skillful Bangladesh" awards a
+ * course, a university awards both). Anything unrecognised is treated as a
+ * certification: over-promoting a two-day workshop to "Education" misleads,
+ * where under-promoting a degree merely files it one block lower.
+ */
+const DEGREE_PATTERN = new RegExp(
+  [
+    // School-leaving, as Bangladesh writes it — spelled out as well as
+    // abbreviated, because a CV does both ("HSC", "Higher Secondary School
+    // Certificate") and the spelled-out form was being filed as a course.
+    '\\b(?:ssc|hsc|dakhil|alim|o[ -]levels?|a[ -]levels?)\\b',
+    '(?:higher )?secondary school certificate',
+    // Plurals matter: `\\bmaster\\b` does not match "Masters Of Science".
+    '\\b(?:bachelors?|masters?|doctorate|honou?rs|diploma|mphil|phd)\\b',
+    '\\bb\\.?\\s?(?:sc|a|com|ba|eng|tech)\\b',
+    '\\bm\\.?\\s?(?:sc|a|com|ba|eng|tech)\\b',
+    '\\b(?:bba|mba|beng|meng|llb|llm|mbbs|bds|ph\\.?\\s?d)\\b',
+  ].join('|'),
+  'i',
+);
+
 function educationRow(e: CvEducation): CandidateBriefEducation | null {
   const degree = clean(e.degree);
   const institute =
@@ -119,6 +153,7 @@ function educationRow(e: CvEducation): CandidateBriefEducation | null {
     institute: degree ? institute : null,
     year: typeof e.passYear === 'number' ? e.passYear : null,
     result: clean(e.result),
+    kind: DEGREE_PATTERN.test(degree ?? '') ? 'degree' : 'certification',
   };
 }
 
