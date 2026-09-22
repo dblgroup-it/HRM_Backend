@@ -38,6 +38,9 @@ enum SeatCategory {
 
 enum RequisitionStatus {
   DRAFT
+  /// Raised, but the Job Analysis is still the unit's Factory HR's to complete
+  /// — the approval chain has not started yet.
+  PENDING_JOB_ANALYSIS
   PENDING_APPROVAL
   APPROVED
   REJECTED
@@ -276,6 +279,11 @@ model User {
   approvalPathLevels            ApprovalPathLevel[]    @relation("ApprovalPathLevelUser")
   approvalStepsAssigned         ApprovalStep[]         @relation("ApprovalStepApprover")
   requisitionsRecruiting        Requisition[]          @relation("RequisitionRecruiter")
+  requisitionsJobAnalysed       Requisition[]          @relation("RequisitionJobAnalysisBy")
+  requisitionsToAnalyse         Requisition[]          @relation("RequisitionJobAnalysisAssignee")
+  requisitionsCovering          Requisition[]          @relation("RequisitionCoverRecruiter")
+  leavePeriods                  LeavePeriod[]          @relation("UserLeave")
+  leavePeriodsSet               LeavePeriod[]          @relation("LeaveSetBy")
   requisitionRecruitersSet      Requisition[]          @relation("RequisitionRecruiterAssignedBy")
   createdAt                     DateTime               @default(now()) @map("created_at")
   updatedAt                     DateTime               @updatedAt @map("updated_at")
@@ -331,6 +339,12 @@ model RoleAssignment {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   unitId       String?  @map("unit_id")
   unit         Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  /// HR layering within a unit — 1 is first priority, 2 covers when the first
+  /// is on leave, and so on. Only Factory HR reads it today: a requisition's job
+  /// analysis is addressed to the lowest-numbered holder who is available.
+  /// Null means unordered; a unit whose holders are all null behaves as it
+  /// always has (everyone notified, anyone may act).
+  priority     Int?
   assignedById String?  @map("assigned_by_id")
   assignedBy   User?    @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
   createdAt    DateTime @default(now()) @map("created_at")
@@ -338,6 +352,33 @@ model RoleAssignment {
   @@unique([roleId, userId, unitId])
   @@index([userId])
   @@map("role_assignments")
+}
+
+/// Someone's absence, as a dated period rather than a flag on the user.
+///
+/// A period answers the questions a flag cannot — until when, how many days
+/// left, who set it, and what happened last month — and it expires on its own:
+/// "on leave now" is simply a period covering this moment, so nothing has to
+/// run at midnight to switch anybody back on.
+model LeavePeriod {
+  id        String        @id @default(cuid())
+  userId    String        @map("user_id")
+  user      User          @relation("UserLeave", fields: [userId], references: [id], onDelete: Cascade)
+  startsAt  DateTime      @map("starts_at")
+  /// Null means "until further notice" — ended by hand with `endedAt`.
+  endsAt    DateTime?     @map("ends_at")
+  /// Set when someone comes back early; the period is over from this moment,
+  /// whatever `endsAt` said. Any recruiter cover riding on it lapses with it.
+  endedAt   DateTime?     @map("ended_at")
+  note      String?
+  setById   String?       @map("set_by_id")
+  setBy     User?         @relation("LeaveSetBy", fields: [setById], references: [id], onDelete: SetNull)
+  /// Requisitions handed to a stand-in for the duration of this leave.
+  covers    Requisition[] @relation("RequisitionCoverLeave")
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  @@index([userId, startsAt])
+  @@map("leave_periods")
 }
 
 /// Organizational profile, primarily fed by the ZingHR daily sync.
@@ -513,9 +554,41 @@ model Requisition {
   /// HR once approved. Additive: Corporate HR / CHRO keep their access.
   recruiterId           String?                  @map("recruiter_id")
   recruiter             User?                    @relation("RequisitionRecruiter", fields: [recruiterId], references: [id], onDelete: SetNull)
+  /// Stand-in running this requisition while the recruiter is on leave.
+  /// Additive and temporary: `recruiterId` still owns it, and the cover lapses
+  /// with the leave it hangs off — including when that leave is ended early.
+  coverRecruiterId      String?                  @map("cover_recruiter_id")
+  coverRecruiter        User?                    @relation("RequisitionCoverRecruiter", fields: [coverRecruiterId], references: [id], onDelete: SetNull)
+  coverLeaveId          String?                  @map("cover_leave_id")
+  coverLeave            LeavePeriod?             @relation("RequisitionCoverLeave", fields: [coverLeaveId], references: [id], onDelete: SetNull)
+  /// The leave's end, repeated here so the recruitment gate — checked on nearly
+  /// every candidate / interview / onboarding call — stays an id comparison and
+  /// a date, with no join and nothing scheduled for a cover to expire on time.
+  /// Null with a cover set means "until further notice".
+  coverUntil            DateTime?                @map("cover_until")
   recruiterAssignedAt   DateTime?                @map("recruiter_assigned_at")
   recruiterAssignedById String?                  @map("recruiter_assigned_by_id")
   recruiterAssignedBy   User?                    @relation("RequisitionRecruiterAssignedBy", fields: [recruiterAssignedById], references: [id], onDelete: SetNull)
+  /// Who completed the Job Analysis (section B) and attachments, and when.
+  ///
+  /// Kept because requisition visibility is "your own business only": without
+  /// this, the Factory HR who wrote the job description would lose sight of the
+  /// requisition the moment it entered the approval chain.
+  jobAnalysisById       String?                  @map("job_analysis_by_id")
+  jobAnalysisBy         User?                    @relation("RequisitionJobAnalysisBy", fields: [jobAnalysisById], references: [id], onDelete: SetNull)
+  jobAnalysisAt         DateTime?                @map("job_analysis_at")
+  /// The Factory HR this requisition's job analysis is addressed to — the
+  /// available holder with the lowest `RoleAssignment.priority` for the unit,
+  /// fixed when the requisition is raised and moved again if they go on leave.
+  /// Null means nobody was available (or the unit has no Factory HR), which is
+  /// what puts it in front of Head of Talent Acquisition / the recruiters.
+  jobAnalysisAssigneeId String?                  @map("job_analysis_assignee_id")
+  jobAnalysisAssignee   User?                    @relation("RequisitionJobAnalysisAssignee", fields: [jobAnalysisAssigneeId], references: [id], onDelete: SetNull)
+  /// Set when Factory HR sends the requisition back to the raiser instead of
+  /// completing it — the vacancy details are the raiser's to fix, and nobody
+  /// in the chain holds it meanwhile. Cleared when the raiser resends.
+  jobAnalysisReturnedAt DateTime?                @map("job_analysis_returned_at")
+  jobAnalysisReturnNote String?                  @map("job_analysis_return_note")
   /// Phase 2: Google Drive folder ids + shareable links for this requisition's recruitment workspace.
   drive                 Json?
   /// Optional supporting files (JD, approvals, etc.) — array of { name, fileId, url, size, uploadedAt }.
@@ -538,6 +611,9 @@ model Requisition {
   @@index([createdAt])
   @@index([deletedAt])
   @@index([recruiterId])
+  @@index([jobAnalysisById])
+  @@index([jobAnalysisAssigneeId])
+  @@index([coverRecruiterId])
   @@map("requisitions")
 }
 
@@ -597,6 +673,13 @@ model Candidate {
   /// tax. Keys from src/modules/assessment/candidate-benefits.ts — the note
   /// above stays for anything the list does not cover.
   salaryBenefits        String[]               @default([]) @map("salary_benefits")
+  /// Where they are picked up from, for the transport facility.
+  ///
+  /// Asked in the interview room together with the rest of the package — the
+  /// requisition cannot carry it, because at requisition time nobody is
+  /// selected and nobody knows where they live. HR reads it back when they go
+  /// through the hire's facility requirements and have to arrange the run.
+  transportPickup       String?                @map("transport_pickup") @db.VarChar(200)
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
   matchScore            Float?                 @map("match_score")
   matchSummary          String?                @map("match_summary")

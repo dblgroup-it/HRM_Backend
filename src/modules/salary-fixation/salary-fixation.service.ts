@@ -7,7 +7,10 @@ import {
 import { SalaryFixationStatus } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { PermissionsService } from '../rbac/permissions.service';
+import {
+  PermissionsService,
+  type RecruitmentSubject,
+} from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { SettingsService, ScreeningConfig } from '../settings/settings.service';
 import { DriveService } from '../integrations/google/drive.service';
@@ -876,7 +879,7 @@ export class SalaryFixationService {
    * its unit) so the assigned recruiter is always considered.
    */
   private async requireRecruitmentAccess(
-    req: { unitFactory: string; recruiterId: string | null },
+    req: RecruitmentSubject,
     userId: string,
   ) {
     await this.permissions.requireRecruitmentAccess(
@@ -884,6 +887,8 @@ export class SalaryFixationService {
       req.unitFactory,
       req.recruiterId,
       'manage salary fixation',
+      // Whoever is standing in while the recruiter is on leave.
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 }

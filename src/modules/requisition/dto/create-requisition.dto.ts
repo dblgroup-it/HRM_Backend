@@ -33,12 +33,6 @@ export class FacilityRequestDto {
   @IsIn(['sedan', 'suv'])
   vehicleType?: string;
 
-  /** Transport — where the person is picked up from. */
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  pickupLocation?: string;
-
   @IsOptional()
   @IsString()
   note?: string;
@@ -114,6 +108,15 @@ export class ReplacedEmployeeDto {
   remarks?: string;
 }
 
+/**
+ * What the requisitioner fills in: section A (Vacancy Information) and the
+ * facility requirements, nothing else.
+ *
+ * Section B (Job Analysis) and the attachments are completed afterwards by the
+ * unit's Factory HR — see `JobAnalysisDto` — and only then does the approval
+ * chain start. Preferred sources are gone entirely: every posted requisition
+ * goes to the career page.
+ */
 export class CreateRequisitionDto {
   @IsString()
   @MinLength(2)
@@ -224,34 +227,11 @@ export class CreateRequisitionDto {
   @IsString()
   contractualPurpose?: string;
 
-  @IsString()
-  @MinLength(5)
-  jobDescription!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  education!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  experience!: string;
-
-  @IsOptional()
-  @IsString()
-  others?: string;
-
   @IsDefined()
   @IsNotEmptyObject()
   @ValidateNested()
   @Type(() => FacilitiesRequestDto)
   facilities!: FacilitiesRequestDto;
-
-  @IsOptional()
-  @IsArray()
-  @IsIn(['job_advertisement', 'headhunting', 'cv_bank'], {
-    each: true,
-  })
-  preferredSources?: string[];
 
   @ValidateNested()
   @Type(() => SignatoriesDto)

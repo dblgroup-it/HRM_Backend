@@ -33,6 +33,7 @@ import { MailModule } from './modules/integrations/mail/mail.module';
 import { AiModule } from './modules/integrations/ai/ai.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { RbacModule } from './modules/rbac/rbac.module';
+import { LeaveModule } from './modules/leave/leave.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuditContextInterceptor } from './common/interceptors/audit-context.interceptor';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -91,6 +92,7 @@ import { PdfModule } from './common/pdf/pdf.module';
     AiModule,
     SettingsModule,
     RbacModule,
+    LeaveModule,
     AuditModule,
     RealtimeModule,
     AutomationModule,

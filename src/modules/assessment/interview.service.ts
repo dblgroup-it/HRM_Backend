@@ -28,8 +28,12 @@ import type { Response } from 'express';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { buildCandidateBrief } from './candidate-brief';
 import { rejectBlocker } from './reject-guard';
-import { PermissionsService } from '../rbac/permissions.service';
+import {
+  PermissionsService,
+  type RecruitmentSubject,
+} from '../rbac/permissions.service';
 import { sameUnit } from '../../common/util/normalize-unit';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
@@ -160,6 +164,10 @@ export class InterviewService {
             actor.id,
             cand.requisition.unitFactory,
             cand.requisition.recruiterId,
+            {
+              userId: cand.requisition.coverRecruiterId,
+              until: cand.requisition.coverUntil,
+            },
           )
           .catch(() => false);
         if (!owns) {
@@ -361,15 +369,23 @@ export class InterviewService {
    * grown list through that path deletes and recreates every panelist row,
    * and re-notifies people who were already invited and may already have
    * marked. This only ever appends, mints tokens for the newcomers, and tells
-   * them alone. Allowed while a session is running, which is the point: a
-   * third interviewer walking into the room is normal.
+   * them alone. Allowed while a session is still running, which is the point:
+   * a third interviewer walking into the room is normal. Once the round is
+   * over it is not — the panel is the record of who was in that room, and
+   * adding someone to it afterwards mints an evaluation link for an interview
+   * they never attended.
    */
   async addPanelists(roundId: string, userIds: string[], actorId: string) {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
       include: {
         requisition: {
-          select: { ...PANEL_REQ_SELECT, recruiterId: true },
+          select: {
+            ...PANEL_REQ_SELECT,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
         },
         candidate: { select: { name: true } },
         panelists: { select: { userId: true } },
@@ -381,9 +397,13 @@ export class InterviewService {
       round.requisition,
       actorId,
     );
-    if (round.status === 'CANCELLED') {
+    if (round.status !== 'SCHEDULED') {
       throw new BadRequestException(
-        'This interview was cancelled — reschedule it before adding anyone.',
+        round.status === 'CANCELLED'
+          ? 'This interview was cancelled — reschedule it before adding anyone.'
+          : round.status === 'ABSENT'
+            ? 'The candidate did not attend this interview, so there is nobody to mark.'
+            : 'This interview is already marked done — schedule another round rather than adding an interviewer to a finished one.',
       );
     }
 
@@ -435,7 +455,13 @@ export class InterviewService {
       where: { id: roundId },
       include: {
         requisition: {
-          select: { unitFactory: true, designation: true, recruiterId: true },
+          select: {
+            unitFactory: true,
+            designation: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
         },
         panelists: { select: { userId: true } },
       },
@@ -559,7 +585,14 @@ export class InterviewService {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
       include: {
-        requisition: { select: { unitFactory: true, recruiterId: true } },
+        requisition: {
+          select: {
+            unitFactory: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
+        },
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
@@ -593,6 +626,8 @@ export class InterviewService {
             phone: true,
             cvUrl: true,
             cvFileId: true,
+            cvAddress: true,
+            cvProfile: true,
           },
         },
         requisition: {
@@ -605,7 +640,19 @@ export class InterviewService {
         },
         evaluations: { where: { evaluatorId: userId } },
       },
-      orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'asc' }],
+      /**
+       * Most recent first.
+       *
+       * This page is opened to mark a session that has just been run, so the
+       * one at the top should be the one that just happened. Oldest-first put
+       * last month's finished interviews above this morning's, and the row
+       * somebody came to mark was several screens down. Rounds with no date
+       * yet sort last: there is nothing to mark on them.
+       */
+      orderBy: [
+        { scheduledAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+      ],
     });
 
     return rounds.map((r) => {
@@ -628,6 +675,8 @@ export class InterviewService {
             this.files.url(r.candidate.cvFileId, 'cv', {
               filename: `${r.candidate.name} — CV`,
             }) ?? r.candidate.cvUrl,
+          /** The same block the token form shows — see `candidate-brief`. */
+          brief: buildCandidateBrief(r.candidate),
         },
         requisition: {
           id: r.requisition.id,
@@ -670,7 +719,8 @@ export class InterviewService {
     if (!round.panelists.some((p) => p.userId === userId)) {
       throw new ForbiddenException('You are not on this interview panel');
     }
-    if (round.status === 'ABSENT') throw new BadRequestException(ABSENT_NO_MARKS);
+    if (round.status === 'ABSENT')
+      throw new BadRequestException(ABSENT_NO_MARKS);
 
     const already = await this.prisma.evaluation.findUnique({
       where: { roundId_evaluatorId: { roundId, evaluatorId: userId } },
@@ -751,7 +801,17 @@ export class InterviewService {
             // read their background, and on the token path they have no other
             // way in — there is no login and no candidate page for them.
             candidate: {
-              select: { id: true, name: true, cvUrl: true, cvFileId: true },
+              select: {
+                id: true,
+                name: true,
+                cvUrl: true,
+                cvFileId: true,
+                // The brief the panelist marks against — see `candidate-brief`.
+                email: true,
+                phone: true,
+                cvAddress: true,
+                cvProfile: true,
+              },
             },
             requisition: {
               select: {
@@ -808,6 +868,15 @@ export class InterviewService {
         cvUrl: et.round.candidate.cvFileId
           ? `/api/eval/${et.token}/cv`
           : et.round.candidate.cvUrl,
+        /**
+         * The CV as facts, not as a document.
+         *
+         * A panelist on the token path has no login and no candidate page,
+         * and a PDF in another tab is not something anybody reads between two
+         * interviews. The block they actually score against — age, education,
+         * every post held and the total service — travels with the form.
+         */
+        brief: buildCandidateBrief(et.round.candidate),
       },
       interview: {
         kind: et.round.kind.toLowerCase(),
@@ -901,7 +970,14 @@ export class InterviewService {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
       include: {
-        requisition: { select: { unitFactory: true, recruiterId: true } },
+        requisition: {
+          select: {
+            unitFactory: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
+        },
         panelists: { select: { userId: true } },
       },
     });
@@ -1125,6 +1201,8 @@ export class InterviewService {
             designation: true,
             unitFactory: true,
             recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
           },
         },
       },
@@ -1337,6 +1415,9 @@ export class InterviewService {
       if (conflict) throw new BadRequestException(conflict);
       data.salaryBenefits = normaliseBenefits(dto.salaryBenefits);
     }
+    if (dto.transportPickup !== undefined) {
+      data.transportPickup = dto.transportPickup?.trim() || null;
+    }
     const updated = await this.prisma.candidate.update({
       where: { id: cand.id },
       data,
@@ -1346,6 +1427,7 @@ export class InterviewService {
         salaryExpectation: true,
         salaryBenefitsNote: true,
         salaryBenefits: true,
+        transportPickup: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1521,7 +1603,14 @@ export class InterviewService {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
       include: {
-        requisition: { select: { unitFactory: true, recruiterId: true } },
+        requisition: {
+          select: {
+            unitFactory: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
+        },
       },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
@@ -1715,7 +1804,13 @@ export class InterviewService {
   async requisitionDelegationBoard(reqId: string, userId: string) {
     const req = await this.prisma.requisition.findUnique({
       where: { id: reqId },
-      select: { id: true, unitFactory: true, recruiterId: true },
+      select: {
+        id: true,
+        unitFactory: true,
+        recruiterId: true,
+        coverRecruiterId: true,
+        coverUntil: true,
+      },
     });
     if (!req) throw new NotFoundException('Requisition not found');
     await this.requireRecruitmentAccess(req, userId);
@@ -1954,6 +2049,8 @@ export class InterviewService {
         salaryExpectation: r.candidate.salaryExpectation,
         salaryBenefitsNote: r.candidate.salaryBenefitsNote,
         salaryBenefits: r.candidate.salaryBenefits,
+        /** Where they are picked up from, if transport comes with the post. */
+        transportPickup: r.candidate.transportPickup,
       },
       // So the worklist can show "not scheduled yet" versus an existing round.
       rounds: r.candidate.interviews.map((i) => ({
@@ -1977,7 +2074,12 @@ export class InterviewService {
       where: { id: candidateId },
       include: {
         requisition: {
-          select: { ...PANEL_REQ_SELECT, recruiterId: true },
+          select: {
+            ...PANEL_REQ_SELECT,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
         },
       },
     });
@@ -1989,7 +2091,12 @@ export class InterviewService {
   private async requireReq(reqId: string, userId: string) {
     const req = await this.prisma.requisition.findUnique({
       where: { id: reqId },
-      select: { unitFactory: true, recruiterId: true },
+      select: {
+        unitFactory: true,
+        recruiterId: true,
+        coverRecruiterId: true,
+        coverUntil: true,
+      },
     });
     if (!req) throw new NotFoundException('Requisition not found');
     await this.requireRecruitmentAccess(req, userId);
@@ -2001,7 +2108,7 @@ export class InterviewService {
    * its unit) so the assigned recruiter is always considered.
    */
   private async requireRecruitmentAccess(
-    req: { unitFactory: string; recruiterId: string | null },
+    req: RecruitmentSubject,
     userId: string,
   ) {
     await this.permissions.requireRecruitmentAccess(
@@ -2009,6 +2116,8 @@ export class InterviewService {
       req.unitFactory,
       req.recruiterId,
       'manage interviews',
+      // Whoever is standing in while the recruiter is on leave.
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 
@@ -2029,7 +2138,7 @@ export class InterviewService {
    */
   private async requireInterviewAccess(
     candidateId: string,
-    req: { unitFactory: string; recruiterId: string | null },
+    req: RecruitmentSubject,
     userId: string,
   ): Promise<void> {
     if (await this.hasDelegation(candidateId, userId)) return;

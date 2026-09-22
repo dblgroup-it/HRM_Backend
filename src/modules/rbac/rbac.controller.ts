@@ -21,6 +21,7 @@ import { PermissionsService } from './permissions.service';
 import {
   CreateAssignmentDto,
   CreateRoleDto,
+  SetLayeringOrderDto,
   UpdateRoleDto,
 } from './dto/rbac.dto';
 
@@ -90,6 +91,20 @@ export class RbacController {
   }
 
   @Roles(UserRole.ADMIN)
+  /** Each unit's Factory HR queue + the recruiter pool, with who is away. */
+  @Roles(UserRole.ADMIN)
+  @Get('hr-layering')
+  hrLayering() {
+    return this.rbac.hrLayering();
+  }
+
+  /** Set a unit's priority order for a role (first priority, second, …). */
+  @Roles(UserRole.ADMIN)
+  @Patch('role-assignments/order')
+  setLayeringOrder(@Body() dto: SetLayeringOrderDto) {
+    return this.rbac.setLayeringOrder(dto);
+  }
+
   @Delete('role-assignments/:id')
   deleteAssignment(@Param('id') id: string) {
     return this.rbac.deleteAssignment(id);

@@ -13,6 +13,7 @@ import {
   CreateAssignmentDto,
   CreateRoleDto,
   UpdateRoleDto,
+  SetLayeringOrderDto,
 } from './dto/rbac.dto';
 
 function slugify(value: string): string {
@@ -93,7 +94,33 @@ export class RbacService {
 
   // --- Assignments --------------------------------------------------------
 
-  listAssignments(filters: { roleId?: string; unitId?: string }) {
+  /**
+   * Every assignment, with one derived flag: whether a Requisition Raiser
+   * actually has an approval path in that unit.
+   *
+   * Holding the role without a path is a dead end — `buildStepsForRaiser`
+   * refuses, so the person is told to ask Corporate HR the moment they try to
+   * raise. Access Control used to show the role and say nothing, which read as
+   * "they can raise here".
+   */
+  async listAssignments(filters: { roleId?: string; unitId?: string }) {
+    const [rows, paths] = await Promise.all([
+      this.findAssignments(filters),
+      this.prisma.approvalPath.findMany({
+        select: { unitId: true, raiserId: true },
+      }),
+    ]);
+    const routed = new Set(paths.map((p) => `${p.unitId}:${p.raiserId}`));
+    return rows.map((a) => ({
+      ...a,
+      hasApprovalPath:
+        a.role.key === 'requisition_raiser' && a.unitId
+          ? routed.has(`${a.unitId}:${a.userId}`)
+          : null,
+    }));
+  }
+
+  private findAssignments(filters: { roleId?: string; unitId?: string }) {
     return this.prisma.roleAssignment.findMany({
       where: {
         ...(filters.roleId ? { roleId: filters.roleId } : {}),
@@ -111,7 +138,9 @@ export class RbacService {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
+      // Priority order first (1, 2, 3…), unordered holders after it. The page
+      // shows the queue, so it has to arrive as a queue.
+      orderBy: [{ priority: { sort: 'asc', nulls: 'last' } }, { createdAt: 'desc' }],
     });
   }
 
@@ -150,12 +179,173 @@ export class RbacService {
     }
   }
 
-  async deleteAssignment(id: string) {
-    const assignment = await this.prisma.roleAssignment.delete({
-      where: { id },
+  /**
+   * Everything the HR Layering page shows: each unit's Factory HR queue in
+   * priority order with who is away, and the Corporate Recruiter pool.
+   *
+   * Assembled here rather than in the page so the order shown is the same one
+   * routing actually uses — `factoryHrQueue` is what addresses a requisition.
+   */
+  async hrLayering() {
+    const units = await this.prisma.unit.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
     });
-    this.permissions.invalidate(assignment.userId);
-    return { id };
+
+    const withQueues = await Promise.all(
+      units.map(async (u) => ({
+        unitId: u.id,
+        unitName: u.name,
+        queue: await this.permissions.factoryHrQueue(u.name),
+      })),
+    );
+
+    // Corporate Recruiter is a GLOBAL role, so the pool is the same everywhere
+    // — listed once rather than repeated under every unit.
+    const [recruiters, leaves] = await Promise.all([
+      this.permissions.roleHolders('corporate_recruiter', ''),
+      this.permissions.activeLeaves(),
+    ]);
+
+    return {
+      // Units with nobody are still listed: "no Factory HR here" is the thing
+      // the page most needs to make obvious.
+      units: withQueues.map((u) => ({
+        ...u,
+        queue: u.queue.map((h) => ({
+          assignmentId: h.assignmentId ?? null,
+          userId: h.id,
+          name: h.name,
+          employeeCode: h.employeeCode,
+          priority: h.priority,
+          onLeave: h.onLeave,
+          leaveEndsAt: h.leaveEndsAt?.toISOString() ?? null,
+        })),
+      })),
+      recruiters: recruiters.map((r) => ({
+        userId: r.id,
+        name: r.name,
+        employeeCode: r.employeeCode,
+        onLeave: leaves.has(r.id),
+        leaveEndsAt: leaves.get(r.id)?.endsAt?.toISOString() ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Set a unit's HR layering — the priority order for a role, Factory HR today.
+   *
+   * The order decides who a requisition's job analysis is addressed to: first
+   * priority, unless they are on leave, then the next. Sent as the whole list so
+   * it can never end up with two firsts; anyone left out is unordered and only
+   * picks work up when nobody in the order is available.
+   */
+  async setLayeringOrder(dto: SetLayeringOrderDto) {
+    const assignments = await this.prisma.roleAssignment.findMany({
+      where: { roleId: dto.roleId, unitId: dto.unitId },
+      select: { id: true, userId: true },
+    });
+    const known = new Set(assignments.map((a) => a.id));
+    const unknown = dto.assignmentIds.filter((id) => !known.has(id));
+    if (unknown.length) {
+      throw new BadRequestException(
+        'That priority order refers to assignments that are not in this unit',
+      );
+    }
+
+    const rank = new Map(dto.assignmentIds.map((id, i) => [id, i + 1] as const));
+    await this.prisma.$transaction(
+      assignments.map((a) =>
+        this.prisma.roleAssignment.update({
+          where: { id: a.id },
+          data: { priority: rank.get(a.id) ?? null },
+        }),
+      ),
+    );
+    // Routing reads the order straight away.
+    for (const a of assignments) this.permissions.invalidate(a.userId);
+    return { ok: true };
+  }
+
+  /**
+   * Remove an assignment — and whatever it was holding up in Approval Paths.
+   *
+   * The two pages are one decision seen from two sides: a raiser's chain is
+   * their role made concrete, and a level naming somebody is why they were
+   * given `unit_approver` in the first place. Leaving the path behind meant a
+   * requisition could route to a person who can no longer sign in, and the
+   * config claimed access the roles no longer granted.
+   *
+   * Requisitions already in flight are untouched: their chain was snapshotted
+   * when they were raised, which is the whole point of snapshotting it.
+   */
+  async deleteAssignment(id: string) {
+    const assignment = await this.prisma.roleAssignment.findUnique({
+      where: { id },
+      include: { role: true, unit: { select: { name: true } } },
+    });
+    if (!assignment) throw new NotFoundException('Assignment not found');
+
+    const removed = { paths: 0, levels: 0 };
+    const { userId, unitId, role } = assignment;
+
+    if (unitId && role.key === 'requisition_raiser') {
+      // Their chain in that unit is theirs alone — nobody else routes through
+      // it, so it goes with the role.
+      const { count } = await this.prisma.approvalPath.deleteMany({
+        where: { unitId, raiserId: userId },
+      });
+      removed.paths = count;
+    }
+
+    if (unitId && role.key === 'unit_approver') {
+      const levels = await this.prisma.approvalPathLevel.findMany({
+        where: { userId, path: { unitId } },
+        select: { id: true, pathId: true },
+      });
+      if (levels.length > 0) {
+        await this.prisma.approvalPathLevel.deleteMany({
+          where: { id: { in: levels.map((l) => l.id) } },
+        });
+        removed.levels = levels.length;
+        // Close the gaps: `buildStepsForRaiser` copies orderIndex onto the
+        // requisition's steps and appends Corporate HR at `steps.length`, so a
+        // hole in the sequence would collide with that final step.
+        await this.reindexPaths([...new Set(levels.map((l) => l.pathId))]);
+      }
+    }
+
+    await this.prisma.roleAssignment.delete({ where: { id } });
+    this.permissions.invalidate(userId);
+    return { id, removed };
+  }
+
+  /** Renumber a path's levels 0..n-1, preserving their order. */
+  private async reindexPaths(pathIds: string[]): Promise<void> {
+    for (const pathId of pathIds) {
+      const levels = await this.prisma.approvalPathLevel.findMany({
+        where: { pathId },
+        orderBy: { orderIndex: 'asc' },
+        select: { id: true },
+      });
+      await this.prisma.$transaction([
+        // Two passes: orderIndex is unique per path, so shifting down in place
+        // would collide with a row that has not moved yet.
+        ...levels.map((l, i) =>
+          this.prisma.approvalPathLevel.update({
+            where: { id: l.id },
+            data: { orderIndex: -(i + 1) },
+          }),
+        ),
+        ...levels.map((l, i) =>
+          this.prisma.approvalPathLevel.update({
+            where: { id: l.id },
+            data: { orderIndex: i },
+          }),
+        ),
+      ]);
+    }
   }
 
   private handleUnique(e: unknown, message: string): Error {

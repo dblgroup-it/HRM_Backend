@@ -15,7 +15,12 @@
 #      node process still has files in it open. Stop first, always.
 #   3. Backend: npm ci, prisma generate, npm run build, THEN migrate. The
 #      build comes before the migration on purpose — see the block itself.
-#   4. Restart PM2.
+#   4. Restart PM2, then WAIT for /api/health to answer before going on —
+#      pm2 reports "online" for a process that booted, threw and is about to
+#      be restarted, so without this a failed boot was announced as a
+#      successful deploy. Placed before the frontend swap on purpose: if the
+#      API is not coming back, stop while the site still serves the previous,
+#      working frontend.
 #   5. Frontend: build to a scratch directory, then atomically swap it into
 #      dist/ — nginx serves HRM_Frontend/dist directly, and a plain
 #      `vite build` empties that directory in place before rebuilding, which
@@ -265,6 +270,59 @@ fi
 "$PM2" save
 step "last 30 log lines:"
 "$PM2" logs "$PM2_APP" --lines 30 --nostream || true
+
+# ── 4b. prove the API actually answers before touching the frontend ─────
+#
+# `pm2 restart` returns as soon as the process is spawned, and pm2 reports
+# "online" for a process that booted, threw and is about to be restarted —
+# so a Nest boot failure (a bad migration, a missing env var, a Prisma client
+# that no longer matches the schema) used to sail straight past here and be
+# announced as DEPLOY COMPLETE, with the API 500ing.
+#
+# This is deliberately placed BEFORE the frontend swap: if the API is not
+# coming back, the right thing is to stop and roll the backend back while the
+# site is still serving the previous, working frontend against it.
+log "[4b/6] Waiting for the API to answer"
+API_PORT="$(grep -m1 '^PORT=' "$BACKEND_DIR/.env" | tr -d '\r' | cut -d'=' -f2- | tr -d '"')"
+API_PORT="${API_PORT:-4000}"
+HEALTH_URL="http://127.0.0.1:${API_PORT}/api/health"
+HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-60}"
+
+api_ok() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1
+  else
+    # No curl on this box — fall back to node, which is certainly present.
+    node -e "
+      const http = require('http');
+      const req = http.get(process.argv[1], (res) => {
+        process.exit(res.statusCode >= 200 && res.statusCode < 400 ? 0 : 1);
+      });
+      req.on('error', () => process.exit(1));
+      req.setTimeout(5000, () => { req.destroy(); process.exit(1); });
+    " "$HEALTH_URL" >/dev/null 2>&1
+  fi
+}
+
+healthy=0
+waited=0
+while [ "$waited" -lt "$HEALTH_TIMEOUT_SECONDS" ]; do
+  if api_ok; then healthy=1; break; fi
+  sleep 2
+  waited=$((waited + 2))
+done
+
+if [ "$healthy" -ne 1 ]; then
+  step "no answer from $HEALTH_URL after ${HEALTH_TIMEOUT_SECONDS}s"
+  "$PM2" logs "$PM2_APP" --lines 60 --nostream || true
+  die "the API did not come back up. The frontend was NOT touched, so the site is still serving the previous build.
+  The database HAS been migrated — check the logs above before deciding whether to roll the code back or fix forward.
+  Previous backend build is still on disk as: $BACKEND_DIR/dist.old
+  To put it back:
+    cd \"$BACKEND_DIR\" && rm -rf dist && mv dist.old dist && \"$PM2\" restart $PM2_APP
+  Backup taken before any changes: $BACKUP_FILE"
+fi
+step "API healthy at $HEALTH_URL (after ${waited}s)"
 
 # ── 5. frontend: build to scratch dir, atomic swap ──────────────────────
 log "[5/6] Frontend: build + atomic swap into dist/"

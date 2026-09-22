@@ -2,6 +2,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -107,17 +108,89 @@ export class UpdateRequisitionDto {
   @IsString()
   others?: string;
 
-  @IsOptional()
-  @IsArray()
-  @IsIn(['job_advertisement', 'headhunting', 'cv_bank'], {
-    each: true,
-  })
-  preferredSources?: string[];
-
   /** Confirmed job grade for this post — one of JOB_GRADES, or '' to clear. */
   @IsOptional()
   @IsIn([...JOB_GRADES, ''])
   grade?: string;
+}
+
+/**
+ * Section B, written by the unit's Factory HR (or, where a unit has none, by
+ * Head of Talent Acquisition / a Corporate Recruiter) after the requisition is
+ * raised and before it enters its approval chain.
+ *
+ * Every field is optional so a half-written JD can be saved and finished later;
+ * completeness is enforced on submit, in the service, not here.
+ */
+export class JobAnalysisDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  jobDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  education?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  experience?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  others?: string;
+
+  /**
+   * Default. `false` saves progress and leaves the requisition where it is;
+   * `true` releases it to the approval chain.
+   */
+  @IsOptional()
+  @IsBoolean()
+  submit?: boolean;
+}
+
+/**
+ * Ask the AI to draft section B from section A.
+ *
+ * Carries what is already typed so a redraft improves the writer's own words
+ * rather than replacing them, plus an optional steer in plain language.
+ */
+export class DraftJobAnalysisDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  jobDescription?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  education?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  experience?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  others?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  hint?: string;
+}
+
+/** Factory HR hands the requisition back to the raiser, with a reason. */
+export class ReturnToRaiserDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(1000)
+  note!: string;
 }
 
 export class ApprovalActionDto {
@@ -161,11 +234,6 @@ export class UpdateRoleProfileDto {
 }
 
 export class PostRequisitionDto {
-  @IsIn(['job_advertisement', 'headhunting', 'cv_bank'], {
-    each: true,
-  })
-  sources!: string[];
-
   @IsString()
   closingDate!: string;
 }

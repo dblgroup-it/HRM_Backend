@@ -476,7 +476,13 @@ export class AiProficiencyService {
       where: { id: candidateId },
       include: {
         requisition: {
-          select: { unitFactory: true, designation: true, recruiterId: true },
+          select: {
+            unitFactory: true,
+            designation: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
         },
       },
     });
@@ -493,6 +499,10 @@ export class AiProficiencyService {
         cand.requisition.unitFactory,
         cand.requisition.recruiterId,
         'manage the AI Proficiency Test',
+        {
+          userId: cand.requisition.coverRecruiterId,
+          until: cand.requisition.coverUntil,
+        },
       );
     }
     return cand;

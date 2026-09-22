@@ -13,7 +13,10 @@ import * as ExcelJS from 'exceljs';
 
 import type { Response } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PermissionsService } from '../rbac/permissions.service';
+import {
+  PermissionsService,
+  type RecruitmentSubject,
+} from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { MailService } from '../integrations/mail/mail.service';
@@ -498,7 +501,12 @@ export class CandidatesService {
         cvProfile: true,
         cvProfileAt: true,
         requisition: {
-          select: { unitFactory: true, recruiterId: true },
+          select: {
+            unitFactory: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
         },
       },
     });
@@ -1816,7 +1824,7 @@ export class CandidatesService {
    * its unit) so the assigned recruiter is always considered.
    */
   private async requireRecruitmentAccess(
-    req: { unitFactory: string; recruiterId: string | null },
+    req: RecruitmentSubject,
     userId: string,
   ) {
     await this.permissions.requireRecruitmentAccess(
@@ -1824,6 +1832,8 @@ export class CandidatesService {
       req.unitFactory,
       req.recruiterId,
       'access recruitment for this requisition',
+      // Whoever is standing in while the recruiter is on leave.
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 
@@ -2165,6 +2175,9 @@ export class CandidatesService {
       const hrIds = await this.permissions.recruitmentRecipients(
         req.unitFactory,
         req.recruiterId,
+        // The stand-in, if the recruiter is away — they are the one who would
+        // act on a new match.
+        { userId: req.coverRecruiterId, until: req.coverUntil },
       );
       await this.notifications.notifyMany(hrIds, {
         type: 'talent_bank_match',
@@ -2185,7 +2198,14 @@ export class CandidatesService {
     const candidate = await this.prisma.candidate.findUnique({
       where: { id },
       include: {
-        requisition: { select: { unitFactory: true, recruiterId: true } },
+        requisition: {
+          select: {
+            unitFactory: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
+        },
       },
     });
     if (!candidate) throw new NotFoundException('Candidate not found');
@@ -2234,7 +2254,14 @@ export class CandidatesService {
     const candidate = await this.prisma.candidate.findUnique({
       where: { id },
       include: {
-        requisition: { select: { unitFactory: true, recruiterId: true } },
+        requisition: {
+          select: {
+            unitFactory: true,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
+        },
       },
     });
     if (!candidate) throw new NotFoundException('Candidate not found');

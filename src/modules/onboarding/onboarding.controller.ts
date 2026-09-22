@@ -343,6 +343,15 @@ export class OnboardingController {
     return this.onboarding.archive(id, user.id);
   }
 
+  /**
+   * The archived file, to read. View-only by construction: it lists what is
+   * in the archive folder and hands back a signed link per document.
+   */
+  @Get('candidates/:id/onboarding/archive-files')
+  archiveFiles(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.onboarding.archiveFiles(id, user.id);
+  }
+
   @Post('candidates/:id/onboarding/notify-it')
   notifyIt(
     @Param('id') id: string,

@@ -108,12 +108,17 @@ async function main() {
   const ROLES = [
     { key: 'super_user', name: 'Super User', scope: 'GLOBAL', description: 'Full system access.' },
     { key: 'chro', name: 'CHRO', scope: 'GLOBAL', description: 'Chief Human Resources Officer.' },
-    { key: 'corporate_hr', name: 'Corporate HR', scope: 'GLOBAL', description: 'Corporate HR — final approver.' },
+    // Display name is Head of Talent Acquisition (renamed 2026-09-11); the key
+    // stays corporate_hr. Keep this in step with the migrations — the upsert
+    // below overwrites the name on every run, which is how a re-seed on
+    // 2026-09-15 quietly put "Corporate HR" back.
+    { key: 'corporate_hr', name: 'Head of Talent Acquisition', scope: 'GLOBAL', description: 'Head of Talent Acquisition — final approver on every requisition chain.' },
     { key: 'requisition_raiser', name: 'Requisition Raiser', scope: 'UNIT', description: 'Opens requisitions for their unit. Not an approval step — the sign-off chain is configured per unit in Approval Paths.' },
+    { key: 'factory_hr', name: 'Factory HR', scope: 'UNIT', description: 'Unit / factory HR. Completes the Job Analysis and attachments on their unit’s requisitions before the approval chain starts. Not an approval step.' },
     { key: 'unit_approver', name: 'Unit Approver', scope: 'UNIT', description: 'Can be named as an approval level for their unit. Grants sign-in and visibility of that unit’s requisitions — nothing else.' },
     { key: 'sbu_head', name: 'SBU Head', scope: 'UNIT', description: 'Strategic Business Unit head.' },
     { key: 'medical_officer', name: 'Medical Officer', scope: 'GLOBAL', description: 'Records onboarding medical clearance (all units).' },
-    { key: 'corporate_recruiter', name: 'Corporate Recruiter', scope: 'GLOBAL', description: 'Runs a requisition’s hiring lifecycle once Corporate HR assigns it to them.' },
+    { key: 'corporate_recruiter', name: 'Corporate Recruiter', scope: 'GLOBAL', description: 'Runs a requisition’s hiring lifecycle once Head of Talent Acquisition assigns it to them.' },
     { key: 'central_medical_officer', name: 'Central Medical Officer', scope: 'GLOBAL', description: 'Confirms every medical finding before a candidate is cleared. Approves singly or in bulk; may overturn or return a submission.' },
   ] as const;
   for (const r of ROLES) {

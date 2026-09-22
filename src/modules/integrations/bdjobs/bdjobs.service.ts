@@ -60,6 +60,8 @@ export class BdJobsService {
         unitFactory: true,
         posting: true,
         recruiterId: true,
+        coverRecruiterId: true,
+        coverUntil: true,
       },
     });
     if (!req) throw new NotFoundException('Requisition not found');
@@ -68,6 +70,7 @@ export class BdJobsService {
       req.unitFactory,
       req.recruiterId,
       'post this requisition to BDJobs',
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
     return req;
   }

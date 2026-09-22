@@ -218,6 +218,18 @@ export class CandidatePackageDto {
   @IsArray()
   @IsIn(CANDIDATE_BENEFITS, { each: true })
   salaryBenefits?: string[];
+
+  /**
+   * Where they are picked up from, if the post carries transport.
+   *
+   * Not a promise of a seat on the bus — that is HR's call on the facility
+   * requirements. It is the address the run would have to reach, and the
+   * interview is the first moment anybody can ask for it.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  transportPickup?: string | null;
 }
 
 /** Why the candidate is being turned down at the interview stage. */

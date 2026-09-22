@@ -17,7 +17,10 @@ import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PdfService } from '../../common/pdf/pdf.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PermissionsService } from '../rbac/permissions.service';
+import {
+  PermissionsService,
+  type RecruitmentSubject,
+} from '../rbac/permissions.service';
 import {
   buildAppointmentLetter,
   buildOfferLetter,
@@ -354,6 +357,12 @@ export class OnboardingService {
         lineManagerTitle: cand.lineManagerTitle ?? null,
         matchScore: cand.matchScore,
         matchSummary: cand.matchSummary ?? '',
+        /**
+         * Where they are picked up from, taken in the interview room. HR
+         * reads it back — and may correct it — when they go through this
+         * hire's facility requirements and have to arrange the run.
+         */
+        transportPickup: cand.transportPickup ?? null,
         requisitionId: cand.requisitionId,
         /**
          * The designation to SHOW for this candidate.
@@ -399,6 +408,18 @@ export class OnboardingService {
         /** Lets the UI gate provisioning on the assigned recruiter, matching
          *  the access rule the API already enforces. */
         recruiterId: cand.requisition.recruiterId ?? null,
+        /**
+         * The stand-in running this while the recruiter is away — reported
+         * only while the cover actually applies, exactly as the requisition
+         * serializer does. Without it the page hides controls the API would
+         * have let the stand-in use.
+         */
+        coverRecruiterId:
+          cand.requisition.coverRecruiterId &&
+          (!cand.requisition.coverUntil ||
+            cand.requisition.coverUntil.getTime() > Date.now())
+            ? cand.requisition.coverRecruiterId
+            : null,
       },
       onboarding: ob ? this.serialize(ob, cand.name, cand.email) : null,
     };
@@ -1541,6 +1562,50 @@ export class OnboardingService {
       action: 'archived',
     });
     return { onboarding: this.serialize(updated, cand.name, cand.email) };
+  }
+
+  /**
+   * Everything in an archived candidate's Drive folder, to read.
+   *
+   * The folder itself stays private to the recruitment Google account — it
+   * holds national IDs, certificates and photographs, and sharing it "anyone
+   * with the link" would give each of those a permanent unauthenticated URL.
+   * So the archive is browsed here instead: anyone the recruitment gate
+   * already lets through sees every document in the file, and each one opens
+   * through a short-lived signed grant that streams it read-only. There is
+   * nothing to edit, replace or delete — which is what an archive should be.
+   */
+  async archiveFiles(candidateId: string, userId: string) {
+    const cand = await this.requireCandidate(candidateId, userId);
+    const ob = await this.requireOnboarding(candidateId);
+    if (!ob.archivedAt || !ob.archiveFolderUrl) {
+      return { archived: false, folderUrl: null, files: [] };
+    }
+    // The folder id is the last path segment of the URL written at archive
+    // time — the id is what Drive is asked for, never the URL itself.
+    const folderId = ob.archiveFolderUrl.split('/').filter(Boolean).pop() ?? '';
+    if (!folderId || !this.drive.isConfigured()) {
+      return { archived: true, folderUrl: ob.archiveFolderUrl, files: [] };
+    }
+    let files: { id: string; name: string; mimeType: string }[] = [];
+    try {
+      files = await this.drive.listFiles(folderId);
+    } catch (err) {
+      this.logger.warn(
+        `Could not list the archive folder for ${cand.name}: ${(err as Error).message}`,
+      );
+    }
+    return {
+      archived: true,
+      folderUrl: ob.archiveFolderUrl,
+      files: files.map((f) => ({
+        id: f.id,
+        name: f.name,
+        mimeType: f.mimeType,
+        // Read-only, expiring, and scoped to this one file.
+        url: this.files.url(f.id, 'onboarding-doc', { filename: f.name }),
+      })),
+    };
   }
 
   /** Step 24 — hand off to IT (webhook), write back the issued email + asset id. */
@@ -3368,7 +3433,7 @@ export class OnboardingService {
    * its unit) so the assigned recruiter is always considered.
    */
   private async requireRecruitmentAccess(
-    req: { unitFactory: string; recruiterId: string | null },
+    req: RecruitmentSubject,
     userId: string,
     action = 'manage onboarding',
   ) {
@@ -3377,6 +3442,8 @@ export class OnboardingService {
       req.unitFactory,
       req.recruiterId,
       action,
+      // Whoever is standing in while the recruiter is on leave.
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 

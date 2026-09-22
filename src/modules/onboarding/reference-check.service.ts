@@ -328,6 +328,10 @@ export class ReferenceCheckService {
       cand.requisition.unitFactory,
       cand.requisition.recruiterId,
       'record reference checks',
+      {
+        userId: cand.requisition.coverRecruiterId,
+        until: cand.requisition.coverUntil,
+      },
     );
     return cand;
   }

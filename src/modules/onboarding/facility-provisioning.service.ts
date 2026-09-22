@@ -13,7 +13,10 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import { PermissionsService } from '../rbac/permissions.service';
+import {
+  PermissionsService,
+  type RecruitmentSubject,
+} from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
 import {
@@ -407,7 +410,7 @@ export class FacilityProvisioningService {
    * its unit) so the assigned recruiter is always considered.
    */
   private async requireRecruitmentAccess(
-    req: { unitFactory: string; recruiterId: string | null },
+    req: RecruitmentSubject,
     userId: string,
   ) {
     await this.permissions.requireRecruitmentAccess(
@@ -415,6 +418,8 @@ export class FacilityProvisioningService {
       req.unitFactory,
       req.recruiterId,
       'manage facility provisioning',
+      // Whoever is standing in while the recruiter is on leave.
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 

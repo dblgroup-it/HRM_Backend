@@ -269,9 +269,12 @@ ${JSON.stringify(ctx.requisitions)}`;
       totals: {
         requisitions: reqs.length,
         openRequisitions: requisitions.filter((r) =>
-          ['pending_approval', 'approved', 'profile_generated'].includes(
-            r.status,
-          ),
+          [
+            'pending_job_analysis',
+            'pending_approval',
+            'approved',
+            'profile_generated',
+          ].includes(r.status),
         ).length,
         postedRequisitions: requisitions.filter((r) => r.status === 'posted')
           .length,
@@ -295,9 +298,13 @@ ${JSON.stringify(ctx.requisitions)}`;
 
   private async computeBottleneckMetrics(ctx: HrContext) {
     const open = ctx.requisitions.filter((r) =>
-      ['pending_approval', 'approved', 'profile_generated', 'posted'].includes(
-        r.status,
-      ),
+      [
+        'pending_job_analysis',
+        'pending_approval',
+        'approved',
+        'profile_generated',
+        'posted',
+      ].includes(r.status),
     );
     const avgDaysOpen = open.length
       ? Math.round(open.reduce((s, r) => s + r.daysOpen, 0) / open.length)

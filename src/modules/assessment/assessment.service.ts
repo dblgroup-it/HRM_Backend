@@ -5,7 +5,10 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PermissionsService } from '../rbac/permissions.service';
+import {
+  PermissionsService,
+  type RecruitmentSubject,
+} from '../rbac/permissions.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import {
   CRITERIA,
@@ -383,7 +386,7 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
    * its unit) so the assigned recruiter is always considered.
    */
   private async requireRecruitmentAccess(
-    req: { unitFactory: string; recruiterId: string | null },
+    req: RecruitmentSubject,
     userId: string,
   ) {
     await this.permissions.requireRecruitmentAccess(
@@ -391,6 +394,8 @@ Be objective and specific. Reference actual scores and comments. Do not use bull
       req.unitFactory,
       req.recruiterId,
       'manage assessments',
+      // Whoever is standing in while the recruiter is on leave.
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 }

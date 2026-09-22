@@ -56,6 +56,40 @@ export interface RoleProfileInput {
   requirements?: string[];
 }
 
+/**
+ * What the job-analysis stage knows before anybody writes it: the vacancy the
+ * requisitioner stated. Section B is drafted FROM section A, which is exactly
+ * why the draft belongs here and not on the requisition form — at that point
+ * there is nothing to draft from.
+ */
+export interface JobAnalysisInput {
+  designation: string;
+  department: string;
+  section?: string | null;
+  unitFactory: string;
+  placeOfPosting: string;
+  requiredPosts: number;
+  employmentNature?: string;
+  grade?: string | null;
+  requirementType?: string;
+  /** Whatever is already typed — a redraft should improve it, not ignore it. */
+  current?: {
+    jobDescription?: string;
+    education?: string;
+    experience?: string;
+    others?: string;
+  };
+  /** A free-text steer from the writer ("needs knitting background"). */
+  hint?: string | null;
+}
+
+export interface JobAnalysisResult {
+  jobDescription: string;
+  education: string;
+  experience: string;
+  others: string;
+}
+
 export interface RoleProfileResult {
   summary: string;
   jobDescription: string;
@@ -203,8 +237,8 @@ export interface DraftRequisitionInput {
   /** Units the requester may raise for — the AI must pick one of these. */
   units: string[];
   /**
-   * The form's fixed vocabulary. Departments, designations and zones go into
-   * the prompt so the model copies rather than invents. The section and
+   * The form's fixed vocabulary. Departments, designations and job locations
+   * go into the prompt so the model copies rather than invents. The section and
    * sub-section maps are NOT prompted — together they are ~31k characters and
    * a job description rarely names them — they are used to snap the model's
    * free-text guess once the department is known, which costs no tokens.
@@ -212,7 +246,8 @@ export interface DraftRequisitionInput {
   vocabulary: {
     departments: string[];
     designations: string[];
-    zones: string[];
+    /** Where the post actually sits — the same list the offer letter prints. */
+    jobLocations: string[];
     departmentSections: Record<string, string[]>;
     sectionSubSections: Record<string, string[]>;
   };
@@ -237,7 +272,6 @@ export interface DraftRequisitionResult {
   education: string;
   experience: string;
   others: string;
-  preferredSources: ('job_advertisement' | 'headhunting' | 'cv_bank')[];
   /** Short note on what the AI assumed / could not determine. */
   notes: string;
 }
@@ -594,6 +628,74 @@ Use clear field names that match the document, for example: Full Name, Document 
   }
 
   /**
+   * Draft section B — job description, education, experience, others — from
+   * the vacancy the requisitioner stated.
+   *
+   * Used by Factory HR (or whoever covers the job analysis) on the requisition
+   * itself. It writes the four fields they would otherwise type; they edit
+   * every one of them before submitting, and nothing is saved by this call.
+   */
+  async draftJobAnalysis(input: JobAnalysisInput): Promise<JobAnalysisResult> {
+    if (!this.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const prompt = this.buildJobAnalysisPrompt(input);
+    const raw =
+      this.provider === 'claude'
+        ? await this.callClaude(prompt, 1200)
+        : await this.callGemini(prompt);
+    return this.parseJobAnalysis(raw);
+  }
+
+  private buildJobAnalysisPrompt(i: JobAnalysisInput): string {
+    const filled = (label: string, value?: string) =>
+      value?.trim() ? `${label}: ${value.trim()}` : null;
+    const existing = [
+      filled('Job description', i.current?.jobDescription),
+      filled('Education & training', i.current?.education),
+      filled('Experience', i.current?.experience),
+      filled('Others', i.current?.others),
+    ].filter(Boolean);
+
+    return `You are an experienced HR business partner at DBL Group, a large Bangladeshi manufacturing conglomerate (RMG, textiles, ceramics, pharma). Write the JOB ANALYSIS for the vacancy below — the section an HR officer fills in before a requisition goes to its approvers.
+
+Position: ${i.designation}
+Department: ${i.department}${i.section ? `\nSection: ${i.section}` : ''}
+Unit / Factory: ${i.unitFactory}
+Place of posting: ${i.placeOfPosting}
+Number of posts: ${i.requiredPosts}
+Employment nature: ${i.employmentNature ?? 'permanent'}
+${i.grade ? `Job grade: ${i.grade}\n` : ''}${i.requirementType ? `Requirement type: ${i.requirementType}\n` : ''}${
+      existing.length
+        ? `\nAlready written by HR (improve and build on this, do not contradict it):\n${existing.join('\n')}\n`
+        : ''
+    }${i.hint?.trim() ? `\nHR's steer: ${i.hint.trim()}\n` : ''}
+Write specifically for THIS role, department and unit — not a generic template. Bangladeshi manufacturing context: name real qualifications (B.Sc. in Textile Engineering, BUTex/AUST, MBA), real experience expectations in years, and duties a person in this seat actually performs.
+
+Respond with ONLY a compact JSON object and nothing else:
+{"jobDescription":"<the duties and responsibilities of the post, 4 to 7 sentences or short lines separated by newlines>","education":"<one line naming the required qualification(s)>","experience":"<one line naming the required years and the kind of experience>","others":"<one line of any other requirement — shift work, computer literacy, language; empty string if there is nothing worth stating>"}`;
+  }
+
+  private parseJobAnalysis(raw: string): JobAnalysisResult {
+    const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      const obj = JSON.parse(match ? match[0] : raw) as Record<string, unknown>;
+      return {
+        jobDescription: str(obj.jobDescription),
+        education: str(obj.education),
+        experience: str(obj.experience),
+        others: str(obj.others),
+      };
+    } catch {
+      this.logger.warn(
+        `Could not parse AI job analysis output: ${raw.slice(0, 120)}`,
+      );
+      return { jobDescription: '', education: '', experience: '', others: '' };
+    }
+  }
+
+  /**
    * Generate a batch of general-knowledge MCQ questions for the AI Proficiency
    * question bank, pitched at one job grade's seniority level and applicable
    * across any common requisition type (not tied to a specific department).
@@ -891,7 +993,7 @@ ALLOWED DESIGNATIONS — "designation" MUST be copied EXACTLY from this list:
 ${i.vocabulary.designations.join(', ')}
 
 ALLOWED PLACES OF POSTING — "placeOfPosting" MUST be copied EXACTLY from this list:
-${i.vocabulary.zones.join(', ')}
+${i.vocabulary.jobLocations.join(' | ')}
 
 RULES
 - "unitFactory" MUST be one of the allowed units above, copied exactly. If the request names a unit/abbreviation (e.g. "JTML" = Jinnat Textile Mills), match it to the closest allowed unit. If it names none, use the first allowed unit.
@@ -899,19 +1001,18 @@ RULES
 - "designation" MUST be copied EXACTLY from the ALLOWED DESIGNATIONS list. Map the request to the closest real title (e.g. "production officer" → "Officer", "asst manager" → "Assistant Manager").
 - "section" and "subSection": a short free-text guess if the request clearly implies one, else "". They are matched against the chosen department's own lists afterwards, so an inexact guess is fine — do NOT invent something elaborate.
 - "requiredPosts": the number of people requested (default 1).
-- "placeOfPosting" MUST be copied EXACTLY from the ALLOWED PLACES OF POSTING list — pick the zone the unit sits in (Gazipur/Kashimpur → "Kashimpur Zone", Dhaka/head office → "Dhaka Zone", Sylhet/Moulvibazar → "Sylhet Zone", Mawna → "Mawna Zone", pharma sites → "Pharma Zone"). Never leave blank.
+- "placeOfPosting" MUST be copied EXACTLY (the whole address, character for character) from the ALLOWED PLACES OF POSTING list — pick the site the unit actually sits at, matching on the area named in the address (Kashimpur, Sreepur, Gulshan, Uttara, Chattogram…). Never leave blank, never shorten it.
 - Dates are "YYYY-MM-DD". "neededDate": if not stated, about 30 days from today. "vacantDate": if not stated, "".
 - "priority": "top" only if the request says urgent/immediately; else "moderate".
 - "employmentNature": "permanent" unless the request says temporary/contract/seasonal. If not permanent, "contractualPurpose" MUST explain why (required by the form).
 - "jobDescription": 3-6 concrete responsibilities for THIS role in THIS department, written as sentences separated by newlines. Match the department's actual work — a factory floor role reads nothing like Corporate HR or Internal Audit. Never generic.
 - "education": the realistic academic requirement for THIS department (e.g. "B.Sc. in Textile Engineering" for a mill role, "MBA / Masters in HRM" for Corporate HR, "B.Pharm" for pharmaceuticals).
 - "experience": realistic years plus the setting, matched to the department (e.g. "3-5 years in a similar role in a large textile manufacturing setup", or "5+ years in group-level HR operations").
-- "preferredSources": sensible subset of ["job_advertisement","headhunting","cv_bank"].
 - "notes": one short sentence listing anything you assumed or could not determine, so the human can check it.
 - NEVER invent a unit, department, designation or place of posting that is not listed above. Anything not copied exactly is discarded and the human has to pick it by hand.
 
 Respond with ONLY a compact JSON object and nothing else:
-{"designation":"","unitFactory":"","department":"","section":"","subSection":"","requiredPosts":1,"placeOfPosting":"","vacantDate":"","neededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","preferredSources":[],"notes":""}`;
+{"designation":"","unitFactory":"","department":"","section":"","subSection":"","requiredPosts":1,"placeOfPosting":"","vacantDate":"","neededDate":"","priority":"top|moderate|ordinary","employmentNature":"permanent|temporary|contractual","contractualPurpose":"","jobDescription":"","education":"","experience":"","others":"","notes":""}`;
   }
 
   /** Parse + hard-clamp every value to something the form will accept. */
@@ -1004,7 +1105,7 @@ Respond with ONLY a compact JSON object and nothing else:
     const placeOfPosting = snapOrNote(
       'place of posting',
       str(obj.placeOfPosting),
-      v.zones,
+      v.jobLocations,
     );
 
     const departmentNote = misses.length
@@ -1016,12 +1117,6 @@ Respond with ONLY a compact JSON object and nothing else:
       ['permanent', 'temporary', 'contractual'] as const,
       'permanent',
     );
-    const sources = ['job_advertisement', 'headhunting', 'cv_bank'];
-    const preferredSources = Array.isArray(obj.preferredSources)
-      ? (obj.preferredSources as unknown[])
-          .map((s) => String(s).trim())
-          .filter((s) => sources.includes(s))
-      : [];
 
     const posts = Math.max(1, Math.round(Number(obj.requiredPosts) || 1));
     const date = (v: unknown): string =>
@@ -1055,8 +1150,6 @@ Respond with ONLY a compact JSON object and nothing else:
       education: str(obj.education, 500),
       experience: str(obj.experience, 500),
       others: str(obj.others, 1000),
-      preferredSources:
-        preferredSources as DraftRequisitionResult['preferredSources'],
       notes: [str(obj.notes, 400), departmentNote].filter(Boolean).join(' '),
     };
   }

@@ -40,6 +40,8 @@ import {
 } from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
+  DraftJobAnalysisDto,
+  JobAnalysisDto,
   PostRequisitionDto,
   QueryRequisitionsDto,
   UpdateFacilitiesDto,
@@ -51,8 +53,15 @@ const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
   replacements: { orderBy: { orderIndex: 'asc' } },
   recruiter: { select: { id: true, name: true, employeeCode: true } },
+  jobAnalysisBy: { select: { id: true, name: true } },
+  jobAnalysisAssignee: { select: { id: true, name: true } },
+  coverRecruiter: { select: { id: true, name: true, employeeCode: true } },
   activities: { orderBy: { createdAt: 'asc' } },
   candidates: {
+    // Removed candidates are soft-deleted, and the candidates API filters
+    // them out — so counting them here made the tab badges and the pipeline
+    // disagree with the list they open: "1 in interview", nobody there.
+    where: { deletedAt: null },
     select: { stage: true, onboarding: { select: { status: true } } },
   },
 } satisfies Prisma.RequisitionInclude;
@@ -158,6 +167,13 @@ export class RequisitionService {
       dto.department,
     );
 
+    // Who this unit's job analysis is addressed to: the first Factory HR in the
+    // layering who is not on leave. Null on a unit that never set an order
+    // (it goes to all of them, as before) or one with nobody available at all.
+    const jobAnalysisOwners = await this.permissions.jobAnalysisOwners(
+      dto.unitFactory,
+    );
+
     // The raiser signs on submit, but that signature is an activity-log entry
     // (and prints on the form) rather than a step in the chain.
     const raisedBy = dto.signatories.departmentHeadName || raiser.name;
@@ -192,15 +208,21 @@ export class RequisitionService {
         employmentNature:
           dto.employmentNature.toUpperCase() as EmploymentNature,
         contractualPurpose: dto.contractualPurpose ?? null,
-        jobDescription: dto.jobDescription,
-        education: dto.education,
-        experience: dto.experience,
-        others: dto.others ?? null,
+        // Section B is the Factory HR's to write at the next stage; the
+        // columns stay NOT NULL and start empty rather than nullable, so
+        // nothing downstream has to learn a third state.
+        jobDescription: '',
+        education: '',
+        experience: '',
+        others: null,
         facilities: buildInitialFacilities(
           dto.facilities,
         ) as unknown as Prisma.InputJsonValue,
-        preferredSources: dto.preferredSources ?? [],
-        status: 'PENDING_APPROVAL',
+        preferredSources: [],
+        // Not in the chain yet: the unit's Factory HR completes the job
+        // analysis first (see saveJobAnalysis).
+        status: 'PENDING_JOB_ANALYSIS',
+        jobAnalysisAssigneeId: jobAnalysisOwners.assigneeId,
         raisedBy,
         raisedById: raiser.id,
         approvalSteps: { create: steps },
@@ -209,7 +231,7 @@ export class RequisitionService {
             {
               actor: raisedBy,
               action: 'APPROVED',
-              note: 'Raised & signed by the Requisition Raiser',
+              note: 'Raised & signed by the Requisition Raiser — awaiting job analysis',
             },
           ],
         },
@@ -222,9 +244,331 @@ export class RequisitionService {
       action: 'created',
       record: serialized,
     });
-    await this.notifyPendingApprover(created);
+    await this.notifyJobAnalysisOwners(created);
 
     return serialized;
+  }
+
+  // --- Stage 2: the job analysis (Factory HR) ------------------------------
+
+  /**
+   * Section B and the attachments, written after the requisition is raised.
+   *
+   * The requisitioner states the vacancy and what the hire will need; the job
+   * description and specification are the unit's Factory HR's to write, because
+   * they are the ones who know the post. Only when they submit does the
+   * configured approval path start — the chain was snapshotted at creation, so
+   * it is the path as it stood when the requisition was raised either way.
+   *
+   * `submit: false` saves progress without releasing it, so a long JD doesn't
+   * have to be written in one sitting.
+   */
+  /**
+   * AI-draft section B from section A.
+   *
+   * The draft is returned, never written: the person who owns the job analysis
+   * reviews and edits every field before it is saved, and a draft that nobody
+   * submitted should leave no trace on the requisition. Gated on the same
+   * rule as writing it by hand — if it is not yours to write, it is not yours
+   * to draft.
+   */
+  async draftJobAnalysis(
+    id: string,
+    dto: DraftJobAnalysisDto,
+    userId: string,
+  ) {
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const req = await this.load(id, userId);
+    if (req.status !== 'PENDING_JOB_ANALYSIS') {
+      throw new BadRequestException(
+        'The job analysis can only be drafted before the requisition enters its approval chain',
+      );
+    }
+    await this.permissions.requireJobAnalysisAccess(
+      userId,
+      req.unitFactory,
+      req.jobAnalysisAssigneeId,
+      'draft the job analysis',
+    );
+
+    return this.ai.draftJobAnalysis({
+      designation: req.designation,
+      department: req.department,
+      section: req.section,
+      unitFactory: req.unitFactory,
+      placeOfPosting: req.placeOfPosting,
+      requiredPosts: req.requiredPosts,
+      employmentNature: req.employmentNature.toLowerCase(),
+      grade: req.grade,
+      requirementType: req.requirementType.toLowerCase(),
+      current: {
+        jobDescription: dto.jobDescription ?? req.jobDescription,
+        education: dto.education ?? req.education,
+        experience: dto.experience ?? req.experience,
+        others: dto.others ?? req.others ?? '',
+      },
+      hint: dto.hint ?? null,
+    });
+  }
+
+  async saveJobAnalysis(
+    id: string,
+    dto: JobAnalysisDto,
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.load(id, actor.id);
+    if (req.status !== 'PENDING_JOB_ANALYSIS') {
+      throw new BadRequestException(
+        req.status === 'PENDING_APPROVAL' || req.status === 'REJECTED'
+          ? `${req.code} has already gone to its approvers — ask the current approver to edit it.`
+          : 'The job analysis can only be written before the requisition enters its approval chain',
+      );
+    }
+    await this.permissions.requireJobAnalysisAccess(
+      actor.id,
+      req.unitFactory,
+      req.jobAnalysisAssigneeId,
+    );
+
+    const submit = dto.submit !== false;
+    const jobDescription = (dto.jobDescription ?? req.jobDescription).trim();
+    const education = (dto.education ?? req.education).trim();
+    const experience = (dto.experience ?? req.experience).trim();
+    const others = (dto.others ?? req.others ?? '').trim();
+
+    if (submit) {
+      // Checked here rather than on the DTO so a part-written draft can still
+      // be saved: the requirement is on releasing it, not on typing into it.
+      const missing = [
+        jobDescription.length < 5 ? 'a job description' : null,
+        education ? null : 'the education & training requirement',
+        experience ? null : 'the experience requirement',
+      ].filter((v): v is string => Boolean(v));
+      if (missing.length) {
+        throw new BadRequestException(
+          `Complete the job analysis before sending it for approval — still missing ${missing.join(', ')}.`,
+        );
+      }
+    }
+
+    const updated = await this.prisma.requisition.update({
+      where: { id },
+      data: {
+        jobDescription,
+        education,
+        experience,
+        others: others || null,
+        ...(submit
+          ? {
+              status: 'PENDING_APPROVAL' as const,
+              jobAnalysisById: actor.id,
+              jobAnalysisAt: new Date(),
+              // A submitted requisition is no longer parked with the raiser.
+              jobAnalysisReturnedAt: null,
+              jobAnalysisReturnNote: null,
+              activities: {
+                create: {
+                  actor: actor.name,
+                  action: 'EDITED' as const,
+                  note: 'Job analysis completed — sent to the approval chain',
+                },
+              },
+            }
+          : {}),
+      },
+      include: reqWithRelations,
+    });
+
+    const serialized = this.ser(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: submit ? 'job_analysis_completed' : 'updated',
+      record: serialized,
+    });
+    if (submit) {
+      await this.notifyPendingApprover(updated);
+      if (updated.raisedById && updated.raisedById !== actor.id) {
+        await this.notifications.notifyMany([updated.raisedById], {
+          type: 'requisition_info',
+          title: 'Job analysis completed',
+          message: `${updated.code} · ${updated.designation} — ${actor.name} completed the job analysis and sent it for approval.`,
+          link: `/requisitions/${updated.id}`,
+        });
+      }
+    }
+    return serialized;
+  }
+
+  /**
+   * Who owns this requisition's job analysis, and may the caller write it?
+   *
+   * Answered by the server because the rule depends on who holds Factory HR
+   * for the unit — the page would otherwise have to guess, and offer a form
+   * that saving then rejects.
+   */
+  async jobAnalysisOwnership(id: string, userId: string) {
+    const req = await this.load(id, userId);
+    const [{ viaFactoryHr, holders }, canComplete] = await Promise.all([
+      this.permissions.jobAnalysisOwnerHolders(req.unitFactory),
+      this.permissions.canCompleteJobAnalysis(
+        userId,
+        req.unitFactory,
+        req.jobAnalysisAssigneeId,
+      ),
+    ]);
+    return {
+      canComplete,
+      viaFactoryHr,
+      /** The unit's HR layering, in order, with who is away. */
+      owners: holders,
+      assignee: req.jobAnalysisAssignee
+        ? {
+            id: req.jobAnalysisAssignee.id,
+            name: req.jobAnalysisAssignee.name,
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Factory HR hands the requisition back to the raiser instead of completing
+   * it — the vacancy details are the raiser's to fix, and a wrong designation
+   * or post count can't be corrected from the job-analysis side.
+   *
+   * It stays at PENDING_JOB_ANALYSIS: nobody in the chain holds it, and the
+   * return note says whose turn it is. Mirrors "need more info" mid-chain.
+   */
+  async returnJobAnalysisToRaiser(
+    id: string,
+    note: string,
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.load(id, actor.id);
+    if (req.status !== 'PENDING_JOB_ANALYSIS') {
+      throw new BadRequestException(
+        'Only a requisition awaiting its job analysis can be sent back to the raiser',
+      );
+    }
+    await this.permissions.requireJobAnalysisAccess(
+      actor.id,
+      req.unitFactory,
+      req.jobAnalysisAssigneeId,
+      'send this requisition back to the raiser',
+    );
+    const reason = note.trim();
+    if (!reason) {
+      throw new BadRequestException(
+        'Say what needs changing — the raiser gets only this note',
+      );
+    }
+
+    const updated = await this.prisma.requisition.update({
+      where: { id },
+      data: {
+        jobAnalysisReturnedAt: new Date(),
+        jobAnalysisReturnNote: reason,
+        activities: {
+          create: {
+            actor: actor.name,
+            action: 'NEED_MORE_INFO' as const,
+            note: `Returned to the requisitioner before job analysis: ${reason}`,
+          },
+        },
+      },
+      include: reqWithRelations,
+    });
+
+    const serialized = this.ser(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'returned_to_raiser',
+      record: serialized,
+    });
+    if (updated.raisedById) {
+      await this.notifications.notifyMany([updated.raisedById], {
+        type: 'requisition_info_requested',
+        title: `${updated.code} sent back to you`,
+        message: `${actor.name} needs changes before the job analysis: ${reason}`,
+        link: `/requisitions/${updated.id}`,
+      });
+    }
+    return serialized;
+  }
+
+  /**
+   * The raiser resends a returned requisition. Clears the return note and puts
+   * it back in front of whoever owns the job analysis.
+   */
+  async resendForJobAnalysis(id: string, actor: { id: string; name: string }) {
+    const req = await this.load(id, actor.id);
+    if (req.status !== 'PENDING_JOB_ANALYSIS' || !req.jobAnalysisReturnedAt) {
+      throw new BadRequestException(
+        `${req.code} is not waiting on the requisitioner`,
+      );
+    }
+    const isSuper = await this.permissions.isSuperUser(actor.id);
+    if (req.raisedById !== actor.id && !isSuper) {
+      throw new ForbiddenException(
+        `Only ${req.raisedBy || 'the requisitioner'} can resend ${req.code}`,
+      );
+    }
+
+    const updated = await this.prisma.requisition.update({
+      where: { id },
+      data: {
+        jobAnalysisReturnedAt: null,
+        jobAnalysisReturnNote: null,
+        activities: {
+          create: {
+            actor: actor.name,
+            action: 'EDITED' as const,
+            note: 'Amended and resent for job analysis',
+          },
+        },
+      },
+      include: reqWithRelations,
+    });
+
+    const serialized = this.ser(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'resubmitted',
+      record: serialized,
+    });
+    await this.notifyJobAnalysisOwners(updated);
+    return serialized;
+  }
+
+  /**
+   * Tell whoever owns the job analysis that one is waiting.
+   *
+   * The unit's Factory HR, or — where the unit has none — Head of Talent
+   * Acquisition and the Corporate Recruiters, who cover for it.
+   */
+  private async notifyJobAnalysisOwners(req: RequisitionFull): Promise<void> {
+    // Parked with the raiser: nobody is waiting on the job analysis yet.
+    if (req.jobAnalysisReturnedAt) return;
+    const owners = await this.permissions.jobAnalysisOwners(req.unitFactory);
+    // Addressed to somebody already — tell them, not the whole queue. The
+    // stored assignee wins over today's answer so a resend goes back to the
+    // person who has been holding it.
+    const userIds = req.jobAnalysisAssigneeId
+      ? [req.jobAnalysisAssigneeId]
+      : owners.userIds;
+    const viaFactoryHr = req.jobAnalysisAssigneeId ? true : owners.viaFactoryHr;
+    if (!userIds.length) {
+      this.logger.warn(
+        `${req.code}: nobody holds Factory HR for ${req.unitFactory} and no Head of Talent Acquisition / recruiter to fall back on — the job analysis has no owner`,
+      );
+      return;
+    }
+    await this.notifications.notifyMany(userIds, {
+      type: 'requisition_pending',
+      title: 'Job analysis needed',
+      message: `${req.code} · ${req.designation} (${req.unitFactory}) needs its job analysis${
+        viaFactoryHr ? '' : ' — this unit has no Factory HR'
+      }.`,
+      link: `/requisitions/${req.id}`,
+    });
   }
 
   /**
@@ -457,7 +801,7 @@ export class RequisitionService {
       vocabulary: {
         departments: master.departments,
         designations: master.designations,
-        zones: master.zones,
+        jobLocations: master.jobLocations,
         departmentSections: master.departmentSections,
         sectionSubSections: master.sectionSubSections,
       },
@@ -774,22 +1118,42 @@ export class RequisitionService {
     actor: { id: string; name: string },
   ) {
     const req = await this.load(id, actor.id);
-    await this.requireCurrentApprover(req, actor.id);
+    const footing = await this.requireEditAccess(req, actor.id);
 
     const nextGrade =
       dto.grade !== undefined ? dto.grade.trim() || null : undefined;
-    const gradeChanged = nextGrade !== undefined && nextGrade !== req.grade;
+
+    /**
+     * Every field this edit actually changed, in words.
+     *
+     * The requisition is what the chain signed and what the offer is written
+     * from, and it can now be corrected by the HR side at any point in its
+     * life — so "who changed what, and when" cannot be left to whoever
+     * remembers. Only real changes are recorded: sending a field back
+     * unchanged is not an edit and should not read as one in the log.
+     */
+    const changes = describeRequisitionEdit(req, dto, nextGrade);
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (gradeChanged) {
+      if (changes.length > 0) {
         await tx.requisitionActivity.create({
           data: {
             requisitionId: id,
             actor: actor.name,
             action: 'EDITED',
-            note: req.grade
-              ? `Job Grade changed from ${req.grade} to ${nextGrade ?? '—'}`
-              : `Job Grade set to ${nextGrade ?? '—'}`,
+            // The footing matters as much as the change: an edit by the
+            // approver holding it is part of the flow, one made by HR after
+            // approval is a correction to a signed document.
+            note:
+              (footing === 'holder'
+                ? ''
+                : `Edited by ${footing === 'super' ? 'a super user' : 'HR'}${
+                    req.status === 'PENDING_APPROVAL'
+                      ? ' while in the approval chain'
+                      : req.status === 'PENDING_JOB_ANALYSIS'
+                        ? ''
+                        : ' after approval'
+                  } — `) + changes.join('; '),
           },
         });
       }
@@ -833,9 +1197,6 @@ export class RequisitionService {
             ? { experience: dto.experience }
             : {}),
           ...(dto.others !== undefined ? { others: dto.others } : {}),
-          ...(dto.preferredSources !== undefined
-            ? { preferredSources: dto.preferredSources }
-            : {}),
         },
         include: reqWithRelations,
       });
@@ -992,10 +1353,70 @@ export class RequisitionService {
   }
 
   /** Requisitions can only be edited/have facilities decided by whoever's turn it currently is. */
+  /**
+   * May this person edit the requisition's content, and on what footing?
+   *
+   * Two different rights, and they are not the same thing:
+   *
+   * - **Whoever holds it** — the current approver, or the raiser while it is
+   *   parked with them. Their edit is part of the flow: they were asked a
+   *   question and the answer is a correction.
+   * - **The HR side** — Head of Talent Acquisition / CHRO for the unit, the
+   *   assigned Corporate Recruiter (or whoever is covering them), and the
+   *   unit's Factory HR. They own the requisition as a document: a wrong
+   *   grade, a mistyped post count or a designation that does not match the
+   *   seat is theirs to fix, and it should not require bouncing the whole
+   *   chain back to the raiser to do it.
+   *
+   * Which one applied is returned, because `update()` writes it into the
+   * activity log: an edit by the approver who is holding a requisition reads
+   * very differently from one made by HR after it was approved, and the log
+   * is the only place that distinction survives.
+   */
+  private async requireEditAccess(
+    req: RequisitionFull,
+    actorId: string,
+  ): Promise<'holder' | 'hr' | 'super'> {
+    if (await this.permissions.isSuperUser(actorId)) return 'super';
+    // The people who own the document, at any stage of its life.
+    const [isCorporateHr, isChro, isFactoryHr] = await Promise.all([
+      this.permissions.hasRoleForUnitName(actorId, 'corporate_hr', req.unitFactory),
+      this.permissions.hasRoleForUnitName(actorId, 'chro', req.unitFactory),
+      this.permissions.hasRoleForUnitName(actorId, 'factory_hr', req.unitFactory),
+    ]);
+    const isRecruiter =
+      req.recruiterId === actorId ||
+      (req.coverRecruiterId === actorId &&
+        (!req.coverUntil || req.coverUntil.getTime() > Date.now()));
+    if (isCorporateHr || isChro || isFactoryHr || isRecruiter) return 'hr';
+
+    await this.requireCurrentApprover(req, actorId);
+    return 'holder';
+  }
+
   private async requireCurrentApprover(
     req: RequisitionFull,
     actorId: string,
   ): Promise<void> {
+    // Before the chain starts, the content is the raiser's own — but only
+    // while Factory HR has actually handed it back to them. Otherwise it sits
+    // with the job analysis, and section A is not theirs to rewrite.
+    if (req.status === 'PENDING_JOB_ANALYSIS') {
+      if (!req.jobAnalysisReturnedAt) {
+        throw new BadRequestException(
+          `${req.code} is with ${req.unitFactory}'s Factory HR for its job analysis — it can't be edited until it comes back or goes on for approval.`,
+        );
+      }
+      if (
+        req.raisedById === actorId ||
+        (await this.permissions.isSuperUser(actorId))
+      ) {
+        return;
+      }
+      throw new ForbiddenException(
+        `${req.code} was sent back to ${req.raisedBy || 'the requisitioner'} — only they can edit it now.`,
+      );
+    }
     if (req.status !== 'PENDING_APPROVAL') {
       throw new BadRequestException(
         'Only requisitions awaiting approval can be edited',
@@ -1020,7 +1441,7 @@ export class RequisitionService {
     const allowed = await this.canActOnStep(current, req.unitFactory, actorId);
     if (!allowed) {
       throw new ForbiddenException(
-        'Only the current approver can edit this requisition',
+        `Only ${current.assignee || 'the current approver'}, ${req.unitFactory}'s Factory HR, the assigned recruiter or Head of Talent Acquisition can edit this requisition`,
       );
     }
   }
@@ -1044,6 +1465,7 @@ export class RequisitionService {
       req.unitFactory,
       req.recruiterId,
       'confirm or skip facility requests',
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 
@@ -1193,7 +1615,10 @@ export class RequisitionService {
     }
     await this.ensureCorporateHrContinuation(req, actor.id);
     const posting = {
-      sources: dto.sources,
+      // Every posted requisition goes to the DBL career page; the channel list
+      // the requisitioner used to pick from is gone. Kept as an array because
+      // requisitions posted before this still hold their own sources.
+      sources: ['career_page'],
       closingDate: dto.closingDate,
       postedAt: new Date().toISOString(),
     };
@@ -1363,13 +1788,32 @@ export class RequisitionService {
       const isOwnBusiness =
         req.raisedById === userId ||
         req.recruiterId === userId ||
+        req.jobAnalysisById === userId ||
+        req.jobAnalysisAssigneeId === userId ||
+        // Standing in for the recruiter while they are on leave. Checked
+        // against the date as well, so a lapsed cover stops opening it.
+        (req.coverRecruiterId === userId &&
+          (!req.coverUntil || req.coverUntil.getTime() > Date.now())) ||
         req.approvalSteps.some((s) => s.approverUserId === userId);
       if (!isOwnBusiness) {
         const scope = await this.permissions.getUnitAccessScope(userId);
         if (!scope.all) {
-          throw new ForbiddenException(
-            'You can only open requisitions you raised, need to approve, or are recruiting for',
-          );
+          // Waiting on this user's job analysis — they hold Factory HR for the
+          // unit (or cover a unit that has none). They are not on the chain and
+          // did not raise it, so nothing above matches, and without this the
+          // person the requisition is actually waiting on cannot open it.
+          const owed =
+            req.status === 'PENDING_JOB_ANALYSIS' &&
+            (await this.permissions.canCompleteJobAnalysis(
+              userId,
+              req.unitFactory,
+              req.jobAnalysisAssigneeId,
+            ));
+          if (!owed) {
+            throw new ForbiddenException(
+              'You can only open requisitions you raised, need to approve, are recruiting for, or owe a job analysis',
+            );
+          }
         }
       }
     }
@@ -1417,6 +1861,7 @@ export class RequisitionService {
       req.unitFactory,
       req.recruiterId,
       'continue this requisition after approval',
+      { userId: req.coverRecruiterId, until: req.coverUntil },
     );
   }
 
@@ -1436,6 +1881,10 @@ export class RequisitionService {
     recruiterId: string | null,
     actor: { id: string; name: string },
   ) {
+    // A cover stands in for one particular recruiter. Handing the requisition
+    // to somebody else ends that arrangement rather than leaving a stand-in
+    // attached to a recruiter who no longer has it.
+
     const req = await this.load(id, actor.id);
 
     // Only Head of Talent Acquisition / CHRO / super may nominate — deliberately NOT the
@@ -1494,6 +1943,10 @@ export class RequisitionService {
         recruiterId,
         recruiterAssignedAt: recruiterId ? new Date() : null,
         recruiterAssignedById: recruiterId ? actor.id : null,
+        // See the note above: the stand-in stood in for the previous recruiter.
+        coverRecruiterId: null,
+        coverLeaveId: null,
+        coverUntil: null,
       },
     });
 
@@ -1639,6 +2092,22 @@ function serialize(req: RequisitionFull, files?: FileGrantService) {
       ? (req.facilities as { specialNotes: string[] }).specialNotes
       : [],
     preferredSources: req.preferredSources,
+    /**
+     * The job-analysis stage: who completed section B, and — while it is still
+     * open — whether Factory HR has handed it back to the raiser.
+     */
+    jobAnalysis: {
+      /** The Factory HR it is addressed to — null on an unordered unit. */
+      assignee: req.jobAnalysisAssignee
+        ? { id: req.jobAnalysisAssignee.id, name: req.jobAnalysisAssignee.name }
+        : null,
+      completedBy: req.jobAnalysisBy
+        ? { id: req.jobAnalysisBy.id, name: req.jobAnalysisBy.name }
+        : null,
+      completedAt: req.jobAnalysisAt?.toISOString() ?? null,
+      returnedAt: req.jobAnalysisReturnedAt?.toISOString() ?? null,
+      returnNote: req.jobAnalysisReturnNote ?? null,
+    },
     status: low(req.status),
     approvalChain: req.approvalSteps.map((s) => ({
       id: s.id,
@@ -1680,9 +2149,119 @@ function serialize(req: RequisitionFull, files?: FileGrantService) {
         }
       : null,
     recruiterAssignedAt: req.recruiterAssignedAt?.toISOString() ?? null,
+    /**
+     * The stand-in running this while the recruiter is on leave. Reported only
+     * while it actually applies: the row keeps the last cover until someone
+     * sets a new one, and a lapsed one must not read as current.
+     */
+    cover:
+      req.coverRecruiter &&
+      (!req.coverUntil || req.coverUntil.getTime() > Date.now())
+        ? {
+            id: req.coverRecruiter.id,
+            name: req.coverRecruiter.name,
+            employeeCode: req.coverRecruiter.employeeCode,
+            until: req.coverUntil?.toISOString() ?? null,
+          }
+        : null,
     createdAt: req.createdAt.toISOString(),
     updatedAt: req.updatedAt.toISOString(),
   };
+}
+
+/**
+ * What an edit actually changed, one clause per field.
+ *
+ * Only real changes: an unchanged value sent back with the form is not an
+ * edit and must not appear in the log as one, or the history fills with
+ * "Priority changed from moderate to moderate" and stops being read.
+ *
+ * Short fields print both values, because that is what somebody checking the
+ * record wants to see. Long prose does not — a paragraph pasted into an
+ * activity note is unreadable and the current text is on the requisition
+ * anyway — so those say that they were rewritten and how long the old one
+ * was, which is enough to tell a correction from a replacement.
+ */
+export function describeRequisitionEdit(
+  before: {
+    grade: string | null;
+    requiredPosts: number;
+    totalVacantPosts: number | null;
+    placeOfPosting: string;
+    vacantDate: Date | null;
+    neededDate: Date | null;
+    priority: string;
+    employmentNature: string;
+    contractualPurpose: string | null;
+    jobDescription: string;
+    education: string;
+    experience: string;
+    others: string | null;
+  },
+  dto: UpdateRequisitionDto,
+  nextGrade: string | null | undefined,
+): string[] {
+  const out: string[] = [];
+  const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : '—');
+  const text = (v: string | null | undefined) => (v ?? '').trim();
+
+  const scalar = (
+    label: string,
+    was: string | number | null,
+    next: string | number | null | undefined,
+  ) => {
+    if (next === undefined) return;
+    if (String(was ?? '') === String(next ?? '')) return;
+    out.push(`${label}: ${was || '—'} → ${next || '—'}`);
+  };
+
+  scalar('Job Grade', before.grade, nextGrade);
+  scalar('Required posts', before.requiredPosts, dto.requiredPosts);
+  scalar('Total vacant posts', before.totalVacantPosts, dto.totalVacantPosts);
+  scalar('Place of posting', before.placeOfPosting, dto.placeOfPosting);
+  scalar('Priority', before.priority.toLowerCase(), dto.priority?.toLowerCase());
+  scalar(
+    'Employment nature',
+    before.employmentNature.toLowerCase(),
+    dto.employmentNature?.toLowerCase(),
+  );
+  scalar('Purpose', before.contractualPurpose, dto.contractualPurpose);
+  if (dto.vacantDate !== undefined) {
+    const next = day(toDate(dto.vacantDate));
+    if (day(before.vacantDate) !== next) {
+      out.push(`Vacant date: ${day(before.vacantDate)} → ${next}`);
+    }
+  }
+  if (dto.neededDate !== undefined) {
+    const next = day(toDate(dto.neededDate));
+    if (day(before.neededDate) !== next) {
+      out.push(`When needed: ${day(before.neededDate)} → ${next}`);
+    }
+  }
+
+  const prose = (
+    label: string,
+    was: string | null,
+    next: string | undefined,
+  ) => {
+    if (next === undefined) return;
+    const a = text(was);
+    const b = text(next);
+    if (a === b) return;
+    out.push(
+      !a
+        ? `${label} added`
+        : !b
+          ? `${label} cleared`
+          : `${label} rewritten (was ${a.length} characters)`,
+    );
+  };
+  prose('Job description', before.jobDescription, dto.jobDescription);
+  prose('Education & training', before.education, dto.education);
+  prose('Experience', before.experience, dto.experience);
+  prose('Others', before.others, dto.others);
+
+  return out;
 }
 
 function toDate(value?: string): Date | null {
@@ -1697,7 +2276,11 @@ export interface FacilityDecision {
   option: string | null;
   /** Transport, full-time only: 'sedan' | 'suv'. */
   vehicleType?: string | null;
-  /** Transport: where the person is picked up from. */
+  /**
+   * Transport: where the person is picked up from. No longer asked at
+   * requisition time — nobody is selected yet, so nobody knows — but still
+   * read here so requisitions raised before that change keep displaying it.
+   */
   pickupLocation?: string | null;
   note: string;
   status: 'pending' | 'confirmed' | 'skipped';
@@ -1730,9 +2313,8 @@ function buildInitialFacilities(
     result[key] = {
       requested: input?.requested ?? false,
       option: input?.option ?? null,
-      // Only transport sends these; the others carry null and cost nothing.
+      // Only transport sends this; the others carry null and cost nothing.
       vehicleType: input?.vehicleType ?? null,
-      pickupLocation: input?.pickupLocation ?? null,
       note: input?.note ?? '',
       status: 'pending',
       hrNote: '',

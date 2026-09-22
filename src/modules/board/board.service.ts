@@ -545,6 +545,10 @@ export class BoardService {
       candidate.requisition.unitFactory,
       candidate.requisition.recruiterId,
       'approve this board approval',
+      {
+        userId: candidate.requisition.coverRecruiterId,
+        until: candidate.requisition.coverUntil,
+      },
     );
     const ob = await this.prisma.onboarding.findUnique({
       where: { candidateId },
@@ -2405,7 +2409,14 @@ export class BoardService {
       const cand = await this.prisma.candidate.findUnique({
         where: { id: candidateId },
         select: {
-          requisition: { select: { unitFactory: true, recruiterId: true } },
+          requisition: {
+            select: {
+              unitFactory: true,
+              recruiterId: true,
+              coverRecruiterId: true,
+              coverUntil: true,
+            },
+          },
         },
       });
       if (cand) {
@@ -2414,6 +2425,10 @@ export class BoardService {
           cand.requisition.unitFactory,
           cand.requisition.recruiterId,
           'manage board approvals for this candidate',
+          {
+            userId: cand.requisition.coverRecruiterId,
+            until: cand.requisition.coverUntil,
+          },
         );
         return;
       }

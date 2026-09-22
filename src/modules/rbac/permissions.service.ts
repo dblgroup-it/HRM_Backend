@@ -20,6 +20,19 @@ export interface UserPermissions {
   unitIds: string[];
 }
 
+/**
+ * What the recruitment gate needs to know about a requisition: its unit, its
+ * recruiter, and whoever is standing in for them. Shared so the gates in
+ * candidates / assessment / interview / onboarding / facilities / salary all
+ * pass the same thing and none of them can quietly forget the cover.
+ */
+export interface RecruitmentSubject {
+  unitFactory: string;
+  recruiterId: string | null;
+  coverRecruiterId: string | null;
+  coverUntil: Date | null;
+}
+
 export interface UnitAccessScope {
   all: boolean;
   unitNames: string[];
@@ -45,6 +58,12 @@ const LEGACY_STEP_ROLE_BY_KEY: Record<string, string> = {
 };
 const PERMS_PREFIX = 'perms:';
 const PERMS_TTL = 60_000; // 60s — invalidated immediately on any role change.
+const LEAVE_KEY = 'leave:on-leave-user-ids';
+/**
+ * Short: leave changes routing the moment it is set, and the writer invalidates
+ * this anyway. The TTL is only a backstop for a period that expires on its own.
+ */
+const LEAVE_TTL = 30_000;
 
 /**
  * The roles that may administer an employee's record.
@@ -109,6 +128,49 @@ export class PermissionsService {
   invalidate(userId?: string): void {
     if (userId) this.cache.delete(`${PERMS_PREFIX}${userId}`);
     else this.cache.deleteByPrefix(PERMS_PREFIX);
+  }
+
+  // --- who is away --------------------------------------------------------
+
+  /**
+   * Everyone on leave right now.
+   *
+   * One set for the whole request rather than a query per candidate: routing
+   * asks this for every holder of a role, and the answer is the same for all of
+   * them. A period expires by itself — `endsAt` in the past simply stops
+   * matching — so nothing has to run on a schedule to put anyone back on duty.
+   */
+  async onLeaveUserIds(): Promise<Set<string>> {
+    return new Set((await this.activeLeaves()).keys());
+  }
+
+  /**
+   * Everyone on leave right now, with when they are due back (null = until
+   * further notice). One cached read behind both this and `onLeaveUserIds`,
+   * because the layering page wants the date and routing only wants the names.
+   */
+  async activeLeaves(): Promise<Map<string, { endsAt: Date | null }>> {
+    const rows = await this.cache.wrap(LEAVE_KEY, LEAVE_TTL, async () => {
+      const now = new Date();
+      return this.prisma.leavePeriod.findMany({
+        where: {
+          endedAt: null,
+          startsAt: { lte: now },
+          OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+        },
+        select: { userId: true, endsAt: true },
+      });
+    });
+    return new Map(rows.map((r) => [r.userId, { endsAt: r.endsAt }] as const));
+  }
+
+  /** Drop the cached leave set (call whenever a leave starts or ends). */
+  invalidateLeave(): void {
+    this.cache.delete(LEAVE_KEY);
+  }
+
+  async isOnLeave(userId: string): Promise<boolean> {
+    return (await this.onLeaveUserIds()).has(userId);
   }
 
   /** Resolve whether a user can see every unit or only their assigned units. */
@@ -181,7 +243,39 @@ export class PermissionsService {
       { raisedById: userId },
       { approvalSteps: { some: { approverUserId: userId } } },
       { recruiterId: userId },
+      // Whoever wrote the job analysis keeps sight of it afterwards — they are
+      // not on the chain, so no other clause would match once it moves on.
+      { jobAnalysisById: userId },
+      // Addressed to them, and standing in for a recruiter on leave.
+      { jobAnalysisAssigneeId: userId },
+      { coverRecruiterId: userId },
     ];
+
+    // Waiting on this user's job analysis. A Factory HR sees what is addressed
+    // to them by name, plus anything in their units that was never addressed to
+    // a person — an unordered unit, or one whose queue was all on leave when it
+    // was raised and they are now back.
+    const isFactoryHr = perms.roles.some((r) => r.key === 'factory_hr');
+    if (isFactoryHr && scope.unitNames.length > 0) {
+      clauses.push({
+        status: 'PENDING_JOB_ANALYSIS',
+        jobAnalysisAssigneeId: null,
+        unitFactory: { in: scope.unitNames },
+      });
+    }
+    // A Corporate Recruiter covers only units with no Factory HR available —
+    // and only the requisitions that were left unaddressed, never one sitting
+    // with a named person.
+    if (perms.roles.some((r) => r.key === 'corporate_recruiter')) {
+      const covered = await this.unitNamesWithFactoryHr();
+      clauses.push({
+        status: 'PENDING_JOB_ANALYSIS',
+        jobAnalysisAssigneeId: null,
+        ...(covered.length > 0
+          ? { NOT: { unitFactory: { in: covered } } }
+          : {}),
+      });
+    }
 
     // Legacy chains route by role, so also surface anything in this user's
     // units that has a role-routed step they could act on.
@@ -253,6 +347,211 @@ export class PermissionsService {
   }
 
   /**
+   * Units that have a Factory HR of their own, by normalised name.
+   *
+   * The job-analysis fallback is conditional — Corporate HR and the Corporate
+   * Recruiters only step in where a unit has nobody — so both the gate and the
+   * notification have to know which units those are. One query, shared, rather
+   * than each caller asking its own way.
+   */
+  async unitNamesWithFactoryHr(): Promise<string[]> {
+    const [assignments, onLeave] = await Promise.all([
+      this.prisma.roleAssignment.findMany({
+        where: { role: { key: 'factory_hr' } },
+        select: { userId: true, unit: { select: { name: true } } },
+      }),
+      this.onLeaveUserIds(),
+    ]);
+    // Unit names as stored, not normalised: `unitFactory` on a requisition is
+    // copied from a units row, so an exact match is the one that works.
+    //
+    // A unit whose every Factory HR is on leave counts as having none — that is
+    // the whole point of the fallback, and the Corporate Recruiters covering it
+    // need to see the work.
+    return [
+      ...new Set(
+        assignments
+          .filter((a) => !onLeave.has(a.userId))
+          .map((a) => a.unit?.name)
+          .filter((name): name is string => Boolean(name)),
+      ),
+    ];
+  }
+
+  /**
+   * A unit's Factory HR queue, in layering order: first priority, then second,
+   * and so on. Unordered holders (no priority set) come last, by name, so a unit that
+   * never configured an order still gets a stable list.
+   */
+  async factoryHrQueue(unitName: string): Promise<
+    {
+      id: string;
+      name: string;
+      employeeCode: string;
+      priority: number | null;
+      onLeave: boolean;
+      /** When they are due back; null while on duty or away indefinitely. */
+      leaveEndsAt?: Date | null;
+      /** The assignment row, so the page can reorder it. */
+      assignmentId?: string;
+    }[]
+  > {
+    const [assignments, leaves] = await Promise.all([
+      this.holderAssignments('factory_hr', unitName),
+      this.activeLeaves(),
+    ]);
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: [...new Set(assignments.map((a) => a.userId))] } },
+      select: { id: true, name: true, employeeCode: true },
+    });
+    const rowOf = new Map(assignments.map((a) => [a.userId, a] as const));
+    return users
+      .map((u) => ({
+        ...u,
+        priority: rowOf.get(u.id)?.priority ?? null,
+        assignmentId: rowOf.get(u.id)?.id,
+        onLeave: leaves.has(u.id),
+        leaveEndsAt: leaves.get(u.id)?.endsAt ?? null,
+      }))
+      .sort(
+        (a, b) =>
+          (a.priority ?? Number.MAX_SAFE_INTEGER) -
+            (b.priority ?? Number.MAX_SAFE_INTEGER) ||
+          a.name.localeCompare(b.name),
+      );
+  }
+
+  /**
+   * Who completes the Job Analysis for a unit's requisition.
+   *
+   * The unit's Factory HR owns it. A unit with no Factory HR of its own falls
+   * back to Corporate HR and the Corporate Recruiters — deliberately a
+   * FALLBACK, not a parallel route: where a Factory HR exists, it is theirs.
+   */
+  async jobAnalysisOwners(unitName: string): Promise<{
+    /**
+     * The one person it is addressed to, when the unit's queue is ordered.
+     * Null in the two cases where it belongs to a group instead: an unordered
+     * unit (nobody set a priority — everyone is notified, as before), and the
+     * fallback.
+     */
+    assigneeId: string | null;
+    userIds: string[];
+    /** False when nobody is available and the corporate fallback is in play. */
+    viaFactoryHr: boolean;
+  }> {
+    const queue = await this.factoryHrQueue(unitName);
+    const available = queue.filter((h) => !h.onLeave);
+
+    if (available.length > 0) {
+      // An order was configured: it goes to the first available person in it.
+      // Nobody ordered: it goes to all of them, which is what this unit had
+      // before priorities existed.
+      const ordered = available.filter((h) => h.priority !== null);
+      return ordered.length > 0
+        ? { assigneeId: ordered[0].id, userIds: [ordered[0].id], viaFactoryHr: true }
+        : {
+            assigneeId: null,
+            userIds: available.map((h) => h.id),
+            viaFactoryHr: true,
+          };
+    }
+
+    // No Factory HR at all, or every one of them is on leave.
+    const [corporateHr, recruiters] = await Promise.all([
+      this.roleHolderUserIds('corporate_hr', unitName),
+      this.roleHolderUserIds('corporate_recruiter', unitName),
+    ]);
+    return {
+      assigneeId: null,
+      userIds: [...new Set([...corporateHr, ...recruiters])],
+      viaFactoryHr: false,
+    };
+  }
+
+  /**
+   * The same rule as `jobAnalysisOwners`, as named people.
+   *
+   * The requisition page reads this rather than working the rule out from the
+   * viewer's own roles: whether the fallback is in play depends on who holds
+   * Factory HR for that unit, which the browser cannot know.
+   */
+  async jobAnalysisOwnerHolders(unitName: string): Promise<{
+    viaFactoryHr: boolean;
+    holders: {
+      id: string;
+      name: string;
+      employeeCode: string;
+      /** Position in the layering, 1 first. Null on an unordered unit. */
+      priority?: number | null;
+      onLeave?: boolean;
+    }[];
+  }> {
+    const queue = await this.factoryHrQueue(unitName);
+    if (queue.some((h) => !h.onLeave)) {
+      return { viaFactoryHr: true, holders: queue };
+    }
+    // Nobody in the queue is available (or there is no queue) — show who is
+    // covering instead, so the page names people who can actually act.
+    const [corporateHr, recruiters] = await Promise.all([
+      this.roleHolders('corporate_hr', unitName),
+      this.roleHolders('corporate_recruiter', unitName),
+    ]);
+    const onLeave = await this.onLeaveUserIds();
+    const byId = new Map(
+      [...corporateHr, ...recruiters].map(
+        (h) => [h.id, { ...h, onLeave: onLeave.has(h.id) }] as const,
+      ),
+    );
+    return { viaFactoryHr: false, holders: [...byId.values()] };
+  }
+
+  /**
+   * May this user write the Job Analysis on a requisition in this unit?
+   *
+   * `assigneeId` is the requisition's own `jobAnalysisAssigneeId`: once it is
+   * addressed to someone, it is theirs alone — the second in line does not get
+   * to reach past them, and is moved up only when they go on leave. Null means
+   * it was never addressed to a person (an unordered unit, or the fallback),
+   * and then it belongs to whoever `jobAnalysisOwners` names today.
+   */
+  async canCompleteJobAnalysis(
+    userId: string,
+    unitName: string,
+    assigneeId: string | null = null,
+  ): Promise<boolean> {
+    if (await this.isSuperUser(userId)) return true;
+    if (assigneeId) return assigneeId === userId;
+    const owners = await this.jobAnalysisOwners(unitName);
+    return owners.userIds.includes(userId);
+  }
+
+  /** `canCompleteJobAnalysis`, but throws instead of returning false. */
+  async requireJobAnalysisAccess(
+    userId: string,
+    unitName: string,
+    assigneeId: string | null = null,
+    action = 'complete the job analysis',
+  ): Promise<void> {
+    if (await this.canCompleteJobAnalysis(userId, unitName, assigneeId)) return;
+    if (assigneeId) {
+      const who = await this.prisma.user.findUnique({
+        where: { id: assigneeId },
+        select: { name: true },
+      });
+      throw new ForbiddenException(
+        `This job analysis is with ${who?.name ?? 'another Factory HR'} — only they (or a super user) can ${action}. It moves to the next Factory HR in line if they go on leave.`,
+      );
+    }
+    const owners = await this.jobAnalysisOwners(unitName);
+    throw new ForbiddenException(
+      owners.viaFactoryHr
+        ? `Only Factory HR for ${unitName} (or a super user) can ${action}`
+        : `${unitName} has no Factory HR available, so only Head of Talent Acquisition, a Corporate Recruiter or a super user can ${action}`,
+    );
+  }
+
+  /**
    * Post-approval recruitment access: Head of Talent Acquisition / CHRO / super users, plus
    * the Corporate Recruiter assigned to this specific requisition.
    *
@@ -264,8 +563,22 @@ export class PermissionsService {
     userId: string,
     unitName: string,
     recruiterId: string | null,
+    /**
+     * The requisition's stand-in while its recruiter is on leave. Additive and
+     * self-expiring: the recruiter keeps their own access throughout, and the
+     * date is checked here rather than swept, so a cover stops counting the
+     * moment the leave is over even if nothing has tidied the row yet.
+     */
+    cover?: { userId: string | null; until: Date | null } | null,
   ): Promise<boolean> {
     if (recruiterId && recruiterId === userId) return true;
+    if (
+      cover?.userId &&
+      cover.userId === userId &&
+      (!cover.until || cover.until.getTime() > Date.now())
+    ) {
+      return true;
+    }
     return (
       (await this.hasRoleForUnitName(userId, 'corporate_hr', unitName)) ||
       (await this.hasRoleForUnitName(userId, 'chro', unitName))
@@ -309,10 +622,12 @@ export class PermissionsService {
     unitName: string,
     recruiterId: string | null,
     action = 'access recruitment for this requisition',
+    cover?: { userId: string | null; until: Date | null } | null,
   ): Promise<void> {
-    if (await this.canRunRecruitment(userId, unitName, recruiterId)) return;
+    if (await this.canRunRecruitment(userId, unitName, recruiterId, cover))
+      return;
     throw new ForbiddenException(
-      `Only Head of Talent Acquisition, CHRO, the assigned recruiter or a super user can ${action}`,
+      `Only Head of Talent Acquisition, CHRO, the assigned recruiter (or whoever is covering for them) or a super user can ${action}`,
     );
   }
 
@@ -323,11 +638,18 @@ export class PermissionsService {
   async recruitmentRecipients(
     unitName: string,
     recruiterId: string | null,
+    cover?: { userId: string | null; until: Date | null } | null,
   ): Promise<string[]> {
     const ids = await this.roleHolderUserIds('corporate_hr', unitName);
-    return recruiterId && !ids.includes(recruiterId)
-      ? [...ids, recruiterId]
-      : ids;
+    const add = (id: string | null | undefined) => {
+      if (id && !ids.includes(id)) ids.push(id);
+    };
+    add(recruiterId);
+    // The stand-in too, while the cover lasts — they are the one acting on it.
+    if (!cover?.until || (cover.until?.getTime() ?? 0) > Date.now()) {
+      add(cover?.userId);
+    }
+    return ids;
   }
 
   /** Names of users holding `roleKey` for a unit (global holders included). */

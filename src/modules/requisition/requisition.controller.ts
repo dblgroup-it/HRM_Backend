@@ -23,9 +23,12 @@ import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
   AssignRecruiterDto,
+  DraftJobAnalysisDto,
   DraftRequisitionDto,
+  JobAnalysisDto,
   PostRequisitionDto,
   QueryRequisitionsDto,
+  ReturnToRaiserDto,
   UpdateFacilitiesDto,
   UpdateRequisitionDto,
   UpdateRoleProfileDto,
@@ -77,6 +80,71 @@ export class RequisitionController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.requisitionService.update(id, dto, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  /**
+   * Section B — the unit's Factory HR writes the job analysis and sends the
+   * requisition on to its approval chain (`submit`, the default). Where a unit
+   * has no Factory HR, Head of Talent Acquisition / a Corporate Recruiter do it.
+   */
+  @Patch(':id/job-analysis')
+  saveJobAnalysis(
+    @Param('id') id: string,
+    @Body() dto: JobAnalysisDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.saveJobAnalysis(id, dto, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  /** Who owns the job analysis here, and may the caller write it? */
+  @Get(':id/job-analysis')
+  jobAnalysisOwnership(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.jobAnalysisOwnership(id, user.id);
+  }
+
+  /**
+   * AI-draft section B from section A. Returns a draft only — nothing is
+   * saved, and the writer edits every field before submitting.
+   */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post(':id/job-analysis/draft')
+  draftJobAnalysis(
+    @Param('id') id: string,
+    @Body() dto: DraftJobAnalysisDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.draftJobAnalysis(id, dto, user.id);
+  }
+
+  /** Hand it back to the raiser instead — the vacancy details are theirs. */
+  @Patch(':id/job-analysis/return')
+  returnJobAnalysis(
+    @Param('id') id: string,
+    @Body() dto: ReturnToRaiserDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.returnJobAnalysisToRaiser(id, dto.note, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  /** The raiser resends a returned requisition for its job analysis. */
+  @Patch(':id/job-analysis/resend')
+  resendForJobAnalysis(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.resendForJobAnalysis(id, {
       id: user.id,
       name: user.name,
     });
