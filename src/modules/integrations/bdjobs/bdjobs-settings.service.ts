@@ -56,6 +56,35 @@ const normalizeApplyBase = (url: string): string =>
     .replace(/\/apply(\/.*)?$/i, '')
     .replace(/\/+$/, '');
 
+/**
+ * Everything that is not a credential, at its shipped value.
+ *
+ * These lived inline in `get()` as `?? 'literal'` fallbacks, which is fine
+ * until something needs to answer "what were they originally?" — a Restore
+ * defaults button does, and a second copy of the literals would drift from
+ * the first the day one of them changed. `get()` now reads from here too, so
+ * there is one list.
+ *
+ * Credentials are deliberately absent: restoring defaults must never blank a
+ * token an admin typed in and may not be able to type again.
+ */
+export const BDJOBS_DEFAULTS = {
+  enabled: true,
+  baseUrl: 'https://application.bdjobs.com/v1',
+  signatureFormat: '{token}&^^{decodeId}*&*{ts}',
+  specialInstruction:
+    'Apply with your updated CV. Only shortlisted candidates will be contacted.',
+  otherBenefits: 'As per company policy.',
+  deadlineDays: 29,
+  applyOnlineDefault: true,
+  publicApplyBaseUrl: '',
+  entryLevelMaxYears: 3,
+  midLevelMaxYears: 8,
+} as const;
+
+/** The restorable half of the settings — no credentials, no company id. */
+export type BdJobsDefaults = typeof BDJOBS_DEFAULTS;
+
 @Injectable()
 export class BdJobsSettingsService {
   constructor(
@@ -68,11 +97,11 @@ export class BdJobsSettingsService {
     const row = await this.prisma.setting.findUnique({ where: { key: KEY } });
     const v = (row?.value as Partial<BdJobsSettings> | null) ?? {};
     return {
-      enabled: v.enabled ?? true,
+      enabled: v.enabled ?? BDJOBS_DEFAULTS.enabled,
       baseUrl:
         v.baseUrl ||
         this.config.get<string>('bdjobs.baseUrl') ||
-        'https://application.bdjobs.com/v1',
+        BDJOBS_DEFAULTS.baseUrl,
       companyId:
         v.companyId || this.config.get<string>('bdjobs.companyId') || '',
       authToken:
@@ -81,16 +110,25 @@ export class BdJobsSettingsService {
       signatureFormat:
         v.signatureFormat ||
         this.config.get<string>('bdjobs.signatureFormat') ||
-        '{token}&^^{decodeId}*&*{ts}',
+        BDJOBS_DEFAULTS.signatureFormat,
       specialInstruction:
-        v.specialInstruction ??
-        'Apply with your updated CV. Only shortlisted candidates will be contacted.',
-      otherBenefits: v.otherBenefits ?? 'As per company policy.',
-      deadlineDays: clamp(v.deadlineDays ?? 29, 1, 30),
-      applyOnlineDefault: v.applyOnlineDefault ?? true,
-      publicApplyBaseUrl: v.publicApplyBaseUrl ?? '',
-      entryLevelMaxYears: clamp(v.entryLevelMaxYears ?? 3, 0, 20),
-      midLevelMaxYears: clamp(v.midLevelMaxYears ?? 8, 1, 30),
+        v.specialInstruction ?? BDJOBS_DEFAULTS.specialInstruction,
+      otherBenefits: v.otherBenefits ?? BDJOBS_DEFAULTS.otherBenefits,
+      deadlineDays: clamp(v.deadlineDays ?? BDJOBS_DEFAULTS.deadlineDays, 1, 30),
+      applyOnlineDefault:
+        v.applyOnlineDefault ?? BDJOBS_DEFAULTS.applyOnlineDefault,
+      publicApplyBaseUrl:
+        v.publicApplyBaseUrl ?? BDJOBS_DEFAULTS.publicApplyBaseUrl,
+      entryLevelMaxYears: clamp(
+        v.entryLevelMaxYears ?? BDJOBS_DEFAULTS.entryLevelMaxYears,
+        0,
+        20,
+      ),
+      midLevelMaxYears: clamp(
+        v.midLevelMaxYears ?? BDJOBS_DEFAULTS.midLevelMaxYears,
+        1,
+        30,
+      ),
     };
   }
 
@@ -136,6 +174,40 @@ export class BdJobsSettingsService {
       where: { key: KEY },
       create: { key: KEY, value: merged as unknown as Prisma.InputJsonValue },
       update: { value: merged as unknown as Prisma.InputJsonValue },
+    });
+    return this.getView();
+  }
+
+  /**
+   * Put the shipped configuration back, in one call.
+   *
+   * For the case this exists to serve: somebody has edited the base URL, the
+   * signature template or the level thresholds, posting has stopped working,
+   * and nobody remembers what the values were. Restoring them by hand means
+   * knowing them.
+   *
+   * **The credentials and the company ID survive.** They are the half an admin
+   * cannot reconstruct — the token is masked in the UI and may only exist in
+   * BDJobs' own portal — so a "restore" that blanked them would turn a
+   * recoverable mistake into an unrecoverable one. `enabled` survives too: it
+   * is an operational switch, not configuration, and silently re-enabling
+   * posting for somebody who had deliberately turned it off is not a default
+   * anyone asked to be restored.
+   */
+  async restoreDefaults(): Promise<BdJobsSettingsView> {
+    const current = await this.get();
+    const restored: BdJobsSettings = {
+      ...BDJOBS_DEFAULTS,
+      // Kept, deliberately — see above.
+      enabled: current.enabled,
+      companyId: current.companyId,
+      authToken: current.authToken,
+      decodeId: current.decodeId,
+    };
+    await this.prisma.setting.upsert({
+      where: { key: KEY },
+      create: { key: KEY, value: restored as unknown as Prisma.InputJsonValue },
+      update: { value: restored as unknown as Prisma.InputJsonValue },
     });
     return this.getView();
   }

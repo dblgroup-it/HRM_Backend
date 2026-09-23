@@ -88,6 +88,17 @@ export class BdJobsController {
   }
 
   /**
+   * Put the shipped configuration back in one call — base URL, signature
+   * template, posting defaults and level thresholds. Credentials, company ID
+   * and the on/off switch are kept: they are the half nobody can retype.
+   */
+  @Roles(UserRole.ADMIN)
+  @Post('integrations/bdjobs/settings/restore')
+  restoreSettings() {
+    return this.settings.restoreDefaults();
+  }
+
+  /**
    * Verify credentials against BDJobs without creating a listing. The admin
    * screen posts the values currently in the form so "Test" checks what's on
    * screen (blank secrets fall back to the saved ones).

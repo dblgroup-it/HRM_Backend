@@ -1,4 +1,5 @@
 import {
+  HttpException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -14,6 +15,7 @@ import { DriveService } from '../integrations/google/drive.service';
 import { GoogleAuthService } from '../integrations/google/google-auth.service';
 import { AutomationPauseService } from './automation-pause.service';
 import { AutomationLogService } from './automation-log.service';
+import { explainPgDumpFailure, resolvePgDump } from './pg-dump-path';
 
 const execFileAsync = promisify(execFile);
 const KEEP_BACKUPS = 30;
@@ -73,11 +75,21 @@ export class BackupService {
     const name = `hrm-db-${stamp}.dump`;
     const tmpPath = join(tmpdir(), name);
 
+    // Resolved rather than trusted to PATH: a daemon does not read the login
+    // profile that puts the Postgres client tools on it, so `pg_dump` alone
+    // failed with ENOENT under PM2 while working perfectly in a terminal.
+    const { command, attempted } = await resolvePgDump();
+    if (!command) {
+      const why = explainPgDumpFailure({ code: 'ENOENT' }, attempted);
+      this.console.log('backup', `✗ ${why}`);
+      throw new ServiceUnavailableException(why);
+    }
+
     try {
-      this.console.log('backup', '▶ Running pg_dump…');
+      this.console.log('backup', `▶ Running ${command}…`);
       // Custom format is compressed and restorable table-by-table.
       await execFileAsync(
-        'pg_dump',
+        command,
         ['--format=custom', `--file=${tmpPath}`, dbUrl],
         { timeout: 10 * 60_000 },
       );
@@ -111,8 +123,15 @@ export class BackupService {
         pruned,
       };
     } catch (err) {
-      this.console.log('backup', `✗ Backup failed: ${(err as Error).message}`);
-      throw err;
+      // Everything here was reaching the client as "Internal server error":
+      // execFile rejects with a plain Error, which Nest can only render as a
+      // 500. The operator needs to know whether to install a binary, upgrade
+      // one, or fix a connection string.
+      const why = explainPgDumpFailure(err, attempted);
+      this.console.log('backup', `✗ ${why}`);
+      throw err instanceof HttpException
+        ? err
+        : new ServiceUnavailableException(why);
     } finally {
       await unlink(tmpPath).catch(() => undefined);
     }
