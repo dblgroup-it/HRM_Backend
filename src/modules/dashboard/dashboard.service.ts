@@ -55,13 +55,18 @@ interface RequisitionSnapshot {
   coverUntil: string | null;
 }
 
+/**
+ * The four figures the dashboard and the Employees page put on stat tiles.
+ *
+ * It also carried `activeUnits`, `totalUnits`, `sanctionedSeats` and
+ * `filledSeats`, which existed for one card — the "Workforce Capacity" donut —
+ * and for nothing else. The card is gone, so they are not computed, not
+ * queried and not sent. `vacantSeats` stays: it is a tile in its own right on
+ * both pages, and it is still derived from the seat sums below.
+ */
 interface DashboardSummary {
   totalEmployees: number;
   activeEmployees: number;
-  activeUnits: number;
-  totalUnits: number;
-  sanctionedSeats: number;
-  filledSeats: number;
   vacantSeats: number;
   openRequisitions: number;
 }
@@ -128,7 +133,6 @@ export class DashboardService {
       recentByJoin,
       recentByCreate,
       requisitions,
-      units,
       seats,
     ] = await Promise.all([
       this.prisma.employee.count({ where: empWhere }),
@@ -170,10 +174,6 @@ export class DashboardService {
           coverUntil: true,
           recruiter: { select: { name: true } },
         },
-      }),
-      this.prisma.unit.findMany({
-        where: scope.all ? {} : { name: { in: scope.unitNames } },
-        select: { isActive: true },
       }),
       this.prisma.position.aggregate({
         where: seatWhere,
@@ -252,10 +252,6 @@ export class DashboardService {
     const summary: DashboardSummary = {
       totalEmployees,
       activeEmployees,
-      activeUnits: units.filter((unit) => unit.isActive).length,
-      totalUnits: units.length,
-      sanctionedSeats,
-      filledSeats,
       vacantSeats,
       openRequisitions,
     };
