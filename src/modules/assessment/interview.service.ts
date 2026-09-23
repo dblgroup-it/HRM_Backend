@@ -17,6 +17,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  EvaluationRecommendation,
   InterviewKind,
   InterviewMode,
   InterviewStatus,
@@ -64,6 +65,25 @@ import {
   CandidatePackageDto,
   RejectAtInterviewDto,
 } from './dto/interview.dto';
+import type { EvaluationRecommendationKey } from './recommendation';
+
+/**
+ * The interviewer's suggestion, across the wire in the frontend's lowercase
+ * vocabulary and in the database as an uppercase Prisma enum — the same
+ * convention the requisition serializer uses for status.
+ */
+function toRecommendation(
+  key: EvaluationRecommendationKey | undefined,
+): EvaluationRecommendation | null {
+  if (!key) return null;
+  return key.toUpperCase() as EvaluationRecommendation;
+}
+
+function fromRecommendation(
+  value: EvaluationRecommendation | null,
+): EvaluationRecommendationKey | null {
+  return value ? (value.toLowerCase() as EvaluationRecommendationKey) : null;
+}
 
 const roundInclude = {
   panelists: { include: { user: { include: { employee: true } } } },
@@ -697,6 +717,7 @@ export class InterviewService {
               scores: mine.scores as Record<string, number>,
               comments: mine.comments ?? '',
               total: mine.total,
+              recommendation: fromRecommendation(mine.recommendation),
             }
           : null,
       };
@@ -748,6 +769,7 @@ export class InterviewService {
         scores,
         comments: dto.comments?.trim() || null,
         total,
+        recommendation: toRecommendation(dto.recommendation),
       },
     });
 
@@ -869,6 +891,7 @@ export class InterviewService {
         scores: true,
         comments: true,
         total: true,
+        recommendation: true,
       },
     });
 
@@ -908,6 +931,7 @@ export class InterviewService {
             scores: existingEval.scores as Record<string, number>,
             comments: existingEval.comments ?? '',
             total: existingEval.total,
+            recommendation: fromRecommendation(existingEval.recommendation),
           }
         : null,
     };
@@ -962,6 +986,7 @@ export class InterviewService {
           scores,
           comments: dto.comments?.trim() || null,
           total,
+          recommendation: toRecommendation(dto.recommendation),
         },
       }),
       this.prisma.evaluationToken.update({
@@ -2204,6 +2229,9 @@ function serializeRound(r: RoundFull) {
       scores: e.scores as Record<string, number>,
       total: e.total,
       comments: e.comments ?? '',
+      // Null on everything submitted before this was asked for — the UI shows
+      // nothing rather than inventing a verdict nobody gave.
+      recommendation: fromRecommendation(e.recommendation),
     })),
     evaluationCount: r.evaluations.length,
   };

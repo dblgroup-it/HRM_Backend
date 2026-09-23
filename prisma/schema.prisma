@@ -105,6 +105,15 @@ enum CandidateStage {
   REJECTED
 }
 
+/// What the interviewer thinks should happen next — a suggestion recorded
+/// beside their marks, not the decision itself.
+enum EvaluationRecommendation {
+  SELECT
+  REJECT
+  /// Not for this role, but worth keeping — how the Talent Bank fills up.
+  TALENT_POOL
+}
+
 enum InterviewKind {
   FIRST
   SECOND
@@ -1010,45 +1019,45 @@ model AiProficiencyAttempt {
 /// Phase 4 & 5 — document collection, verification, offer & onboarding for a
 /// selected candidate. One per candidate.
 model Onboarding {
-  id                    String           @id @default(cuid())
-  candidateId           String           @unique @map("candidate_id")
-  candidate             Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id                     String           @id @default(cuid())
+  candidateId            String           @unique @map("candidate_id")
+  candidate              Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   /// Legacy raw token; null for anything issued since hashing was introduced.
-  token                 String?          @unique @db.VarChar(64)
+  token                  String?          @unique @db.VarChar(64)
   /// SHA-256 of the raw token — what lookups match on.
-  tokenHash             String?          @unique @map("token_hash") @db.VarChar(64)
-  status                OnboardingStatus @default(docs_pending)
+  tokenHash              String?          @unique @map("token_hash") @db.VarChar(64)
+  status                 OnboardingStatus @default(docs_pending)
   /// HR can skip waiting for the candidate to submit documents.
-  docsSkippedAt         DateTime?        @map("docs_skipped_at")
+  docsSkippedAt          DateTime?        @map("docs_skipped_at")
   /// HR can skip individually verifying every submitted document.
-  verificationSkippedAt DateTime?        @map("verification_skipped_at")
-  offerSentAt           DateTime?        @map("offer_sent_at")
-  offerAcceptedAt       DateTime?        @map("offer_accepted_at")
+  verificationSkippedAt  DateTime?        @map("verification_skipped_at")
+  offerSentAt            DateTime?        @map("offer_sent_at")
+  offerAcceptedAt        DateTime?        @map("offer_accepted_at")
   /// Acknowledgement of the Company Code of Conduct — sent to the candidate,
   /// signed by them on their own portal with an uploaded e-signature. The
   /// completed form is filed with their joining documents on Drive, so these
   /// hold only when it went and where it landed.
-  cocSentAt             DateTime?        @map("coc_sent_at")
-  cocSignedAt           DateTime?        @map("coc_signed_at")
-  cocFileId             String?          @map("coc_file_id")
-  cocUrl                String?          @map("coc_url")
+  cocSentAt              DateTime?        @map("coc_sent_at")
+  cocSignedAt            DateTime?        @map("coc_signed_at")
+  cocFileId              String?          @map("coc_file_id")
+  cocUrl                 String?          @map("coc_url")
   /// What the candidate told us when they accepted: the date they expect to
   /// join, and the copy they signed by hand. Both are theirs to give, so they
   /// sit beside offerAcceptedAt rather than on the letter's own fields.
-  offerJoiningTentative DateTime?        @map("offer_joining_tentative")
-  offerSignedFileId     String?          @map("offer_signed_file_id")
-  offerSignedUrl        String?          @map("offer_signed_url")
+  offerJoiningTentative  DateTime?        @map("offer_joining_tentative")
+  offerSignedFileId      String?          @map("offer_signed_file_id")
+  offerSignedUrl         String?          @map("offer_signed_url")
   /// The candidate turned the offer down. Kept as its own timestamp rather
   /// than an OnboardingStatus value so every existing `offerAcceptedAt IS NOT
   /// NULL` gate keeps its exact meaning, and a row can never read as both.
-  offerDeclinedAt       DateTime?        @map("offer_declined_at")
+  offerDeclinedAt        DateTime?        @map("offer_declined_at")
   /// Why they declined — required from them, and the only thing HR has to go
   /// on when deciding whether to improve the offer or move to the next
   /// candidate. Cleared if HR sends a fresh offer.
-  offerDeclineReason    String?          @map("offer_decline_reason")
-  medicalStatus         MedicalStatus    @default(pending) @map("medical_status")
-  medicalNote           String?          @map("medical_note")
-  medicalClearedAt      DateTime?        @map("medical_cleared_at")
+  offerDeclineReason     String?          @map("offer_decline_reason")
+  medicalStatus          MedicalStatus    @default(pending) @map("medical_status")
+  medicalNote            String?          @map("medical_note")
+  medicalClearedAt       DateTime?        @map("medical_cleared_at")
   // --- Offer & appointment letters -------------------------------------
   /// 'junior' (probation + notice) or 'senior' (job location + benefits) —
   /// DBL issues two house formats and HR picks one per candidate.
@@ -1059,38 +1068,38 @@ model Onboarding {
   /// settled, per candidate, and it is what the offer and appointment letters
   /// print. Null means the requisition's primary designation, which is every
   /// single-designation requisition.
-  fixedDesignation      String?          @map("fixed_designation") @db.VarChar(150)
-  offerFormat           String?          @map("offer_format") @db.VarChar(10)
-  offerRef              String?          @map("offer_ref") @db.VarChar(60)
+  fixedDesignation       String?          @map("fixed_designation") @db.VarChar(150)
+  offerFormat            String?          @map("offer_format") @db.VarChar(10)
+  offerRef               String?          @map("offer_ref") @db.VarChar(60)
   /// "effective on or before" — the date printed on the letter.
-  offerJoiningDate      DateTime?        @map("offer_joining_date") @db.Date
-  offerJobLocation      String?          @map("offer_job_location") @db.VarChar(200)
-  offerProbationMonths  Int?             @map("offer_probation_months")
-  offerNoticeDays       Int?             @map("offer_notice_days")
-  offerBenefits         String[]         @map("offer_benefits")
+  offerJoiningDate       DateTime?        @map("offer_joining_date") @db.Date
+  offerJobLocation       String?          @map("offer_job_location") @db.VarChar(200)
+  offerProbationMonths   Int?             @map("offer_probation_months")
+  offerNoticeDays        Int?             @map("offer_notice_days")
+  offerBenefits          String[]         @map("offer_benefits")
   /// The letter exactly as it was sent. A candidate holds a copy, so it must
   /// not change afterwards because a template or a salary did.
-  offerLetterHtml       String?          @map("offer_letter_html")
+  offerLetterHtml        String?          @map("offer_letter_html")
   /// The CHRO the letter goes out over. Chosen per letter rather than looked
   /// up, because the group has had more than one holder of the role and a
   /// letter must name the person who actually signed it. Their e-signature is
   /// baked into offerLetterHtml at send time, so this is the record of who
   /// was picked, not where the image came from.
-  offerSignatoryId      String?          @map("offer_signatory_id")
-  offerSignatory        User?            @relation("OnboardingOfferSignatory", fields: [offerSignatoryId], references: [id], onDelete: SetNull)
-  appointmentSignatoryId String?         @map("appointment_signatory_id")
-  appointmentSignatory  User?            @relation("OnboardingAppointmentSignatory", fields: [appointmentSignatoryId], references: [id], onDelete: SetNull)
+  offerSignatoryId       String?          @map("offer_signatory_id")
+  offerSignatory         User?            @relation("OnboardingOfferSignatory", fields: [offerSignatoryId], references: [id], onDelete: SetNull)
+  appointmentSignatoryId String?          @map("appointment_signatory_id")
+  appointmentSignatory   User?            @relation("OnboardingAppointmentSignatory", fields: [appointmentSignatoryId], references: [id], onDelete: SetNull)
   /// The offer as the candidate accepted it: the letter they were sent, with
   /// their own e-signature and joining date filled into the acceptance box,
   /// rendered at the moment they accept and filed with their joining docs.
   /// Distinct from offerSigned*, which is a scan they post back by hand —
   /// either, both or neither can exist.
-  offerAcceptedFileId   String?          @map("offer_accepted_file_id")
-  offerAcceptedUrl      String?          @map("offer_accepted_url")
-  candidateAddress      String?          @map("candidate_address") @db.VarChar(300)
-  appointmentRef        String?          @map("appointment_ref") @db.VarChar(60)
-  appointmentSentAt     DateTime?        @map("appointment_sent_at")
-  appointmentLetterHtml String?          @map("appointment_letter_html")
+  offerAcceptedFileId    String?          @map("offer_accepted_file_id")
+  offerAcceptedUrl       String?          @map("offer_accepted_url")
+  candidateAddress       String?          @map("candidate_address") @db.VarChar(300)
+  appointmentRef         String?          @map("appointment_ref") @db.VarChar(60)
+  appointmentSentAt      DateTime?        @map("appointment_sent_at")
+  appointmentLetterHtml  String?          @map("appointment_letter_html")
 
   /// Recorded from a paper/offline check rather than the structured form, so
   /// the completeness gate on MedicalExam was deliberately bypassed.
@@ -1272,16 +1281,19 @@ model OnboardingDoc {
 /// Scored against the fixed 10-criteria set (see salary-fixation.constants.ts)
 /// — the same criteria feed both the hiring scorecard and salary fixation.
 model Evaluation {
-  id          String         @id @default(cuid())
-  roundId     String         @map("round_id")
-  round       InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
-  evaluatorId String         @map("evaluator_id")
-  evaluator   User           @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
+  id             String                    @id @default(cuid())
+  roundId        String                    @map("round_id")
+  round          InterviewRound            @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  evaluatorId    String                    @map("evaluator_id")
+  evaluator      User                      @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
   /// { criterionKey: score, ... }
-  scores      Json
-  comments    String?
-  total       Float          @default(0)
-  submittedAt DateTime       @default(now()) @map("submitted_at")
+  scores         Json
+  comments       String?
+  total          Float                     @default(0)
+  /// The interviewer's own verdict. Null on everything submitted before this
+  /// was asked for — absent, not neutral.
+  recommendation EvaluationRecommendation?
+  submittedAt    DateTime                  @default(now()) @map("submitted_at")
 
   @@unique([roundId, evaluatorId])
   @@map("evaluations")
@@ -1704,51 +1716,49 @@ model AuditLog {
 
 /**
  * DBL's pre-employment reference check, one row per referee.
- *
  * The recruiter fills this in while on the call — it is their record of the
  * conversation, not something the referee submits — so it carries who
  * conducted it. Several referees per candidate is the norm, hence a list
  * rather than fields on Onboarding.
- *
  * The free-text answers are columns because HR reads them; the nine rating
  * scales are JSON because they are a fixed block that is only ever read back
  * as a whole, and adding a tenth should not need a migration.
  */
 model ReferenceCheck {
-  id                  String    @id @default(cuid())
-  candidateId         String    @map("candidate_id")
-  candidate           Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  candidateId String    @map("candidate_id")
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
-  refereeName         String    @map("referee_name") @db.VarChar(150)
-  refereeDesignation  String?   @map("referee_designation") @db.VarChar(150)
-  refereeOrganization String?   @map("referee_organization") @db.VarChar(200)
-  refereeEmail        String?   @map("referee_email") @db.VarChar(254)
-  refereePhone        String?   @map("referee_phone") @db.VarChar(40)
+  refereeName         String  @map("referee_name") @db.VarChar(150)
+  refereeDesignation  String? @map("referee_designation") @db.VarChar(150)
+  refereeOrganization String? @map("referee_organization") @db.VarChar(200)
+  refereeEmail        String? @map("referee_email") @db.VarChar(254)
+  refereePhone        String? @map("referee_phone") @db.VarChar(40)
 
   /// 1a, 1b — how long they have known the applicant, and in what capacity.
-  knownDuration       String?   @map("known_duration")
-  relationship        String?
+  knownDuration   String? @map("known_duration")
+  relationship    String?
   /// 2a, 2b
-  strengths           String?
-  weaknesses          String?
+  strengths       String?
+  weaknesses      String?
   /// 3a–3i, as { trustworthiness: 'excellent', quality: 'consistently_high', … }
-  ratings             Json      @default("{}")
+  ratings         Json    @default("{}")
   /// 4–7
-  handover            String?
-  rehireEligible      String?   @map("rehire_eligible")
-  concerns            String?
-  overallComments     String?   @map("overall_comments")
+  handover        String?
+  rehireEligible  String? @map("rehire_eligible")
+  concerns        String?
+  overallComments String? @map("overall_comments")
 
-  conductedById       String    @map("conducted_by_id")
-  conductedBy         User      @relation("ReferenceCheckConductedBy", fields: [conductedById], references: [id], onDelete: Restrict)
-  conductedAt         DateTime  @default(now()) @map("conducted_at")
+  conductedById String   @map("conducted_by_id")
+  conductedBy   User     @relation("ReferenceCheckConductedBy", fields: [conductedById], references: [id], onDelete: Restrict)
+  conductedAt   DateTime @default(now()) @map("conducted_at")
 
   /// The completed form, filed with the candidate's joining documents.
-  fileId              String?   @map("file_id")
-  url                 String?
+  fileId String? @map("file_id")
+  url    String?
 
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([candidateId])
   @@map("reference_checks")

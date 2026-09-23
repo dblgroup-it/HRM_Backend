@@ -15,6 +15,10 @@ import {
 import { Type } from 'class-transformer';
 
 import { CANDIDATE_BENEFITS } from '../candidate-benefits';
+import {
+  EVALUATION_RECOMMENDATIONS,
+  type EvaluationRecommendationKey,
+} from '../recommendation';
 
 /**
  * Which screening tests these candidates must sit, set at hand-off time.
@@ -166,6 +170,15 @@ export class SubmitEvaluationDto {
   @IsString()
   @MaxLength(2000)
   comments?: string;
+
+  /**
+   * What the person in the room thinks should happen — required, because a
+   * scorecard with no verdict is what this field exists to stop. Optional in
+   * the database, where it is null for everything submitted before it was
+   * asked for; absent, not neutral.
+   */
+  @IsIn([...EVALUATION_RECOMMENDATIONS])
+  recommendation!: EvaluationRecommendationKey;
 }
 
 /**

@@ -176,6 +176,11 @@ export class AssessmentService {
             total: round1(e.total),
             max: TOTAL_MAX,
             pct: round1((e.total / TOTAL_MAX) * 100),
+            // What they suggested happens next. Null on marks submitted
+            // before this was asked for.
+            recommendation: e.recommendation
+              ? e.recommendation.toLowerCase()
+              : null,
             submittedAt: e.submittedAt.toISOString(),
           }))
           .sort((a, b) => a.evaluatorName.localeCompare(b.evaluatorName)),
