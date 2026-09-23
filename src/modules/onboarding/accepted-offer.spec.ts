@@ -5,7 +5,7 @@ const base: LetterInput = {
   candidateName: 'Arafat Haque Alvi',
   designation: 'Officer',
   department: 'Corporate HR',
-  unitFactory: 'DBL Group — Head Office',
+  unitFactory: 'DBL Group — Corporate Office',
   signatoryName: 'Mohammad Kamal Hosen',
   signatoryTitle: 'Chief Human Resources Officer',
 };

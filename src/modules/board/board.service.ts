@@ -2048,7 +2048,7 @@ export class BoardService {
    * The Hiring Approval Sheet as it reaches a CHRO or board member.
    *
    * Twelve columns is DBL's paper form, and at email width every one of them
-   * was shredding — "DBL Group — Head Office" came out over four lines. Two
+   * was shredding — "DBL Group — Corporate Office" came out over four lines. Two
    * things fix that. The table is now fixed-layout with a width budgeted per
    * column, so a name or a unit breaks once at a space if at all, never into
    * a stack of fragments. And below ~620px the table steps aside for one

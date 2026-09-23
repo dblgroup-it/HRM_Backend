@@ -65,7 +65,7 @@ const UNITS: UnitSeed[] = [
     ],
   },
   {
-    name: 'DBL Group — Head Office',
+    name: 'DBL Group — Corporate Office',
     departments: [
       {
         name: 'Human Resources',
