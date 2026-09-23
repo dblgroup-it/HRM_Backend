@@ -17,6 +17,7 @@ import { Type } from 'class-transformer';
 
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { JOB_GRADES } from '../../salary-fixation/salary-fixation.constants';
+import { CV_SOURCES } from '../cv-sources';
 
 const FACILITY_KEYS = ['laptopDesktop', 'transport', 'dormitory', 'seating'];
 
@@ -56,6 +57,39 @@ export class UpdateFacilitiesDto {
 
 /** Editable fields when a requisition is bounced back for clarification. */
 export class UpdateRequisitionDto {
+  /**
+   * Section A's identity fields. Correctable by the unit's Factory HR during
+   * the job analysis (and by HR at any stage) — the vacancy is often stated
+   * loosely by the raiser and pinned down by the person writing the JD.
+   * The approval chain was snapshotted when it was raised and is not rerouted.
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(150)
+  designation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(150)
+  department?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  section?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  subSection?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  lineOfBusiness?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -203,6 +237,14 @@ export class ApprovalActionDto {
 }
 
 /** Nominate (or clear, with null) the Corporate Recruiter for a requisition. */
+/** Head of Talent Acquisition's CV collection sources — see cv-sources.ts. */
+export class SetCvSourcesDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Tick at least one CV collection source' })
+  @IsIn(CV_SOURCES, { each: true })
+  sources!: string[];
+}
+
 export class AssignRecruiterDto {
   @IsOptional()
   @ValidateIf((_, value) => value !== null)

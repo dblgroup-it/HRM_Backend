@@ -48,6 +48,20 @@ import {
   UpdateRequisitionDto,
 } from './dto/requisition-actions.dto';
 import { synthesizeRoleProfile } from './requisition.workflow';
+import {
+  CV_SOURCE_LABEL,
+  CvSource,
+  normaliseCvSources,
+} from './cv-sources';
+
+/** Past its chain: approved, profiled or posted. */
+function isApproved(status: string): boolean {
+  return (
+    status === 'APPROVED' ||
+    status === 'PROFILE_GENERATED' ||
+    status === 'POSTED'
+  );
+}
 
 const reqWithRelations = {
   approvalSteps: { orderBy: { orderIndex: 'asc' } },
@@ -353,6 +367,22 @@ export class RequisitionService {
       }
     }
 
+    // Any Factory HR on duty may pick the job analysis up where a colleague
+    // left it, so every save that changes something is logged under whoever
+    // made it — the history of who carried it, not just who finished it.
+    const changed =
+      jobDescription !== req.jobDescription.trim() ||
+      education !== req.education.trim() ||
+      experience !== req.experience.trim() ||
+      others !== (req.others ?? '').trim();
+    const previous = [...req.activities]
+      .reverse()
+      .find((a) => a.note?.startsWith('Job analysis'));
+    const continuing =
+      Boolean(previous) && previous?.actor !== actor.name
+        ? ` (continuing from ${previous?.actor})`
+        : '';
+
     const updated = await this.prisma.requisition.update({
       where: { id },
       data: {
@@ -360,6 +390,17 @@ export class RequisitionService {
         education,
         experience,
         others: others || null,
+        ...(!submit && changed
+          ? {
+              activities: {
+                create: {
+                  actor: actor.name,
+                  action: 'EDITED' as const,
+                  note: `Job analysis draft saved${continuing}`,
+                },
+              },
+            }
+          : {}),
         ...(submit
           ? {
               status: 'PENDING_APPROVAL' as const,
@@ -372,7 +413,7 @@ export class RequisitionService {
                 create: {
                   actor: actor.name,
                   action: 'EDITED' as const,
-                  note: 'Job analysis completed — sent to the approval chain',
+                  note: `Job analysis completed — sent to the approval chain${continuing}`,
                 },
               },
             }
@@ -1161,6 +1202,22 @@ export class RequisitionService {
       return tx.requisition.update({
         where: { id },
         data: {
+          ...(dto.designation !== undefined
+            ? { designation: dto.designation.trim() }
+            : {}),
+          ...(dto.department !== undefined
+            ? { department: dto.department.trim() }
+            : {}),
+          // Blank clears: a section can genuinely not apply.
+          ...(dto.section !== undefined
+            ? { section: dto.section.trim() || null }
+            : {}),
+          ...(dto.subSection !== undefined
+            ? { subSection: dto.subSection.trim() || null }
+            : {}),
+          ...(dto.lineOfBusiness !== undefined
+            ? { lineOfBusiness: dto.lineOfBusiness.trim() || null }
+            : {}),
           ...(nextGrade !== undefined ? { grade: nextGrade } : {}),
           ...(dto.requiredPosts !== undefined
             ? { requiredPosts: dto.requiredPosts }
@@ -1921,6 +1978,83 @@ export class RequisitionService {
   }
 
   /**
+   * Where CVs will be collected from — LinkedIn, BDJobs, head hunting, …
+   *
+   * Head of Talent Acquisition's call, made before a recruiter is assigned
+   * (`assignRecruiter` refuses without it). Still editable afterwards: a
+   * source that dries up is replaced, and the change is logged.
+   */
+  async setCvSources(
+    id: string,
+    sources: string[],
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.load(id, actor.id);
+    await this.requireRecruitmentLead(
+      req,
+      actor.id,
+      'choose the CV collection sources',
+    );
+    if (!isApproved(req.status)) {
+      throw new BadRequestException(
+        'CV collection sources are chosen once the requisition is approved',
+      );
+    }
+    const next = normaliseCvSources(sources);
+    if (next.length === 0) {
+      throw new BadRequestException('Tick at least one CV collection source');
+    }
+    if (next.join('|') === req.cvSources.join('|')) return this.ser(req);
+
+    const label = (keys: readonly string[]) =>
+      keys.map((k) => CV_SOURCE_LABEL[k as CvSource] ?? k).join(', ');
+    const updated = await this.prisma.requisition.update({
+      where: { id },
+      data: {
+        cvSources: next,
+        cvSourcesSetAt: new Date(),
+        cvSourcesSetBy: actor.name,
+        activities: {
+          create: {
+            actor: actor.name,
+            action: 'EDITED',
+            note: req.cvSources.length
+              ? `CV collection sources changed: ${label(req.cvSources)} → ${label(next)}`
+              : `CV collection sources set: ${label(next)}`,
+          },
+        },
+      },
+      include: reqWithRelations,
+    });
+    const serialized = this.ser(updated);
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'updated',
+      record: serialized,
+    });
+    return serialized;
+  }
+
+  /** Head of Talent Acquisition / CHRO for the unit, or a super user. */
+  private async requireRecruitmentLead(
+    req: RequisitionFull,
+    userId: string,
+    action: string,
+  ): Promise<void> {
+    const allowed =
+      (await this.permissions.hasRoleForUnitName(
+        userId,
+        'corporate_hr',
+        req.unitFactory,
+      )) ||
+      (await this.permissions.hasRoleForUnitName(userId, 'chro', req.unitFactory));
+    if (!allowed) {
+      throw new ForbiddenException(
+        `Only Head of Talent Acquisition, CHRO or a super user can ${action}`,
+      );
+    }
+  }
+
+  /**
    * Nominate the Corporate Recruiter who owns this requisition's post-approval
    * lifecycle. Additive — Head of Talent Acquisition and CHRO keep their access; this just
    * gives the requisition an owner (and someone to notify).
@@ -1938,26 +2072,18 @@ export class RequisitionService {
 
     // Only Head of Talent Acquisition / CHRO / super may nominate — deliberately NOT the
     // current recruiter, so a recruiter can't hand the requisition on unasked.
-    const allowed =
-      (await this.permissions.hasRoleForUnitName(
-        actor.id,
-        'corporate_hr',
-        req.unitFactory,
-      )) ||
-      (await this.permissions.hasRoleForUnitName(
-        actor.id,
-        'chro',
-        req.unitFactory,
-      ));
-    if (!allowed) {
-      throw new ForbiddenException(
-        'Only Head of Talent Acquisition, CHRO or a super user can assign a recruiter',
-      );
-    }
+    await this.requireRecruitmentLead(req, actor.id, 'assign a recruiter');
 
-    if (req.status === 'PENDING_APPROVAL' || req.status === 'REJECTED') {
+    if (!isApproved(req.status)) {
       throw new BadRequestException(
         'A recruiter can only be assigned once the requisition is approved',
+      );
+    }
+    // The recruiter is handed a brief, and where to look for CVs is part of
+    // it — so the sources are settled first. Clearing a recruiter needs none.
+    if (recruiterId && req.cvSources.length === 0) {
+      throw new BadRequestException(
+        'Tick the CV collection sources before assigning a recruiter',
       );
     }
 
@@ -2141,6 +2267,9 @@ function serialize(req: RequisitionFull, files?: FileGrantService) {
       ? (req.facilities as { specialNotes: string[] }).specialNotes
       : [],
     preferredSources: req.preferredSources,
+    cvSources: req.cvSources,
+    cvSourcesSetAt: req.cvSourcesSetAt?.toISOString() ?? null,
+    cvSourcesSetBy: req.cvSourcesSetBy ?? null,
     /**
      * The job-analysis stage: who completed section B, and — while it is still
      * open — whether Factory HR has handed it back to the raiser.
@@ -2233,6 +2362,11 @@ function serialize(req: RequisitionFull, files?: FileGrantService) {
  */
 export function describeRequisitionEdit(
   before: {
+    designation?: string;
+    department?: string;
+    section?: string | null;
+    subSection?: string | null;
+    lineOfBusiness?: string | null;
     grade: string | null;
     requiredPosts: number;
     totalVacantPosts: number | null;
@@ -2264,6 +2398,16 @@ export function describeRequisitionEdit(
     out.push(`${label}: ${was || '—'} → ${next || '—'}`);
   };
 
+  const trimmed = (v: string | undefined) => (v === undefined ? v : v.trim());
+  scalar('Designation', before.designation ?? null, trimmed(dto.designation));
+  scalar('Department', before.department ?? null, trimmed(dto.department));
+  scalar('Section', before.section ?? null, trimmed(dto.section));
+  scalar('Sub-section', before.subSection ?? null, trimmed(dto.subSection));
+  scalar(
+    'Line of business',
+    before.lineOfBusiness ?? null,
+    trimmed(dto.lineOfBusiness),
+  );
   scalar('Job Grade', before.grade, nextGrade);
   scalar('Required posts', before.requiredPosts, dto.requiredPosts);
   scalar('Total vacant posts', before.totalVacantPosts, dto.totalVacantPosts);

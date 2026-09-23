@@ -114,6 +114,16 @@ export class CreateCandidateDto {
   @IsOptional()
   @IsIn(SOURCES)
   source?: CandidateSource;
+
+  /**
+   * Employee referral: the referrer's employee code, picked from the synced
+   * directory. The name and designation are looked up server-side and
+   * snapshotted — never taken from the form.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  referredByCode?: string;
 }
 
 export class UpdateCandidateDto {

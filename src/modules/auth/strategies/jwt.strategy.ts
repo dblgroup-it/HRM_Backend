@@ -19,6 +19,10 @@ export interface JwtPayload {
   mcp?: boolean;
   /** Wrong 2FA codes already spent against this challenge. */
   att?: number;
+  /** This session's id — what signing out revokes. */
+  jti?: string;
+  /** Expiry, set by the signer. */
+  exp?: number;
 }
 
 @Injectable()
@@ -49,6 +53,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if ((payload.tv ?? 0) !== user.tokenVersion) {
       throw new UnauthorizedException('Session expired — please sign in again');
     }
+    // This one session was signed out — the account's others are untouched.
+    if (payload.jti) {
+      const revoked = await this.prisma.revokedSession.findUnique({
+        where: { jti: payload.jti },
+        select: { jti: true },
+      });
+      if (revoked) {
+        throw new UnauthorizedException('Signed out — please sign in again');
+      }
+    }
     return {
       id: user.id,
       employeeCode: user.employeeCode,
@@ -57,6 +71,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // Read from the database, not from the token: a user cannot clear the
       // restriction by editing (or re-signing) their own JWT.
       mustChangePassword: user.mustChangePassword,
+      sessionId: payload.jti,
+      sessionExpiresAt: payload.exp,
     };
   }
 }

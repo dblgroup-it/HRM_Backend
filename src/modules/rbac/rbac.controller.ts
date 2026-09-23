@@ -105,6 +105,9 @@ export class RbacController {
     return this.rbac.setLayeringOrder(dto);
   }
 
+  // Admin-only like granting: it was the one Access Control route without a
+  // guard, so any signed-in user could remove anybody's role.
+  @Roles(UserRole.ADMIN)
   @Delete('role-assignments/:id')
   deleteAssignment(@Param('id') id: string) {
     return this.rbac.deleteAssignment(id);

@@ -251,12 +251,13 @@ export class PermissionsService {
       { coverRecruiterId: userId },
     ];
 
-    // Waiting on this user's job analysis. A Factory HR sees what is addressed
-    // to them by name, plus anything in their units that was never addressed to
-    // a person — an unordered unit, or one whose queue was all on leave when it
-    // was raised and they are now back.
+    // Waiting on a job analysis in this Factory HR's units. It belongs to the
+    // whole queue on duty, so every one of them sees it.
     const isFactoryHr = perms.roles.some((r) => r.key === 'factory_hr');
-    if (isFactoryHr && scope.unitNames.length > 0) {
+    // On leave, they are out of the queue: the job analyses waiting in their
+    // units are the colleagues' on duty, and do not sit in their list.
+    const onLeave = isFactoryHr && (await this.onLeaveUserIds()).has(userId);
+    if (isFactoryHr && !onLeave && scope.unitNames.length > 0) {
       clauses.push({
         status: 'PENDING_JOB_ANALYSIS',
         jobAnalysisAssigneeId: null,
@@ -430,10 +431,9 @@ export class PermissionsService {
    */
   async jobAnalysisOwners(unitName: string): Promise<{
     /**
-     * The one person it is addressed to, when the unit's queue is ordered.
-     * Null in the two cases where it belongs to a group instead: an unordered
-     * unit (nobody set a priority — everyone is notified, as before), and the
-     * fallback.
+     * Always null now: a job analysis belongs to the whole available queue,
+     * not one person. Kept in the shape for requisitions raised under the
+     * old rule, whose `jobAnalysisAssigneeId` the migration released.
      */
     assigneeId: string | null;
     userIds: string[];
@@ -444,17 +444,17 @@ export class PermissionsService {
     const available = queue.filter((h) => !h.onLeave);
 
     if (available.length > 0) {
-      // An order was configured: it goes to the first available person in it.
-      // Nobody ordered: it goes to all of them, which is what this unit had
-      // before priorities existed.
-      const ordered = available.filter((h) => h.priority !== null);
-      return ordered.length > 0
-        ? { assigneeId: ordered[0].id, userIds: [ordered[0].id], viaFactoryHr: true }
-        : {
-            assigneeId: null,
-            userIds: available.map((h) => h.id),
-            viaFactoryHr: true,
-          };
+      // Every Factory HR on duty gets it and any of them may continue it —
+      // the activity log records who actually did. It was addressed to the
+      // first priority alone, which parked work behind one person's desk.
+      // Somebody on leave is simply not in `available`: they are not told
+      // and cannot pick it up, and the rest of the queue carries it. The
+      // order is kept (it is what lists them first priority, second, …).
+      return {
+        assigneeId: null,
+        userIds: available.map((h) => h.id),
+        viaFactoryHr: true,
+      };
     }
 
     // No Factory HR at all, or every one of them is on leave.

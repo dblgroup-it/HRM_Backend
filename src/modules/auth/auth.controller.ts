@@ -90,7 +90,10 @@ export class AuthController {
   @Post('logout')
   @HttpCode(200)
   logout(@CurrentUser() user: AuthUser) {
-    return this.authService.logout(user.id);
+    return this.authService.logout(user.id, {
+      id: user.sessionId,
+      expiresAt: user.sessionExpiresAt,
+    });
   }
 
   @Throttle({ default: { limit: AUTH_RATE.changePassword, ttl: 60_000 } })

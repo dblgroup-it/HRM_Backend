@@ -23,6 +23,7 @@ import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
   AssignRecruiterDto,
+  SetCvSourcesDto,
   DraftJobAnalysisDto,
   DraftRequisitionDto,
   JobAnalysisDto,
@@ -178,6 +179,19 @@ export class RequisitionController {
   @Patch(':id/resubmit')
   resubmit(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.requisitionService.resubmit(id, {
+      id: user.id,
+      name: user.name,
+    });
+  }
+
+  /** Head of Talent Acquisition ticks where CVs will be collected from. */
+  @Patch(':id/cv-sources')
+  setCvSources(
+    @Param('id') id: string,
+    @Body() dto: SetCvSourcesDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.setCvSources(id, dto.sources, {
       id: user.id,
       name: user.name,
     });

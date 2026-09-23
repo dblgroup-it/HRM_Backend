@@ -8,6 +8,12 @@ export interface AuthUser {
   role: UserRole;
   /** True while the account still holds a password somebody else chose for it. */
   mustChangePassword?: boolean;
+  /**
+   * This session's token id and expiry (seconds since epoch). Signing out
+   * revokes just this one; absent on tokens issued before sessions had ids.
+   */
+  sessionId?: string;
+  sessionExpiresAt?: number;
 }
 
 /** Injects the authenticated user (set by JwtStrategy) into a handler. */

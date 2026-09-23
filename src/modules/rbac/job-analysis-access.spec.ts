@@ -90,18 +90,24 @@ describe('PermissionsService — the job-analysis gate', () => {
 
   // --- the layering ---------------------------------------------------------
 
-  it('addresses it to first in line', async () => {
+  it('goes to every Factory HR on duty, not only the first in line', async () => {
     const svc = build(nobody, [hr('fh1', 1), hr('fh2', 2)]);
     const owners = await svc.jobAnalysisOwners('JTML');
-    expect(owners.assigneeId).toBe('fh1');
-    expect(owners.userIds).toEqual(['fh1']);
+    expect(owners.assigneeId).toBeNull();
+    expect(owners.userIds).toEqual(['fh1', 'fh2']);
     expect(owners.viaFactoryHr).toBe(true);
   });
 
-  it('skips past whoever is on leave, to the next in line', async () => {
+  it('leaves out whoever is on leave; the rest of the queue carries it', async () => {
     const svc = build(nobody, [hr('fh1', 1, true), hr('fh2', 2), hr('fh3', 3)]);
     const owners = await svc.jobAnalysisOwners('JTML');
-    expect(owners.assigneeId).toBe('fh2');
+    expect(owners.userIds).toEqual(['fh2', 'fh3']);
+    await expect(svc.canCompleteJobAnalysis('fh1', 'JTML', null)).resolves.toBe(
+      false,
+    );
+    await expect(svc.canCompleteJobAnalysis('fh3', 'JTML', null)).resolves.toBe(
+      true,
+    );
   });
 
   it('falls back to the corporate side when the whole queue is away', async () => {
@@ -195,6 +201,14 @@ describe('PermissionsService — the job-analysis gate', () => {
     // …plus unaddressed ones in their own unit, never a colleague's.
     expect(json).toContain('JTML');
     // And the one they wrote stays visible once it moves into the chain.
+    expect(json).toContain('jobAnalysisById');
+  });
+
+  it('keeps waiting job analyses out of the list of a Factory HR on leave', async () => {
+    const svc = build(role('factory_hr', 'JTML'), [hr('fh1', 1, true), hr('fh2', 2)]);
+    const json = JSON.stringify(await svc.requisitionVisibility('fh1'));
+    expect(json).not.toContain('PENDING_JOB_ANALYSIS');
+    // What they already wrote stays theirs to see.
     expect(json).toContain('jobAnalysisById');
   });
 

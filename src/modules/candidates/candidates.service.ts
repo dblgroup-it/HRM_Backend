@@ -1019,6 +1019,40 @@ export class CandidatesService {
   ) {
     const req = await this.requireReq(reqId, userId);
 
+    // An employee referral arrives with the referrer and the CV together —
+    // "referred by X" with nothing to read is not a referral anyone can act on.
+    let referrer: {
+      code: string;
+      name: string;
+      designation: string | null;
+    } | null = null;
+    const referredByCode = dto.referredByCode?.trim();
+    if (referredByCode) {
+      if (!file) {
+        throw new BadRequestException(
+          'Attach the CV — an employee referral is added with the candidate’s CV',
+        );
+      }
+      const emp = await this.prisma.employee.findFirst({
+        where: { employeeCode: referredByCode },
+        select: {
+          employeeCode: true,
+          designation: true,
+          user: { select: { name: true } },
+        },
+      });
+      if (!emp) {
+        throw new BadRequestException(
+          `No employee with ID ${referredByCode} in the directory`,
+        );
+      }
+      referrer = {
+        code: emp.employeeCode,
+        name: emp.user.name,
+        designation: emp.designation,
+      };
+    }
+
     let cvFileId: string | null = null;
     let cvUrl: string | null = null;
     if (file) {
@@ -1049,6 +1083,11 @@ export class CandidatesService {
         createdById: userId,
         cvFileId,
         cvUrl,
+        ...(referrer && {
+          referredByCode: referrer.code,
+          referredByName: referrer.name,
+          referredByDesignation: referrer.designation,
+        }),
         ...(flagEntry && {
           isRedFlagged: true,
           redFlagReason: flagEntry.reason,
@@ -1148,6 +1187,26 @@ export class CandidatesService {
         throw new BadRequestException(
           '“AI Shortlisted” is set automatically by AI screening and can’t be assigned manually.',
         );
+      }
+      // Selecting someone leads straight to board approval, and the board
+      // signs off on a salary. Selecting first and fixing it later is what
+      // left candidates stuck at "Send for Board Approval" — so the figure is
+      // settled before the selection, not discovered missing after it.
+      if (stage === 'SELECTED' && cand.stage !== 'SELECTED') {
+        const sf = await this.prisma.salaryFixation.findUnique({
+          where: { candidateId: id },
+          select: {
+            status: true,
+            proposedSalary: true,
+            proposedSalaryOverride: true,
+          },
+        });
+        const amount = sf?.proposedSalaryOverride ?? sf?.proposedSalary ?? null;
+        if (sf?.status !== 'fixed' || amount == null) {
+          throw new BadRequestException(
+            `Finalize ${cand.name}'s salary before selecting them — board approval signs off on that figure.`,
+          );
+        }
       }
       data.stage = stage;
       // Finalist / selected → auto-add to Talent Bank.
@@ -2572,6 +2631,14 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
      */
     hasGeneratedCv: Boolean(c.cvProfile),
     notes: c.notes ?? '',
+    /** Employee referral — who put them forward, as they were at the time. */
+    referral: c.referredByCode
+      ? {
+          employeeCode: c.referredByCode,
+          name: c.referredByName ?? '',
+          designation: c.referredByDesignation ?? null,
+        }
+      : null,
     salaryExpectation: c.salaryExpectation ?? null,
     matchScore: c.matchScore,
     matchSummary: c.matchSummary ?? '',

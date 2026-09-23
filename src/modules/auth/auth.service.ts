@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import { authenticator } from 'otplib';
 import * as QRCode from 'qrcode';
@@ -84,6 +84,14 @@ export class AuthService {
   async resetPasswordToDefault(targetUserId: string, actorId: string) {
     if (!(await this.permissions.isSuperUser(actorId))) {
       throw new ForbiddenException('Only a super user can reset passwords');
+    }
+    // A reset ends every session the account holds — done to yourself from
+    // Access Control it just signs you out. Your own password is changed
+    // from your profile.
+    if (targetUserId === actorId) {
+      throw new BadRequestException(
+        'You cannot reset your own password here — change it from your profile',
+      );
     }
     const target = await this.prisma.user.findUnique({
       where: { id: targetUserId },
@@ -649,6 +657,8 @@ export class AuthService {
       employeeCode: user.employeeCode,
       role: user.role,
       tv: user.tokenVersion,
+      // Its own id, so signing out can end this session alone.
+      jti: randomUUID(),
       // Marks a session that has authenticated but still holds a password
       // somebody else chose. FirstLoginGuard lets it reach only the endpoints
       // needed to fix that; the flag is re-read from the database on every
@@ -658,18 +668,51 @@ export class AuthService {
     return this.jwt.sign(payload);
   }
 
-  /** Invalidate all of a user's existing tokens (logout / forced sign-out). */
-  async logout(userId: string): Promise<{ ok: true }> {
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { tokenVersion: { increment: 1 } },
-    });
+  /**
+   * Sign this session out.
+   *
+   * Only this one. It used to bump `tokenVersion`, which ends every session
+   * the account holds — so with the admin login shared across HR, or simply
+   * a second tab, one sign-out threw everyone else out mid-task (the audit
+   * log showed it several times an hour). Password changes and resets still
+   * end every session; that is what they are for.
+   *
+   * A token issued before sessions had ids cannot be revoked on its own, and
+   * falls back to the old behaviour.
+   */
+  async logout(
+    userId: string,
+    session: { id?: string; expiresAt?: number } = {},
+  ): Promise<{ ok: true }> {
+    const user = session.id
+      ? await this.prisma.user.findUniqueOrThrow({ where: { id: userId } })
+      : await this.prisma.user.update({
+          where: { id: userId },
+          data: { tokenVersion: { increment: 1 } },
+        });
+    if (session.id) {
+      const expiresAt = new Date(
+        (session.expiresAt ?? Date.now() / 1000 + 86_400) * 1000,
+      );
+      await this.prisma.revokedSession.upsert({
+        where: { jti: session.id },
+        create: { jti: session.id, expiresAt },
+        update: {},
+      });
+      // A revoked id is only worth keeping until its token would have
+      // expired anyway; tidy the lapsed ones here rather than on a schedule.
+      await this.prisma.revokedSession.deleteMany({
+        where: { expiresAt: { lt: new Date() } },
+      });
+    }
     await this.audit.record({
       action: 'logout',
       entity: 'User',
       entityId: user.id,
       entityLabel: user.name,
-      summary: 'Signed out (all sessions invalidated)',
+      summary: session.id
+        ? 'Signed out of this session'
+        : 'Signed out (all sessions invalidated)',
       actor: { id: user.id, name: user.name, type: 'user' },
       source: 'system',
     });

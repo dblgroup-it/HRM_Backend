@@ -365,6 +365,21 @@ model RoleAssignment {
   @@map("role_assignments")
 }
 
+/// A single signed-out session.
+///
+/// Signing out used to bump `User.tokenVersion`, which ends every session the
+/// account holds — every tab, every machine. With one admin login shared
+/// across HR, one person signing out threw everybody else out mid-task. A
+/// token now carries its own id (`jti`) and signing out revokes that one.
+/// Rows are only needed until the token would have expired anyway.
+model RevokedSession {
+  jti       String   @id @db.VarChar(64)
+  expiresAt DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("revoked_sessions")
+}
+
 /// Someone's absence, as a dated period rather than a flag on the user.
 ///
 /// A period answers the questions a flag cannot — until when, how many days
@@ -553,6 +568,14 @@ model Requisition {
   replacements          RequisitionReplacement[]
   facilities            Json?
   preferredSources      String[]                 @map("preferred_sources")
+  /// Where Head of Talent Acquisition will look for CVs — LinkedIn, BDJobs,
+  /// head hunting and the rest (keys in requisition/cv-sources.ts). Ticked
+  /// before a recruiter is assigned, and required for it: the recruiter is
+  /// handed a brief that says where to source, not just a post to fill.
+  /// Separate from `preferredSources`, the raiser's old vocabulary.
+  cvSources             String[]                 @default([]) @map("cv_sources")
+  cvSourcesSetAt        DateTime?                @map("cv_sources_set_at")
+  cvSourcesSetBy        String?                  @map("cv_sources_set_by") @db.VarChar(150)
   status                RequisitionStatus        @default(PENDING_APPROVAL)
   roleProfile           Json?                    @map("role_profile")
   posting               Json?
@@ -726,6 +749,13 @@ model Candidate {
   lineManagerName       String?                @map("line_manager_name") @db.VarChar(150)
   lineManagerCode       String?                @map("line_manager_code") @db.VarChar(20)
   lineManagerTitle      String?                @map("line_manager_title") @db.VarChar(150)
+  /// Employee referral — the DBL employee who put this candidate forward,
+  /// picked from the synced directory when the candidate is added. A
+  /// snapshot like lineManager*: the referrer leaving must not rewrite who
+  /// referred them. Null on every candidate who was not referred.
+  referredByCode        String?                @map("referred_by_code") @db.VarChar(20)
+  referredByName        String?                @map("referred_by_name") @db.VarChar(150)
+  referredByDesignation String?                @map("referred_by_designation") @db.VarChar(150)
   bdjobsApplicationId   String?                @unique @map("bdjobs_application_id") @db.VarChar(100)
   /// Bdjobs inbound: the applicant's Bdjobs profile ID.
   bdjobsApplicantId     String?                @map("bdjobs_applicant_id") @db.VarChar(100)
