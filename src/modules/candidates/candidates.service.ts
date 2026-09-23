@@ -26,6 +26,10 @@ import {
   type ScreenRole,
 } from '../integrations/ai/ai-grader.service';
 import { SettingsService } from '../settings/settings.service';
+import {
+  firstInterviewHold,
+  type HoldDelegationRow,
+} from '../assessment/first-interview-hold';
 import type { RequisitionDriveMap } from '../integrations/google/google.types';
 import { RecruitmentService } from './recruitment.service';
 import { FileGrantService } from '../../common/files/file-grant.service';
@@ -55,6 +59,12 @@ export interface UploadedCv {
 type CandidateRow = Prisma.CandidateGetPayload<object> & {
   /** Present only where the query includes it; the name of whoever rejected. */
   rejectedBy?: { name: string } | null;
+  /**
+   * Present only where the query includes it; open first-interview hand-offs,
+   * which decide whether the recruiter's Interviews tab may act on the round
+   * or must leave it with the delegate — see `firstInterviewHold`.
+   */
+  interviewDelegations?: HoldDelegationRow[] | null;
 };
 
 interface ScreeningJob {
@@ -151,6 +161,19 @@ export class CandidatesService {
           onboarding: { select: { status: true } },
           // So the row can say who turned them down, not just that it happened.
           rejectedBy: { select: { name: true } },
+          // Whose first interview this is. The Interviews tab lists everyone
+          // at the Interview stage, and a candidate only reaches that stage
+          // because somebody scheduled their first round — often the factory
+          // colleague it was handed to. Without this the tab cannot tell the
+          // two apart, and offers the recruiter controls over a round that is
+          // not theirs to run.
+          interviewDelegations: {
+            where: { revokedAt: null },
+            select: {
+              revokedAt: true,
+              delegatedTo: { select: { id: true, name: true } },
+            },
+          },
         },
       }),
       this.prisma.candidate.count({ where }),
@@ -2554,6 +2577,13 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
     rejectionStage: c.rejectionStage ?? null,
     rejectionReason: c.rejectionReason ?? null,
     rejectedByName: c.rejectedBy?.name ?? null,
+    /**
+     * Set while the first interview is out with somebody else, so the
+     * recruiter's Interviews tab can show the candidate without offering
+     * controls over a round it did not arrange. Null on every query that did
+     * not ask for the hand-offs.
+     */
+    firstInterviewHold: firstInterviewHold(c),
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   };

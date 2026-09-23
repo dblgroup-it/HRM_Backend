@@ -260,6 +260,13 @@ export class DashboardService {
       openRequisitions,
     };
 
+    /**
+     * What this person is personally running — assigned to them as recruiter,
+     * or handed to them while its recruiter is away.
+     */
+    const myRecruitment = requisitionRows.filter((r) => r.mine).slice(0, 6);
+    const mineIds = new Set(myRecruitment.map((r) => r.id));
+
     return {
       stats: [
         {
@@ -286,13 +293,22 @@ export class DashboardService {
       summary,
       departments,
       recentHires,
-      requisitions: requisitionRows.slice(0, 5),
       /**
-       * What this person is personally running — assigned to them, or handed
-       * to them while its recruiter is away. Listed separately from the feed
-       * because it is work, not news.
+       * The feed, minus whatever is already on this person's own plate.
+       *
+       * Both lists were sliced off the same array, so a recruiter's own
+       * requisition was guaranteed to appear twice — identical card, identical
+       * badges, once as "Latest Requisitions" and once as "Recruitment you're
+       * running". A corporate recruiter with one requisition saw the same row
+       * on both halves of their dashboard and nothing else, which reads as a
+       * rendering fault rather than two views of the pipeline.
+       *
+       * Work and news are different things, which is why the second card
+       * exists; subtracting it here is what actually makes them different.
        */
-      myRecruitment: requisitionRows.filter((r) => r.mine).slice(0, 6),
+      requisitions: requisitionRows.filter((r) => !mineIds.has(r.id)).slice(0, 5),
+      /** Listed separately from the feed because it is work, not news. */
+      myRecruitment,
     };
   }
 }

@@ -43,6 +43,29 @@ export interface ProgressInput {
   }[];
 }
 
+/**
+ * Has somebody recorded a verdict on this candidate?
+ *
+ * The end of the delegated interviewer's job: once a first-interview outcome
+ * is in (`recordFirstInterviewOutcome` writes FINAL or REJECTED), or the
+ * candidate was turned down anywhere, nothing further is owed by them.
+ *
+ * Exported because the recruiter's Interviews tab needs the same line drawn —
+ * it keeps hands off a hand-off until it is decided. Two copies of "decided"
+ * would drift the first time one of them learned about a new stage.
+ */
+export function isDecided(input: {
+  candidateStage: CandidateStage;
+  rejectedAt: Date | null;
+}): boolean {
+  if (input.rejectedAt) return true;
+  return (
+    input.candidateStage === 'FINAL' ||
+    input.candidateStage === 'SELECTED' ||
+    input.candidateStage === 'REJECTED'
+  );
+}
+
 export interface DelegationProgress {
   stage: DelegationStage;
   label: string;
@@ -72,14 +95,7 @@ export function delegationProgress(
 
   // A decision outranks everything: once the candidate is rejected or has moved
   // beyond the interview, nothing further is owed by the interviewer.
-  if (input.rejectedAt) return done('decided');
-  if (
-    input.candidateStage === 'FINAL' ||
-    input.candidateStage === 'SELECTED' ||
-    input.candidateStage === 'REJECTED'
-  ) {
-    return done('decided');
-  }
+  if (isDecided(input)) return done('decided');
 
   // Cancelled and no-show rounds do not count as arranged — that is back to
   // square one. A no-show's slot has passed, so letting it through would read
