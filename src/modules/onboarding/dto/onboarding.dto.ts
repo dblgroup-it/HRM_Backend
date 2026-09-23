@@ -1,5 +1,6 @@
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -12,8 +13,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { OnboardingDocStatus, MedicalStatus } from '@prisma/client';
 
 /** A cleared date `<input>` sends `''`, not omit the field — treat that as
@@ -335,6 +337,48 @@ export class SendMedicalLetterDto {
    * told by phone still needs the candidate emailed, and a candidate told in
    * person still needs the clinic to receive the letter.
    */
+  @IsOptional() @IsBoolean() notifyMedicalTeam?: boolean;
+  @IsOptional() @IsBoolean() notifyCandidate?: boolean;
+}
+
+/**
+ * The recruiter's side of the medical test: which list, how to address the
+ * candidate, and the register's reference if one was already given. No date,
+ * no venue, no recipients — Head of Talent Acquisition sets those and sends.
+ */
+export class RequestMedicalTestDto {
+  @IsIn(['below_40', 'above_40'])
+  band!: 'below_40' | 'above_40';
+
+  @IsOptional() @IsString() @MaxLength(10) salutation?: string;
+
+  /** Left blank, the next number in the register is issued when it is sent. */
+  @IsOptional() @IsString() @MaxLength(40) refNo?: string;
+}
+
+/** One candidate on Head of Talent Acquisition's send — their own date and venue. */
+export class MedicalRequestItemDto {
+  @IsString() @IsNotEmpty() onboardingId!: string;
+
+  @IsString() @IsNotEmpty() examAt!: string;
+
+  @IsOptional() @IsString() @MaxLength(500) venue?: string;
+
+  /** Head of Talent Acquisition may correct what the recruiter asked for. */
+  @IsOptional() @IsIn(['below_40', 'above_40']) band?: 'below_40' | 'above_40';
+  @IsOptional() @IsString() @MaxLength(10) salutation?: string;
+  @IsOptional() @IsString() @MaxLength(40) refNo?: string;
+}
+
+/** Send several requests at once — still one email per candidate. */
+export class SendMedicalRequestsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => MedicalRequestItemDto)
+  items!: MedicalRequestItemDto[];
+
   @IsOptional() @IsBoolean() notifyMedicalTeam?: boolean;
   @IsOptional() @IsBoolean() notifyCandidate?: boolean;
 }

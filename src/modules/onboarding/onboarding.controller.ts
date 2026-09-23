@@ -31,6 +31,8 @@ import {
   MedicalDecisionDto,
   MedicalDecisionBulkDto,
   SendMedicalLetterDto,
+  RequestMedicalTestDto,
+  SendMedicalRequestsDto,
   EmployeeIdDto,
   PhotosHardCopyDto,
 } from './dto/onboarding.dto';
@@ -143,6 +145,34 @@ export class OnboardingController {
     @Body() dto: SendMedicalLetterDto,
   ) {
     return this.onboarding.sendMedicalTestLetter(id, user.id, dto);
+  }
+
+  /**
+   * The recruiter asks for a medical test — test list, salutation, reference.
+   * Nothing is emailed; Head of Talent Acquisition schedules and sends.
+   */
+  @Post('onboarding/:id/medical-request')
+  requestMedicalTest(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Body() dto: RequestMedicalTestDto,
+  ) {
+    return this.onboarding.requestMedicalTest(id, user.id, dto);
+  }
+
+  /** Head of Talent Acquisition's inbox of medical tests to schedule. */
+  @Get('medical-requests')
+  medicalRequestInbox(@CurrentUser() user: AuthUser) {
+    return this.onboarding.medicalRequestInbox(user.id);
+  }
+
+  /** Send the selected requests — one email per candidate, each on its own date. */
+  @Post('medical-requests/send')
+  sendMedicalRequests(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: SendMedicalRequestsDto,
+  ) {
+    return this.onboarding.sendMedicalRequests(user.id, dto);
   }
 
   // ── Central Medical Officer ───────────────────────────────────────────────

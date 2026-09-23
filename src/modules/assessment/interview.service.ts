@@ -682,6 +682,17 @@ export class InterviewService {
       ],
     });
 
+    // Candidates whose CV has never been read — uploaded as a PDF, or
+    // scheduled before interviews triggered the read — get it read now, so
+    // the education, posts and years of service are on the sheet next time.
+    for (const id of new Set(
+      rounds
+        .filter((r) => !r.candidate.cvProfile && r.candidate.cvFileId)
+        .map((r) => r.candidate.id),
+    )) {
+      this.candidates.scheduleCvProfile(id);
+    }
+
     return rounds.map((r) => {
       const mine = r.evaluations[0];
       return {

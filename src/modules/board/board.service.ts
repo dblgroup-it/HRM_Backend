@@ -206,13 +206,18 @@ export class BoardService {
 
   /* ─── Board Approval ─── */
 
-  async sendForApproval(
-    candidateId: string,
-    memberIds: string[],
-    requestedById: string,
-    corporateHrId?: string,
-    chroId?: string,
-  ) {
+  /**
+   * The recruiter's side of board approval: hand the candidate to Head of
+   * Talent Acquisition, and nothing more.
+   *
+   * The recruiter no longer names a Head of Talent Acquisition, a CHRO or
+   * board members. Head of Talent Acquisition chooses the CHRO and the board
+   * when putting candidates onto a Hiring Approval Sheet, so asking the
+   * recruiter as well only produced a choice that was then overridden. The
+   * request lands in every Head of Talent Acquisition's inbox
+   * (`corporateHrId` null), whoever puts it on a sheet owns it from there.
+   */
+  async sendForApproval(candidateId: string, requestedById: string) {
     await this.requireRecruitmentRole(requestedById, candidateId);
 
     const candidate = await this.prisma.candidate.findUnique({
@@ -226,152 +231,80 @@ export class BoardService {
     if (!ob)
       throw new BadRequestException('Candidate is not in the onboarding stage');
 
-    if (!memberIds.length)
-      throw new BadRequestException('Select at least one board member');
-
     // The whole chain signs off on this figure, so refuse to start without it.
     await this.fixedSalary(candidateId);
 
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: memberIds } },
-      select: { id: true },
-    });
-    if (!users.length)
-      throw new NotFoundException('No valid board members found');
-
-    const stage = await this.startingStage(
-      requestedById,
+    const holders = await this.permissions.roleHolders(
+      'corporate_hr',
       candidate.requisition.unitFactory,
     );
-
-    // Only meaningful when the chain actually starts at Head of Talent Acquisition.
-    let chosenCorporateHrId: string | null = null;
-    if (stage === 'corporate_hr') {
-      const holders = await this.permissions.roleHolders(
-        'corporate_hr',
-        candidate.requisition.unitFactory,
+    if (!holders.length) {
+      throw new BadRequestException(
+        `Nobody holds Head of Talent Acquisition for ${candidate.requisition.unitFactory}, so this cannot be sent for approval.`,
       );
-      if (!holders.length) {
-        throw new BadRequestException(
-          `Nobody holds Head of Talent Acquisition for ${candidate.requisition.unitFactory}, so this cannot be sent for approval.`,
-        );
-      }
-      if (!corporateHrId) {
-        throw new BadRequestException(
-          'Choose which Head of Talent Acquisition should approve this.',
-        );
-      }
-      if (!holders.some((h) => h.id === corporateHrId)) {
-        throw new BadRequestException(
-          'That person does not hold Head of Talent Acquisition for this unit.',
-        );
-      }
-      chosenCorporateHrId = corporateHrId;
-    }
-
-    // The CHRO link is reached from both the corporate_hr and chro starts, so
-    // it is named in either case.
-    let chosenChroId: string | null = null;
-    if (stage === 'corporate_hr' || stage === 'chro') {
-      const holders = await this.permissions.roleHolders(
-        'chro',
-        candidate.requisition.unitFactory,
-      );
-      if (!holders.length) {
-        throw new BadRequestException(
-          `Nobody holds the CHRO role for ${candidate.requisition.unitFactory}, so this cannot be sent for approval.`,
-        );
-      }
-      if (!chroId) {
-        throw new BadRequestException('Choose which CHRO should approve this.');
-      }
-      if (!holders.some((h) => h.id === chroId)) {
-        throw new BadRequestException(
-          'That person does not hold the CHRO role for this unit.',
-        );
-      }
-      chosenChroId = chroId;
     }
 
     const existing = await this.prisma.boardApproval.findFirst({
       where: { candidateId },
+      orderBy: { createdAt: 'desc' },
     });
+    if (existing?.status === 'approved') {
+      throw new BadRequestException('This candidate is already approved.');
+    }
+    // Once on a sheet it is with the CHRO or the board; chasing it is Head of
+    // Talent Acquisition's job (they resend the sheet), not a fresh request.
+    if (existing?.status === 'pending' && existing.batchId) {
+      throw new BadRequestException(
+        'This candidate is already on an approval sheet with the CHRO / board.',
+      );
+    }
 
-    const approval = existing
-      ? await this.prisma.boardApproval.update({
-          where: { id: existing.id },
-          data: {
-            requestedById,
-            status: 'pending',
-            currentStage: stage,
-            corporateHrId: chosenCorporateHrId,
-            chroId: chosenChroId,
-            boardMemberIds: users.map((u) => u.id),
-            rejectedReason: null,
-            rejectedAt: null,
-            updatedAt: new Date(),
-          },
-        })
-      : await this.prisma.boardApproval.create({
-          data: {
-            candidateId,
-            requestedById,
-            status: 'pending',
-            currentStage: stage,
-            corporateHrId: chosenCorporateHrId,
-            chroId: chosenChroId,
-            boardMemberIds: users.map((u) => u.id),
-          },
+    const data = {
+      requestedById,
+      status: 'pending' as const,
+      currentStage: 'corporate_hr' as const,
+      corporateHrId: null,
+      chroId: null,
+      boardMemberIds: [] as string[],
+      batchId: null,
+      rejectedReason: null,
+      rejectedAt: null,
+    };
+    if (existing) {
+      // A fresh request after a rejection: the old sheet's votes must not
+      // read as this request's progress.
+      await this.prisma.boardApprovalVote.deleteMany({
+        where: { boardApprovalId: existing.id },
+      });
+      await this.prisma.boardApproval.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      await this.prisma.boardApproval.create({
+        data: { candidateId, ...data },
+      });
+    }
+
+    // No vote links at this stage: Head of Talent Acquisition acts by putting
+    // the candidate on a sheet, so the notice points at the sheet builder.
+    for (const h of holders) {
+      try {
+        await this.notifications.notify(h.id, {
+          type: 'board_approval',
+          title: 'Candidate awaiting an approval sheet',
+          message: `${candidate.name} for ${candidate.requisition.designation} (${candidate.requisition.unitFactory}) is ready to go on a Hiring Approval Sheet.`,
+          link: '/approval-sheets',
         });
-
-    await this.openStage(approval.id, stage);
+      } catch {
+        this.logger.warn('Could not notify Head of Talent Acquisition');
+      }
+    }
+    this.notifications.broadcastChange('candidate', candidate.requisitionId, {
+      action: 'board_approval_requested',
+    });
 
     return this.getApprovalStatus(candidateId);
-  }
-
-  /**
-   * Who the requester may send the first link to.
-   *
-   * Several people hold Head of Talent Acquisition, so the chain names one rather than
-   * mailing them all — this is the list the send dialog offers.
-   */
-  async listChainApprovers(candidateId: string, userId: string) {
-    await this.requireRecruitmentRole(userId, candidateId);
-    const cand = await this.prisma.candidate.findUnique({
-      where: { id: candidateId },
-      include: { requisition: { select: { unitFactory: true } } },
-    });
-    if (!cand) throw new NotFoundException('Candidate not found');
-
-    const [corporateHr, chro] = await Promise.all([
-      this.permissions.roleHolders(
-        'corporate_hr',
-        cand.requisition.unitFactory,
-      ),
-      this.permissions.roleHolders('chro', cand.requisition.unitFactory),
-    ]);
-    const startsAt = await this.startingStage(
-      userId,
-      cand.requisition.unitFactory,
-    );
-    return { corporateHr, chro, startsAt };
-  }
-
-  /** The stage a request starts at — whoever raises it skips their own link. */
-  private async startingStage(
-    requesterId: string,
-    unitName: string,
-  ): Promise<'corporate_hr' | 'chro' | 'board'> {
-    // Deliberately checks actual role holders rather than hasRoleForUnitName:
-    // that helper bypasses for super users, which made a super user look like
-    // the CHRO and skip the whole chain straight to the board.
-    const [chro, corporateHr] = await Promise.all([
-      this.permissions.roleHolders('chro', unitName),
-      this.permissions.roleHolders('corporate_hr', unitName),
-    ]);
-    if (chro.some((h) => h.id === requesterId)) return 'board';
-    if (corporateHr.some((h) => h.id === requesterId)) return 'chro';
-    return 'corporate_hr';
   }
 
   /** The fixed salary these approvers are signing off on. */
@@ -914,9 +847,12 @@ export class BoardService {
         status: 'pending',
         currentStage: 'corporate_hr',
         batchId: null,
-        // A super user sees the lot; everyone else only what was addressed to
-        // them, since the requester names one Head of Talent Acquisition per candidate.
-        ...(isSuper ? {} : { corporateHrId: userId }),
+        // A super user sees the lot. Everyone else sees what was addressed to
+        // them (older requests named one Head of Talent Acquisition) and what
+        // was addressed to nobody — the recruiter no longer picks one.
+        ...(isSuper
+          ? {}
+          : { OR: [{ corporateHrId: userId }, { corporateHrId: null }] }),
       },
       include: {
         candidate: {
@@ -2343,7 +2279,7 @@ export class BoardService {
         type: 'board_approval',
         title,
         message,
-        link: '/board-sheets',
+        link: '/approval-sheets',
       });
     } catch {
       this.logger.warn('Could not notify the sheet owner');

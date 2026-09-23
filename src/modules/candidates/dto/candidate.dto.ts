@@ -9,11 +9,21 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
+
+/**
+ * A Bangladeshi mobile as the forms send it: +880, then the ten digits after
+ * the leading 0 — "+8801712345678". Only on the two entry forms; imported
+ * numbers (BDJobs) arrive in every shape and are stored as given.
+ */
+const BD_MOBILE = /^\+8801[3-9]\d{8}$/;
+const BD_MOBILE_MESSAGE =
+  'Mobile must be +880 followed by 10 digits, e.g. +8801712345678';
 
 const STAGE_VALUES = [
   '',
@@ -93,7 +103,7 @@ export class CreateCandidateDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(40)
+  @Matches(BD_MOBILE, { message: BD_MOBILE_MESSAGE })
   phone?: string;
 
   @IsOptional()
@@ -193,7 +203,7 @@ export class PublicApplyDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(40)
+  @Matches(BD_MOBILE, { message: BD_MOBILE_MESSAGE })
   phone?: string;
 
   @IsOptional()

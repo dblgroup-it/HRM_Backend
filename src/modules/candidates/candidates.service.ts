@@ -74,6 +74,9 @@ interface ScreeningJob {
   active: boolean;
 }
 
+/** How long before a CV read that found nothing is tried again. */
+const CV_READ_RETRY_MS = 6 * 60 * 60 * 1000;
+
 @Injectable()
 export class CandidatesService {
   private readonly screeningJobs = new Map<string, ScreeningJob>();
@@ -1607,8 +1610,16 @@ export class CandidatesService {
    * must never delay or fail the thing that triggered it.
    */
   scheduleCvProfile(candidateId: string): void {
+    // A page that lists interviews calls this on every load. A CV the AI
+    // cannot read would otherwise be sent to it again each time, so one try
+    // per candidate every few hours is enough.
+    const last = this.cvReadAttempts.get(candidateId) ?? 0;
+    if (Date.now() - last < CV_READ_RETRY_MS) return;
+    this.cvReadAttempts.set(candidateId, Date.now());
     void this.ensureCvProfile(candidateId).catch(() => undefined);
   }
+
+  private readonly cvReadAttempts = new Map<string, number>();
 
   private async runScreen(
     cand: Prisma.CandidateGetPayload<{ include: { requisition: true } }>,

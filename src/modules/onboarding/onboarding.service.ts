@@ -72,6 +72,8 @@ import {
   OfferLetterDto,
   AppointmentLetterDto,
   SendMedicalLetterDto,
+  RequestMedicalTestDto,
+  SendMedicalRequestsDto,
 } from './dto/onboarding.dto';
 import type { CvProfile } from '../candidates/cv/cv-profile.types';
 import {
@@ -1972,6 +1974,10 @@ export class OnboardingService {
       examAt: ob.medicalExamAt?.toISOString() ?? null,
       venue: ob.medicalVenue?.trim() || MEDICAL_TEST_VENUE,
       band: (ob.medicalAgeBand as MedicalAgeBand | null) ?? suggested,
+      salutation: ob.medicalSalutation,
+      /** Asked for and waiting on Head of Talent Acquisition to schedule. */
+      requestPending: ob.medicalRequestPending,
+      requestedAt: ob.medicalRequestedAt?.toISOString() ?? null,
       sentAt: ob.medicalLetterSentAt?.toISOString() ?? null,
       teamSentAt: ob.medicalLetterTeamSentAt?.toISOString() ?? null,
       candidateSentAt: ob.medicalLetterCandidateSentAt?.toISOString() ?? null,
@@ -2006,18 +2012,37 @@ export class OnboardingService {
     userId: string,
     dto: SendMedicalLetterDto,
   ) {
+    // Head of Talent Acquisition sends it. The recruiter asks for it
+    // (requestMedicalTest) and never emails the clinic or the candidate.
+    await this.requireTalentAcquisitionHead(userId, 'send the medical test letter');
     const ob = await this.prisma.onboarding.findUnique({
       where: { id: onboardingId },
       include: { candidate: { include: { requisition: true } } },
     });
     if (!ob) throw new NotFoundException('Onboarding not found');
-    if (!(await this.hasMedicalRole(userId))) {
-      await this.requireRecruitmentAccess(
-        ob.candidate.requisition,
-        userId,
-        'send the medical test letter',
-      );
-    }
+    return this.deliverMedicalLetter(ob, dto);
+  }
+
+  /**
+   * One candidate's letter: the clinic's copy and the candidate's own email.
+   * Shared by the single send and Head of Talent Acquisition's batch, so a
+   * batch of twenty is twenty of exactly this — never one combined email.
+   */
+  private async deliverMedicalLetter(
+    ob: Prisma.OnboardingGetPayload<{
+      include: { candidate: { include: { requisition: true } } };
+    }>,
+    dto: {
+      band: 'below_40' | 'above_40';
+      examAt: string;
+      venue?: string;
+      refNo?: string;
+      salutation?: string;
+      notifyMedicalTeam?: boolean;
+      notifyCandidate?: boolean;
+    },
+  ) {
+    const onboardingId = ob.id;
     if (!this.mail.isConfigured()) {
       throw new ServiceUnavailableException('Email is not configured');
     }
@@ -2048,7 +2073,7 @@ export class OnboardingService {
 
     const letter = buildMedicalTestLetter({
       candidateName: ob.candidate.name,
-      salutation: dto.salutation ?? null,
+      salutation: dto.salutation?.trim() || ob.medicalSalutation || null,
       unitName: ob.candidate.requisition.unitFactory,
       refNo,
       band: dto.band,
@@ -2147,6 +2172,10 @@ export class OnboardingService {
         medicalExamAt: examAt,
         medicalVenue: venue,
         medicalAgeBand: dto.band,
+        medicalSalutation:
+          dto.salutation?.trim() || ob.medicalSalutation || null,
+        // Out of Head of Talent Acquisition's inbox once anybody was told.
+        ...(sent.length ? { medicalRequestPending: false } : {}),
         medicalLetterSentAt: sent.length ? new Date() : ob.medicalLetterSentAt,
         // Kept from the previous send when this one did not target that side:
         // re-sending only to the candidate must not erase the record that the
@@ -2175,6 +2204,228 @@ export class OnboardingService {
       candidateSentAt: candidateSentAt?.toISOString() ?? null,
       letterHtml: letter,
     };
+  }
+
+
+  // ── Medical request: recruiter → Head of Talent Acquisition ───────────────
+
+  /**
+   * The recruiter asks for a medical test. Nothing is emailed: the request
+   * waits for Head of Talent Acquisition, who sets the date and venue.
+   */
+  async requestMedicalTest(
+    onboardingId: string,
+    userId: string,
+    dto: RequestMedicalTestDto,
+  ) {
+    const ob = await this.prisma.onboarding.findUnique({
+      where: { id: onboardingId },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    if (!ob) throw new NotFoundException('Onboarding not found');
+    await this.requireRecruitmentAccess(
+      ob.candidate.requisition,
+      userId,
+      'request a medical test',
+    );
+    if (ob.medicalStatus === 'cleared') {
+      throw new BadRequestException('This candidate is already medically cleared.');
+    }
+
+    await this.prisma.onboarding.update({
+      where: { id: onboardingId },
+      data: {
+        medicalAgeBand: dto.band,
+        medicalSalutation: dto.salutation?.trim() || null,
+        // A typed reference replaces the stored one; a blank keeps whatever
+        // was already issued, since the clinic files by it.
+        ...(dto.refNo?.trim() ? { medicalRefNo: dto.refNo.trim() } : {}),
+        medicalRequestPending: true,
+        medicalRequestedAt: new Date(),
+        medicalRequestedById: userId,
+      },
+    });
+
+    const heads = await this.permissions.roleHolders(
+      'corporate_hr',
+      ob.candidate.requisition.unitFactory,
+    );
+    for (const h of heads) {
+      try {
+        await this.notifications.notify(h.id, {
+          type: 'medical',
+          title: 'Medical test to schedule',
+          message: `${ob.candidate.name} (${ob.candidate.requisition.designation}) needs a medical test date and venue.`,
+          link: '/medical-requests',
+        });
+      } catch {
+        this.logger.warn('Could not notify Head of Talent Acquisition');
+      }
+    }
+    this.notifications.broadcastChange('candidate', ob.candidate.requisitionId, {
+      action: 'medical_updated',
+    });
+    return this.medicalLetterDraft(onboardingId, userId);
+  }
+
+  /** Every medical request waiting on Head of Talent Acquisition, oldest first. */
+  async medicalRequestInbox(userId: string) {
+    await this.requireTalentAcquisitionHead(userId, 'see medical requests');
+    const rows = await this.prisma.onboarding.findMany({
+      where: { medicalRequestPending: true, medicalStatus: { not: 'cleared' } },
+      include: {
+        candidate: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            cvProfile: true,
+            requisition: {
+              select: {
+                id: true,
+                code: true,
+                designation: true,
+                department: true,
+                unitFactory: true,
+              },
+            },
+          },
+        },
+        medicalRequestedBy: { select: { id: true, name: true } },
+      },
+      orderBy: { medicalRequestedAt: 'asc' },
+    });
+    return rows.map((ob) => {
+      const cv = ob.candidate.cvProfile as unknown as CvProfile | null;
+      return {
+        onboardingId: ob.id,
+        candidate: {
+          id: ob.candidate.id,
+          name: ob.candidate.name,
+          email: ob.candidate.email ?? null,
+          phone: ob.candidate.phone ?? null,
+          dateOfBirth: cv?.personal?.dateOfBirth ?? null,
+        },
+        requisition: ob.candidate.requisition,
+        band: (ob.medicalAgeBand as MedicalAgeBand | null) ?? null,
+        salutation: ob.medicalSalutation,
+        refNo: ob.medicalRefNo,
+        requestedBy: ob.medicalRequestedBy,
+        requestedAt: ob.medicalRequestedAt?.toISOString() ?? null,
+        /** A previous appointment, when this is a re-request. */
+        examAt: ob.medicalExamAt?.toISOString() ?? null,
+        venue: ob.medicalVenue?.trim() || MEDICAL_TEST_VENUE,
+        lastSentAt: ob.medicalLetterSentAt?.toISOString() ?? null,
+      };
+    });
+  }
+
+  /**
+   * Head of Talent Acquisition sends the letters — each candidate on their own
+   * date and venue, each as a separate email. One candidate failing does not
+   * stop the rest; the result says who went and who did not.
+   */
+  async sendMedicalRequests(userId: string, dto: SendMedicalRequestsDto) {
+    await this.requireTalentAcquisitionHead(userId, 'send medical test letters');
+    if (!this.mail.isConfigured()) {
+      throw new ServiceUnavailableException('Email is not configured');
+    }
+    const ids = [...new Set(dto.items.map((i) => i.onboardingId))];
+    const obs = await this.prisma.onboarding.findMany({
+      where: { id: { in: ids } },
+      include: { candidate: { include: { requisition: true } } },
+    });
+    const byId = new Map(obs.map((o) => [o.id, o]));
+
+    const results: {
+      onboardingId: string;
+      candidateName: string;
+      ok: boolean;
+      refNo?: string;
+      sent?: string[];
+      failed?: { to: string; reason: string }[];
+      error?: string;
+    }[] = [];
+
+    for (const item of dto.items) {
+      const ob = byId.get(item.onboardingId);
+      if (!ob) {
+        results.push({
+          onboardingId: item.onboardingId,
+          candidateName: '—',
+          ok: false,
+          error: 'Not found',
+        });
+        continue;
+      }
+      const band =
+        item.band ?? (ob.medicalAgeBand as MedicalAgeBand | null) ?? null;
+      if (!band) {
+        results.push({
+          onboardingId: ob.id,
+          candidateName: ob.candidate.name,
+          ok: false,
+          error: 'Choose the test list (below 40 / 40 and above).',
+        });
+        continue;
+      }
+      try {
+        const r = await this.deliverMedicalLetter(ob, {
+          band,
+          examAt: item.examAt,
+          venue: item.venue,
+          refNo: item.refNo?.trim() || ob.medicalRefNo || undefined,
+          salutation: item.salutation ?? ob.medicalSalutation ?? undefined,
+          notifyMedicalTeam: dto.notifyMedicalTeam,
+          notifyCandidate: dto.notifyCandidate,
+        });
+        results.push({
+          onboardingId: ob.id,
+          candidateName: ob.candidate.name,
+          ok: r.sent.length > 0,
+          refNo: r.refNo,
+          sent: r.sent,
+          failed: r.failed,
+          ...(r.sent.length ? {} : { error: 'No email could be delivered.' }),
+        });
+        if (r.sent.length && ob.medicalRequestedById) {
+          await this.notifications
+            .notify(ob.medicalRequestedById, {
+              type: 'medical',
+              title: 'Medical test scheduled',
+              message: `${ob.candidate.name}'s medical test letter was sent (${r.refNo}).`,
+              link: `/onboarding/manage/${ob.candidateId}`,
+            })
+            .catch(() => undefined);
+        }
+      } catch (e) {
+        results.push({
+          onboardingId: ob.id,
+          candidateName: ob.candidate.name,
+          ok: false,
+          error: (e as Error).message,
+        });
+      }
+    }
+    return { results };
+  }
+
+  /**
+   * Head of Talent Acquisition (corporate_hr) or a super user. The role is
+   * global, so any holder may schedule any unit's medical tests.
+   */
+  private async requireTalentAcquisitionHead(userId: string, action: string) {
+    if (await this.permissions.isSuperUser(userId)) return;
+    const holds = await this.prisma.roleAssignment.findFirst({
+      where: { userId, role: { key: 'corporate_hr' } },
+      select: { id: true },
+    });
+    if (!holds) {
+      throw new ForbiddenException(
+        `Only Head of Talent Acquisition can ${action}.`,
+      );
+    }
   }
 
   // ── Central Medical Officer ───────────────────────────────────────────────
@@ -3730,6 +3981,8 @@ export class OnboardingService {
         ob.medicalLetterTeamSentAt?.toISOString() ?? null,
       medicalLetterCandidateSentAt:
         ob.medicalLetterCandidateSentAt?.toISOString() ?? null,
+      medicalRequestPending: ob.medicalRequestPending,
+      medicalRequestedAt: ob.medicalRequestedAt?.toISOString() ?? null,
       // Whether the clearance came from a paper check rather than the
       // structured report, and who put their name to it.
       // Offer & appointment letters

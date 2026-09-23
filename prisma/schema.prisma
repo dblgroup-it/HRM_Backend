@@ -297,6 +297,8 @@ model User {
   createdAt                     DateTime               @default(now()) @map("created_at")
   updatedAt                     DateTime               @updatedAt @map("updated_at")
 
+  medicalRequests Onboarding[] @relation("OnboardingMedicalRequestedBy")
+
   @@map("users")
 }
 
@@ -1115,6 +1117,16 @@ model Onboarding {
   medicalVenue                 String?         @map("medical_venue")
   /// Which test list was used. Null until a letter is sent.
   medicalAgeBand               String?         @map("medical_age_band") @db.VarChar(10)
+  /// "Mr." / "Ms." as the recruiter asked for it — carried from the request to
+  /// the letter Head of Talent Acquisition sends.
+  medicalSalutation            String?         @map("medical_salutation") @db.VarChar(10)
+  /// The recruiter has asked for a medical test and it is waiting on Head of
+  /// Talent Acquisition to set the date and venue and send it. The recruiter
+  /// never emails the clinic or the candidate directly.
+  medicalRequestPending        Boolean         @default(false) @map("medical_request_pending")
+  medicalRequestedAt           DateTime?       @map("medical_requested_at")
+  medicalRequestedById         String?         @map("medical_requested_by_id")
+  medicalRequestedBy           User?           @relation("OnboardingMedicalRequestedBy", fields: [medicalRequestedById], references: [id], onDelete: SetNull)
   medicalLetterSentAt          DateTime?       @map("medical_letter_sent_at")
   /// Tracked separately because they are two sends and either can fail alone.
   /// One stamp could not answer "was the candidate actually told?", which is

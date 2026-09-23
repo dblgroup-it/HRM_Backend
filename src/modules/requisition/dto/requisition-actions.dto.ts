@@ -65,7 +65,7 @@ export class UpdateRequisitionDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(1)
+  @Min(0)
   totalVacantPosts?: number;
 
   @IsOptional()

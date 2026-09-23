@@ -22,11 +22,15 @@ export class AddMembersDto {
   @IsArray() @IsString({ each: true }) userIds!: string[];
 }
 
+/**
+ * The recruiter no longer chooses anyone — Head of Talent Acquisition picks the
+ * CHRO and the board on the sheet. The old fields are still accepted (and
+ * ignored) so a browser holding the previous bundle is not refused with a 400
+ * by forbidNonWhitelisted before it reloads.
+ */
 export class SendBoardApprovalDto {
-  @IsArray() @IsString({ each: true }) memberIds!: string[];
-  /** Required when the chain will start at Head of Talent Acquisition. */
+  @IsOptional() @IsArray() @IsString({ each: true }) memberIds?: string[];
   @IsOptional() @IsString() corporateHrId?: string;
-  /** Required whenever the chain will pass through the CHRO. */
   @IsOptional() @IsString() chroId?: string;
 }
 
