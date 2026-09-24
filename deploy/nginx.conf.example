@@ -84,6 +84,9 @@ http {
         #   script-src 'self'      no 'unsafe-inline' and no 'unsafe-eval'.
         #                          This is the directive that actually stops an
         #                          injected <script>; do not weaken it.
+        #                          'wasm-unsafe-eval' is not a weakening: it
+        #                          allows WebAssembly compilation only, which the
+        #                          Lottie loader needs, or it renders blank.
         #   style-src  'unsafe-inline'
         #                          Required, not laziness: the offer and
         #                          appointment letters and every print view are
@@ -99,7 +102,7 @@ http {
         # drive.google.com; they are now streamed by this API from private
         # storage, so nothing should be loading from Drive any more — and if
         # something tries, this is where you want to find out.
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
 
         # --- Frontend SPA — nginx serves the built static files directly ---
         # Must point at HRM_Frontend/dist (see scripts/deploy.sh, which
