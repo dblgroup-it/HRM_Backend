@@ -20,7 +20,10 @@ import {
   AuthUser,
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
-import { PDF_UPLOAD as CV_UPLOAD } from '../../common/upload/file-upload';
+import {
+  BULK_PDF_UPLOAD,
+  PDF_UPLOAD as CV_UPLOAD,
+} from '../../common/upload/file-upload';
 import { CandidatesService, type UploadedCv } from './candidates.service';
 import { BULK_CV_MAX_FILES } from './bulk-cv';
 import {
@@ -182,7 +185,13 @@ export class CandidatesController {
 
   /** Several CVs at once — one candidate per file, all from one source. */
   @Post('requisitions/:reqId/candidates/bulk')
-  @UseInterceptors(FilesInterceptor('cvs', BULK_CV_MAX_FILES, CV_UPLOAD))
+  @UseInterceptors(
+    FilesInterceptor(
+      'cvs',
+      BULK_CV_MAX_FILES,
+      BULK_PDF_UPLOAD(BULK_CV_MAX_FILES),
+    ),
+  )
   createMany(
     @Param('reqId') reqId: string,
     @Body() dto: BulkCreateCandidatesDto,

@@ -104,6 +104,19 @@ export const PDF_UPLOAD = {
 };
 
 /**
+ * Several PDFs in one request — bulk CV upload.
+ *
+ * Its own set because multer's `limits.files` is checked independently of
+ * FilesInterceptor's maxCount: reusing PDF_UPLOAD (`files: 1`) refused every
+ * bulk upload of two or more with "Too many files". The browser also sends
+ * in batches that stay under nginx's 20 MB `client_max_body_size`.
+ */
+export const BULK_PDF_UPLOAD = (maxFiles: number) => ({
+  limits: { fileSize: 5 * MB, files: maxFiles },
+  fileFilter: allow(['application/pdf']),
+});
+
+/**
  * A joining document: a PDF or a photograph.
  *
  * Most of the checklist is paper the candidate is holding, so a phone photo
