@@ -67,6 +67,8 @@ type CandidateRow = Prisma.CandidateGetPayload<object> & {
    * or must leave it with the delegate — see `firstInterviewHold`.
    */
   interviewDelegations?: HoldDelegationRow[] | null;
+  /** Present only where the query includes it; rounds that were held. */
+  interviews?: { kind: string }[] | null;
   /** Present only where the query includes it; the Factory HR Head sign-off. */
   firstInterviewApproval?: {
     status: string;
@@ -194,6 +196,12 @@ export class CandidatesService {
               decisionNote: true,
               decidedBy: { select: { name: true } },
             },
+          },
+          // Which rounds are behind them, so "schedule all at once" can
+          // suggest the next one instead of always offering a first.
+          interviews: {
+            where: { status: 'COMPLETED' },
+            select: { kind: true },
           },
         },
       }),
@@ -2748,6 +2756,10 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
      * the recruiter sees it and cannot edit it. False where the query did
      * not ask for the hand-offs.
      */
+    /** Interview kinds already held — 'first' | 'second' | 'final'. */
+    completedRounds: [
+      ...new Set((c.interviews ?? []).map((r) => r.kind.toLowerCase())),
+    ],
     firstRoundByFactory: (c.interviewDelegations ?? []).some(
       (d) => !d.revokedAt,
     ),
