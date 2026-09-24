@@ -15,6 +15,7 @@ import {
 import { Type } from 'class-transformer';
 
 import { CANDIDATE_BENEFITS } from '../candidate-benefits';
+import { HEAD_DECISIONS, type HeadDecision } from '../first-interview-approval';
 import {
   EVALUATION_RECOMMENDATIONS,
   type EvaluationRecommendationKey,
@@ -66,6 +67,32 @@ export class FirstInterviewOutcomeDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
+  note?: string;
+}
+
+/** The same first-interview verdict for a selection of candidates. */
+export class BulkFirstInterviewOutcomeDto extends FirstInterviewOutcomeDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  candidateIds!: string[];
+}
+
+/** Factory HR Head: approve, return or reject a selection of finalists. */
+export class FirstInterviewApprovalDecisionDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  candidateIds!: string[];
+
+  @IsIn(HEAD_DECISIONS)
+  decision!: HeadDecision;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
   note?: string;
 }
 

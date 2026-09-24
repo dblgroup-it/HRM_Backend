@@ -26,11 +26,23 @@ import { isDecided } from './delegation-progress';
 export interface FirstInterviewHold {
   /** Whoever the first interview is currently with. */
   delegates: { id: string; name: string }[];
+  /**
+   * The delegate has put the candidate through and it is waiting on the
+   * unit's Factory HR Head. Still held — the recruiter's second round starts
+   * only once the Head approves.
+   */
+  awaitingApproval: boolean;
 }
 
 /** One open hand-off, as the candidate row carries it. */
 export interface HoldDelegationRow {
   revokedAt: Date | null;
+  /**
+   * Set once the delegate's verdict is in (and approved, where a Factory HR
+   * Head signs off). Optional so an older query shape still type-checks; a
+   * row without it is treated as not finished.
+   */
+  completedAt?: Date | null;
   delegatedTo: { id: string; name: string };
 }
 
@@ -43,11 +55,20 @@ export function firstInterviewHold(input: {
    * present where it was included.
    */
   interviewDelegations?: HoldDelegationRow[] | null;
+  /** The Factory HR Head sign-off, where the query included it. */
+  firstInterviewApproval?: { status: string } | null;
 }): FirstInterviewHold | null {
   // Filtered here rather than trusted from the query: a caller who forgets
   // `where: { revokedAt: null }` would otherwise hold a candidate whose
   // hand-off was withdrawn, and withdrawing is precisely how you take it back.
-  const open = (input.interviewDelegations ?? []).filter((d) => !d.revokedAt);
+  //
+  // A completed hand-off releases for good. Deriving "done" from the stage
+  // alone was the bug: a finalist moved back to Interview for their second
+  // round looked undecided again, and the lock came back over the round the
+  // recruiter was meant to run.
+  const open = (input.interviewDelegations ?? []).filter(
+    (d) => !d.revokedAt && !d.completedAt,
+  );
   if (open.length === 0) return null;
 
   // Decided is the release. Not "marks are in" — a delegate who has scored
@@ -66,5 +87,8 @@ export function firstInterviewHold(input: {
     seen.add(d.delegatedTo.id);
     delegates.push({ id: d.delegatedTo.id, name: d.delegatedTo.name });
   }
-  return { delegates };
+  return {
+    delegates,
+    awaitingApproval: input.firstInterviewApproval?.status === 'PENDING',
+  };
 }

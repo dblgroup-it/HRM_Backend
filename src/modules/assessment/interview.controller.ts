@@ -14,10 +14,13 @@ import {
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
 import { InterviewService } from './interview.service';
+import { FirstInterviewApprovalService } from './first-interview-approval.service';
 import {
+  BulkFirstInterviewOutcomeDto,
   BulkScheduleInterviewDto,
   DelegateInterviewsDto,
   DelegateWorkloadDto,
+  FirstInterviewApprovalDecisionDto,
   FirstInterviewOutcomeDto,
   ScheduleInterviewDto,
   SubmitEvaluationDto,
@@ -29,7 +32,10 @@ import {
 
 @Controller()
 export class InterviewController {
-  constructor(private readonly interviews: InterviewService) {}
+  constructor(
+    private readonly interviews: InterviewService,
+    private readonly headApprovals: FirstInterviewApprovalService,
+  ) {}
 
   /** The current user's own interview assignments (committee marking). */
   /** Hand shortlisted candidates to people who will run the first interview. */
@@ -93,6 +99,39 @@ export class InterviewController {
       delegateUserId,
       user.id,
     );
+  }
+
+  /**
+   * The same verdict for several candidates — Factory HR putting a batch of
+   * finalists through to the Factory HR Head. Per-candidate results.
+   */
+  @Post('first-interview-outcomes')
+  firstInterviewOutcomeMany(
+    @Body() dto: BulkFirstInterviewOutcomeDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.recordFirstInterviewOutcomeMany(
+      dto.candidateIds,
+      dto.outcome,
+      { id: user.id, name: user.name },
+      dto.note,
+    );
+  }
+
+  /** Finalists waiting on this Factory HR Head, oldest first. */
+  @Get('first-interview-approvals')
+  firstInterviewApprovalQueue(@CurrentUser() user: AuthUser) {
+    return this.headApprovals.queue(user.id);
+  }
+
+  /** Approve, return or reject a selection — per-candidate results. */
+  @Post('first-interview-approvals/decide')
+  @HttpCode(200)
+  decideFirstInterviewApprovals(
+    @Body() dto: FirstInterviewApprovalDecisionDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.headApprovals.decideMany(user.id, dto);
   }
 
   /** First-interview verdict — advance to final, or reject. */

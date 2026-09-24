@@ -25,7 +25,7 @@ describe('firstInterviewHold', () => {
         rejectedAt: null,
         interviewDelegations: [open()],
       }),
-    ).toEqual({ delegates: [karim] });
+    ).toEqual({ delegates: [karim], awaitingApproval: false });
   });
 
   it('does not hold a candidate who was never handed to anybody', () => {
@@ -111,7 +111,7 @@ describe('firstInterviewHold', () => {
           open(karim),
         ],
       }),
-    ).toEqual({ delegates: [karim] });
+    ).toEqual({ delegates: [karim], awaitingApproval: false });
   });
 
   it('names everyone the candidate was handed to, once each', () => {
@@ -121,7 +121,37 @@ describe('firstInterviewHold', () => {
         rejectedAt: null,
         interviewDelegations: [open(karim), open(nusrat), open(karim)],
       }),
-    ).toEqual({ delegates: [karim, nusrat] });
+    ).toEqual({ delegates: [karim, nusrat], awaitingApproval: false });
+  });
+
+  it('stays released once the hand-off is completed, even back at Interview', () => {
+    // The bug this pins: the delegate put the candidate through (FINAL), the
+    // recruiter moved them back to Interview to run the second round, and the
+    // stage-only rule read that as undecided and locked the recruiter out.
+    expect(
+      firstInterviewHold({
+        stage: 'INTERVIEW',
+        rejectedAt: null,
+        interviewDelegations: [
+          {
+            revokedAt: null,
+            completedAt: new Date('2026-09-22T09:00:00Z'),
+            delegatedTo: karim,
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it('keeps holding, and says so, while the Factory HR Head decides', () => {
+    expect(
+      firstInterviewHold({
+        stage: 'INTERVIEW',
+        rejectedAt: null,
+        interviewDelegations: [open()],
+        firstInterviewApproval: { status: 'PENDING' },
+      }),
+    ).toEqual({ delegates: [karim], awaitingApproval: true });
   });
 
   it('holds a candidate handed over before anything was arranged', () => {
@@ -131,6 +161,6 @@ describe('firstInterviewHold', () => {
         rejectedAt: null,
         interviewDelegations: [open()],
       }),
-    ).toEqual({ delegates: [karim] });
+    ).toEqual({ delegates: [karim], awaitingApproval: false });
   });
 });

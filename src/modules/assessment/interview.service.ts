@@ -49,6 +49,7 @@ import {
   type CalendarEventInput,
 } from '../integrations/google/calendar.service';
 import { listTests, unmarkedTests } from './tests-gate';
+import { FACTORY_HR_HEAD_ROLE_KEY } from './first-interview-approval';
 import { benefitsConflict, normaliseBenefits } from './candidate-benefits';
 import {
   formatSlotShort,
@@ -1565,6 +1566,16 @@ export class InterviewService {
       );
     }
 
+    const approval = await this.prisma.firstInterviewApproval.findUnique({
+      where: { candidateId: cand.id },
+      select: { status: true },
+    });
+    if (approval?.status === 'PENDING') {
+      throw new BadRequestException(
+        `${cand.name} is already with the Factory HR Head for approval.`,
+      );
+    }
+
     // Every test HR assigned is marked or skipped before anyone decides —
     // either verdict, since a rejection is read downstream just the same.
     const fx = await this.prisma.salaryFixation.findUnique({
@@ -1587,6 +1598,76 @@ export class InterviewService {
     }
 
     const rejected = outcome === 'rejected';
+
+    // A finalist from a handed-over first interview goes to the unit's
+    // Factory HR Head before it reaches the recruiter for the second round.
+    // Only where the unit has one — elsewhere it goes straight through, as it
+    // always has — and never for the recruiter's own first interviews, which
+    // were not handed to anybody.
+    const openDelegations = await this.prisma.interviewDelegation.count({
+      where: { candidateId: cand.id, revokedAt: null, completedAt: null },
+    });
+    const heads =
+      !rejected && openDelegations > 0
+        ? await this.permissions.roleHolderUserIds(
+            FACTORY_HR_HEAD_ROLE_KEY,
+            cand.requisition.unitFactory,
+          )
+        : [];
+    if (heads.length) {
+      const trimmed = note?.trim() || null;
+      await this.prisma.$transaction([
+        this.prisma.firstInterviewApproval.upsert({
+          where: { candidateId: cand.id },
+          create: {
+            candidateId: cand.id,
+            requisitionId: cand.requisitionId,
+            submittedById: actor.id,
+            submitNote: trimmed,
+          },
+          // A resubmission after a return starts a fresh decision.
+          update: {
+            status: 'PENDING',
+            submittedById: actor.id,
+            submittedAt: new Date(),
+            submitNote: trimmed,
+            decidedById: null,
+            decidedAt: null,
+            decisionNote: null,
+          },
+        }),
+        this.prisma.candidate.update({
+          where: { id: cand.id },
+          data: {
+            notes: trimmed
+              ? `${cand.notes ? cand.notes + '\n' : ''}First interview (${actor.name}): ${trimmed}`
+              : cand.notes,
+          },
+        }),
+      ]);
+      for (const id of heads.filter((h) => h !== actor.id)) {
+        try {
+          await this.notifications.notify(id, {
+            type: 'first_interview_approval',
+            title: 'Finalist awaiting your approval',
+            message: `${actor.name} put ${cand.name} through the first interview for ${cand.requisition.designation}.`,
+            link: '/first-interview-approvals',
+          });
+        } catch {
+          this.logger.warn('Could not notify the Factory HR Head');
+        }
+      }
+      this.notifications.broadcastChange('candidate', cand.requisitionId, {
+        action: 'first_interview_submitted',
+      });
+      return {
+        id: cand.id,
+        name: cand.name,
+        stage: 'interview',
+        awaitingApproval: true,
+      };
+    }
+
     const updated = await this.prisma.candidate.update({
       where: { id: cand.id },
       data: {
@@ -1612,6 +1693,12 @@ export class InterviewService {
             }),
       },
       select: { id: true, name: true, stage: true },
+    });
+    // The delegate's part is over. Stored, so the candidate moving back to
+    // Interview for their second round does not hand it back to them.
+    await this.prisma.interviewDelegation.updateMany({
+      where: { candidateId: cand.id, revokedAt: null, completedAt: null },
+      data: { completedAt: new Date() },
     });
 
     // Tell whoever handed this over what the outcome was.
@@ -1639,10 +1726,61 @@ export class InterviewService {
       }
     }
 
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'first_interview_outcome',
+    });
+
     return {
       id: updated.id,
       name: updated.name,
       stage: updated.stage.toLowerCase(),
+      awaitingApproval: false,
+    };
+  }
+
+  /**
+   * The same verdict for a selection — Factory HR putting several finalists
+   * through to the Factory HR Head at once.
+   *
+   * Each candidate is judged on its own, like the medical and board queues:
+   * one whose tests are unmarked, or that a colleague already decided, must
+   * not stop the rest, and the reply says which did not go through.
+   */
+  async recordFirstInterviewOutcomeMany(
+    candidateIds: string[],
+    outcome: 'final' | 'rejected',
+    actor: { id: string; name: string },
+    note?: string,
+  ) {
+    const results: {
+      candidateId: string;
+      ok: boolean;
+      name?: string;
+      stage?: string;
+      awaitingApproval?: boolean;
+      error?: string;
+    }[] = [];
+    for (const id of [...new Set(candidateIds)]) {
+      try {
+        const r = await this.recordFirstInterviewOutcome(
+          id,
+          outcome,
+          actor,
+          note,
+        );
+        results.push({ candidateId: id, ok: true, ...r });
+      } catch (err) {
+        results.push({
+          candidateId: id,
+          ok: false,
+          error: (err as Error).message || 'Could not record the outcome',
+        });
+      }
+    }
+    return {
+      done: results.filter((r) => r.ok).length,
+      skipped: results.filter((r) => !r.ok).length,
+      results,
     };
   }
 
@@ -1668,9 +1806,24 @@ export class InterviewService {
     if (!cand) throw new NotFoundException('Candidate not found');
     await this.requireRecruitmentAccess(cand.requisition, userId);
 
+    // Pulling it back now would leave the Factory HR Head deciding on a
+    // candidate nobody is holding any more.
+    const approval = await this.prisma.firstInterviewApproval.findUnique({
+      where: { candidateId },
+      select: { status: true },
+    });
+    if (approval?.status === 'PENDING') {
+      throw new BadRequestException(
+        `${cand.name} is with the Factory HR Head for approval. Wait for their decision before taking the first interview back.`,
+      );
+    }
+
     await this.prisma.interviewDelegation.updateMany({
       where: { candidateId, delegatedToId: delegateUserId, revokedAt: null },
       data: { revokedAt: new Date() },
+    });
+    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+      action: 'delegation_revoked',
     });
     return { success: true };
   }
@@ -1979,6 +2132,15 @@ export class InterviewService {
                 delegatedTo: { select: { name: true } },
               },
             },
+            firstInterviewApproval: {
+              select: {
+                status: true,
+                submittedAt: true,
+                decisionNote: true,
+                decidedAt: true,
+                decidedBy: { select: { name: true } },
+              },
+            },
           },
         },
         requisition: {
@@ -2016,6 +2178,20 @@ export class InterviewService {
       : [];
     const screening = await this.settings.getScreeningConfig();
     const byCandidate = new Map(fixations.map((f) => [f.candidateId, f]));
+    // Which units route finalists through a Factory HR Head — asked once per
+    // unit, so the card can say where "Mark finalist" will send them.
+    const headUnits = new Map<string, boolean>();
+    for (const unit of new Set(rows.map((r) => r.requisition.unitFactory))) {
+      headUnits.set(
+        unit,
+        (
+          await this.permissions.roleHolderUserIds(
+            FACTORY_HR_HEAD_ROLE_KEY,
+            unit,
+          )
+        ).length > 0,
+      );
+    }
 
     const entry = (
       key: string,
@@ -2118,6 +2294,21 @@ export class InterviewService {
         panelists: i._count.panelists,
       })),
       tests: testsFor(r.candidate.id),
+      /** A finalist goes to the unit's Factory HR Head before the recruiter. */
+      requiresHeadApproval: headUnits.get(r.requisition.unitFactory) ?? false,
+      headApproval: r.candidate.firstInterviewApproval
+        ? {
+            status: r.candidate.firstInterviewApproval.status.toLowerCase(),
+            submittedAt:
+              r.candidate.firstInterviewApproval.submittedAt.toISOString(),
+            note: r.candidate.firstInterviewApproval.decisionNote,
+            decidedAt:
+              r.candidate.firstInterviewApproval.decidedAt?.toISOString() ??
+              null,
+            decidedByName:
+              r.candidate.firstInterviewApproval.decidedBy?.name ?? null,
+          }
+        : null,
     }));
   }
 

@@ -115,6 +115,7 @@ async function main() {
     { key: 'corporate_hr', name: 'Head of Talent Acquisition', scope: 'GLOBAL', description: 'Head of Talent Acquisition — final approver on every requisition chain.' },
     { key: 'requisition_raiser', name: 'Requisition Raiser', scope: 'UNIT', description: 'Opens requisitions for their unit. Not an approval step — the sign-off chain is configured per unit in Approval Paths.' },
     { key: 'factory_hr', name: 'Factory HR', scope: 'UNIT', description: 'Unit / factory HR. Completes the Job Analysis and attachments on their unit’s requisitions before the approval chain starts. Not an approval step.' },
+    { key: 'factory_hr_head', name: 'Factory HR Head', scope: 'UNIT', description: 'Approves the finalists Factory HR puts through after a first interview, singly or in bulk, before they go to the Corporate Recruiter for the second interview. May return or reject.' },
     { key: 'unit_approver', name: 'Unit Approver', scope: 'UNIT', description: 'Can be named as an approval level for their unit. Grants sign-in and visibility of that unit’s requisitions — nothing else.' },
     { key: 'sbu_head', name: 'SBU Head', scope: 'UNIT', description: 'Strategic Business Unit head.' },
     { key: 'medical_officer', name: 'Medical Officer', scope: 'GLOBAL', description: 'Records onboarding medical clearance (all units).' },

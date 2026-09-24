@@ -39,7 +39,9 @@ import { buildCvDocument } from './cv/cv-document';
 import { cvProfileToText } from './cv/cv-text';
 import { extractedCvToProfile } from './cv/cv-extract';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
+import { bulkCandidateNames } from './bulk-cv';
 import {
+  BulkCreateCandidatesDto,
   BulkRejectDto,
   CandidateQueryDto,
   CreateCandidateDto,
@@ -65,6 +67,12 @@ type CandidateRow = Prisma.CandidateGetPayload<object> & {
    * or must leave it with the delegate — see `firstInterviewHold`.
    */
   interviewDelegations?: HoldDelegationRow[] | null;
+  /** Present only where the query includes it; the Factory HR Head sign-off. */
+  firstInterviewApproval?: {
+    status: string;
+    decisionNote: string | null;
+    decidedBy: { name: string } | null;
+  } | null;
 };
 
 interface ScreeningJob {
@@ -171,10 +179,18 @@ export class CandidatesService {
           // two apart, and offers the recruiter controls over a round that is
           // not theirs to run.
           interviewDelegations: {
-            where: { revokedAt: null },
+            where: { revokedAt: null, completedAt: null },
             select: {
               revokedAt: true,
+              completedAt: true,
               delegatedTo: { select: { id: true, name: true } },
+            },
+          },
+          firstInterviewApproval: {
+            select: {
+              status: true,
+              decisionNote: true,
+              decidedBy: { select: { name: true } },
             },
           },
         },
@@ -1011,11 +1027,67 @@ export class CandidatesService {
     };
   }
 
+  /**
+   * Bulk CV upload: one candidate per file, all tagged with one source.
+   *
+   * Sequential, and each file judged on its own — a Drive hiccup on the
+   * ninth CV must not lose the other twenty-nine, and the reply says which
+   * ones did not go in. One broadcast at the end rather than one per file.
+   */
+  async createMany(
+    reqId: string,
+    dto: BulkCreateCandidatesDto,
+    userId: string,
+    files: UploadedCv[],
+  ) {
+    if (!files.length) throw new BadRequestException('Attach at least one CV');
+    const names = bulkCandidateNames(
+      dto.names,
+      files.map((f) => f.originalname),
+    );
+    const created: ReturnType<typeof serializeCandidate>[] = [];
+    const failed: { fileName: string; error: string }[] = [];
+    for (const [i, file] of files.entries()) {
+      try {
+        created.push(
+          await this.create(
+            reqId,
+            { name: names[i], source: 'upload', cvSource: dto.cvSource },
+            userId,
+            file,
+            false,
+          ),
+        );
+      } catch (err) {
+        // Access and Drive being down are the same for every file — stop
+        // rather than report thirty identical failures.
+        if (
+          err instanceof ForbiddenException ||
+          err instanceof NotFoundException ||
+          err instanceof ServiceUnavailableException
+        ) {
+          if (!created.length) throw err;
+        }
+        failed.push({
+          fileName: file.originalname,
+          error: (err as Error).message || 'Could not add this CV',
+        });
+      }
+    }
+    if (created.length) {
+      this.notifications.broadcastChange('candidate', reqId, {
+        action: 'created',
+      });
+    }
+    return { created, failed };
+  }
+
   async create(
     reqId: string,
     dto: CreateCandidateDto,
     userId: string,
     file?: UploadedCv,
+    announce = true,
   ) {
     const req = await this.requireReq(reqId, userId);
 
@@ -1080,6 +1152,7 @@ export class CandidatesService {
         phone: dto.phone ?? null,
         notes: dto.notes ?? null,
         source: dto.source ?? (file ? 'upload' : 'manual'),
+        cvSource: dto.cvSource ?? null,
         createdById: userId,
         cvFileId,
         cvUrl,
@@ -1097,9 +1170,11 @@ export class CandidatesService {
       },
     });
 
-    this.notifications.broadcastChange('candidate', reqId, {
-      action: 'created',
-    });
+    if (announce) {
+      this.notifications.broadcastChange('candidate', reqId, {
+        action: 'created',
+      });
+    }
     if (cvFileId) this.autoScreen(created.id);
     return serializeCandidate(created, this.files);
   }
@@ -2620,6 +2695,8 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
     email: c.email ?? '',
     phone: c.phone ?? '',
     source: c.source,
+    /** Where the recruiter found the CV — a CV_SOURCES key, or null. */
+    cvSource: c.cvSource ?? null,
     stage: c.stage.toLowerCase(),
     cvFileId: c.cvFileId,
     cvUrl:
@@ -2662,6 +2739,17 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
      * not ask for the hand-offs.
      */
     firstInterviewHold: firstInterviewHold(c),
+    /**
+     * Where the Factory HR Head sign-off stands, when there is one — so a
+     * return or a rejection by the Head reads as theirs, not Factory HR's.
+     */
+    firstInterviewApproval: c.firstInterviewApproval
+      ? {
+          status: c.firstInterviewApproval.status.toLowerCase(),
+          note: c.firstInterviewApproval.decisionNote ?? null,
+          decidedByName: c.firstInterviewApproval.decidedBy?.name ?? null,
+        }
+      : null,
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   };

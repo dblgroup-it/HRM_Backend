@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import { CandidateSource } from '@prisma/client';
+import { CV_SOURCES } from '../../requisition/cv-sources';
 import {
   IsBoolean,
   IsEmail,
@@ -115,6 +116,11 @@ export class CreateCandidateDto {
   @IsIn(SOURCES)
   source?: CandidateSource;
 
+  /** Where the recruiter found the CV (LinkedIn, BDJobs, Head Hunting…). */
+  @IsOptional()
+  @IsIn(CV_SOURCES)
+  cvSource?: string;
+
   /**
    * Employee referral: the referrer's employee code, picked from the synced
    * directory. The name and designation are looked up server-side and
@@ -124,6 +130,21 @@ export class CreateCandidateDto {
   @IsString()
   @MaxLength(20)
   referredByCode?: string;
+}
+
+/**
+ * Several CVs at once, one candidate each, all from the same source. The
+ * files travel as multipart `cvs`; `names` is a JSON array of the names the
+ * recruiter reviewed, in file order — see bulk-cv.ts.
+ */
+export class BulkCreateCandidatesDto {
+  @IsIn(CV_SOURCES, { message: 'Choose where these CVs came from' })
+  cvSource!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20_000)
+  names?: string;
 }
 
 export class UpdateCandidateDto {

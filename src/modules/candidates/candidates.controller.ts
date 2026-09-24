@@ -9,10 +9,11 @@ import {
   Query,
   Res,
   UploadedFile,
+  UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 
 import {
@@ -21,7 +22,9 @@ import {
 } from '../../common/decorators/current-user.decorator';
 import { PDF_UPLOAD as CV_UPLOAD } from '../../common/upload/file-upload';
 import { CandidatesService, type UploadedCv } from './candidates.service';
+import { BULK_CV_MAX_FILES } from './bulk-cv';
 import {
+  BulkCreateCandidatesDto,
   BulkRejectDto,
   CandidateQueryDto,
   CopyToRequisitionDto,
@@ -175,6 +178,18 @@ export class CandidatesController {
     @UploadedFile() cv?: UploadedCv,
   ) {
     return this.candidates.create(reqId, dto, user.id, cv);
+  }
+
+  /** Several CVs at once — one candidate per file, all from one source. */
+  @Post('requisitions/:reqId/candidates/bulk')
+  @UseInterceptors(FilesInterceptor('cvs', BULK_CV_MAX_FILES, CV_UPLOAD))
+  createMany(
+    @Param('reqId') reqId: string,
+    @Body() dto: BulkCreateCandidatesDto,
+    @CurrentUser() user: AuthUser,
+    @UploadedFiles() cvs: UploadedCv[],
+  ) {
+    return this.candidates.createMany(reqId, dto, user.id, cvs ?? []);
   }
 
   @Patch('candidates/:id')

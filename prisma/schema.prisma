@@ -279,6 +279,8 @@ model User {
   boardApprovalsAsChro          BoardApproval[]        @relation("BoardApprovalChro")
   interviewDelegationsHeld      InterviewDelegation[]  @relation("InterviewDelegatedTo")
   interviewDelegationsMade      InterviewDelegation[]  @relation("InterviewDelegatedBy")
+  firstInterviewSubmissions     FirstInterviewApproval[] @relation("FirstInterviewApprovalSubmittedBy")
+  firstInterviewDecisions       FirstInterviewApproval[] @relation("FirstInterviewApprovalDecidedBy")
   boardApprovalVotes            BoardApprovalVote[]
   referenceChecksConducted      ReferenceCheck[]       @relation("ReferenceCheckConductedBy")
   facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
@@ -633,6 +635,7 @@ model Requisition {
   committeeMembers      CommitteeMember[]
   interviewRounds       InterviewRound[]
   interviewDelegations  InterviewDelegation[]
+  firstInterviewApprovals FirstInterviewApproval[]
   bdJobsPost            BdJobsPost?
   talentBankMatches     TalentBankMatch[]
   createdAt             DateTime                 @default(now()) @map("created_at")
@@ -756,6 +759,11 @@ model Candidate {
   referredByCode        String?                @map("referred_by_code") @db.VarChar(20)
   referredByName        String?                @map("referred_by_name") @db.VarChar(150)
   referredByDesignation String?                @map("referred_by_designation") @db.VarChar(150)
+  /// Where the recruiter found this CV — a key from
+  /// src/modules/requisition/cv-sources.ts (linkedin, bdjobs, head_hunting…).
+  /// Distinct from `source`, which is how the record got into the system
+  /// (upload, email, application). Null on candidates added before it was asked.
+  cvSource              String?                @map("cv_source") @db.VarChar(30)
   bdjobsApplicationId   String?                @unique @map("bdjobs_application_id") @db.VarChar(100)
   /// Bdjobs inbound: the applicant's Bdjobs profile ID.
   bdjobsApplicantId     String?                @map("bdjobs_applicant_id") @db.VarChar(100)
@@ -763,6 +771,7 @@ model Candidate {
   bdjobsJobId           String?                @map("bdjobs_job_id") @db.VarChar(100)
   interviews            InterviewRound[]
   interviewDelegations  InterviewDelegation[]
+  firstInterviewApproval FirstInterviewApproval?
   onboarding            Onboarding?
   boardApprovals        BoardApproval[]
   salaryFixation        SalaryFixation?
@@ -947,12 +956,54 @@ model InterviewDelegation {
   lastSentAt    DateTime    @default(now()) @map("last_sent_at")
   /// Set instead of deleting, so an audit of who could act survives.
   revokedAt     DateTime?   @map("revoked_at")
+  /// The delegate's job is finished: the first-interview verdict is in (and,
+  /// where the unit has a Factory HR Head, signed off). Stored rather than
+  /// derived from the candidate's stage, because the stage can move back — a
+  /// finalist returned to Interview for their second round must not fall
+  /// back into the delegate's hands.
+  completedAt   DateTime?   @map("completed_at")
   createdAt     DateTime    @default(now()) @map("created_at")
 
   @@unique([candidateId, delegatedToId])
   @@index([delegatedToId, revokedAt])
   @@index([requisitionId])
   @@map("interview_delegations")
+}
+
+enum FirstInterviewApprovalStatus {
+  PENDING
+  APPROVED
+  /// Sent back to Factory HR with a note; the candidate stays at Interview.
+  RETURNED
+  REJECTED
+}
+
+/// Factory HR's first-interview finalist, waiting on the unit's Factory HR
+/// Head before it reaches the Corporate Recruiter for the second interview.
+///
+/// One row per candidate, reused on a resubmission after a return — the
+/// activity trail keeps the history, this row keeps where it stands now. Only
+/// created where the unit has a Factory HR Head; elsewhere a finalist goes
+/// straight through, as it always has.
+model FirstInterviewApproval {
+  id            String                       @id @default(cuid())
+  candidateId   String                       @unique @map("candidate_id")
+  candidate     Candidate                    @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  requisitionId String                       @map("requisition_id")
+  requisition   Requisition                  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  status        FirstInterviewApprovalStatus @default(PENDING)
+  submittedById String?                      @map("submitted_by_id")
+  submittedBy   User?                        @relation("FirstInterviewApprovalSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
+  submittedAt   DateTime                     @default(now()) @map("submitted_at")
+  submitNote    String?                      @map("submit_note")
+  decidedById   String?                      @map("decided_by_id")
+  decidedBy     User?                        @relation("FirstInterviewApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt     DateTime?                    @map("decided_at")
+  decisionNote  String?                      @map("decision_note")
+
+  @@index([status])
+  @@index([requisitionId])
+  @@map("first_interview_approvals")
 }
 
 /// Phase 3 — a committee member assigned to an interview round's panel.
