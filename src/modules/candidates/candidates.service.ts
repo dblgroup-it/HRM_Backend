@@ -178,8 +178,10 @@ export class CandidatesService {
           // colleague it was handed to. Without this the tab cannot tell the
           // two apart, and offers the recruiter controls over a round that is
           // not theirs to run.
+          // Completed hand-offs too: they say the factory ran the first
+          // round, which stays theirs even after the verdict.
           interviewDelegations: {
-            where: { revokedAt: null, completedAt: null },
+            where: { revokedAt: null },
             select: {
               revokedAt: true,
               completedAt: true,
@@ -2739,6 +2741,16 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
      * not ask for the hand-offs.
      */
     firstInterviewHold: firstInterviewHold(c),
+    /**
+     * The first interview was handed to the factory. Once they have given
+     * their verdict the hold lifts and the recruiter books the second or
+     * final round as usual — but the factory's first round stays theirs, so
+     * the recruiter sees it and cannot edit it. False where the query did
+     * not ask for the hand-offs.
+     */
+    firstRoundByFactory: (c.interviewDelegations ?? []).some(
+      (d) => !d.revokedAt,
+    ),
     /**
      * Where the Factory HR Head sign-off stands, when there is one — so a
      * return or a rejection by the Head reads as theirs, not Factory HR's.
