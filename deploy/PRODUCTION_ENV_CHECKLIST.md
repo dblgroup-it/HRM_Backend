@@ -64,7 +64,8 @@ TOTP_ENCRYPTION_KEY=<64 hex characters — openssl rand -hex 32>
 
 LOGIN_MAX_ATTEMPTS=5
 LOGIN_LOCKOUT_MINUTES=15
-PASSWORD_MIN_LENGTH=12
+PASSWORD_MIN_LENGTH=6
+PASSWORD_MAX_LENGTH=12
 ```
 
 - [ ] `JWT_SECRET` is unique to production, ≥24 characters, never committed
@@ -86,7 +87,7 @@ PASSWORD_MIN_LENGTH=12
 > decrypt with a guessable key.
 
 - [ ] Lockout values agreed with the business (5 / 15 are the defaults)
-- [ ] `PASSWORD_MIN_LENGTH` agreed — 12, no composition rules, on purpose
+- [ ] `PASSWORD_MIN_LENGTH` / `PASSWORD_MAX_LENGTH` agreed — 6 to 12 (owner decision, 2026-09-24), no composition rules
 
 ## 3. URLs and CORS
 

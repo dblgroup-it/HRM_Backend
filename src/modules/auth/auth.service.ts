@@ -798,7 +798,22 @@ function maskEmail(email: string | null): string {
 
 /** Minimum length. Long enough to matter, short enough that a passphrase fits
  *  comfortably and nobody reaches for "Passw0rd!". */
-const MIN_PASSWORD_LENGTH = Number(process.env.PASSWORD_MIN_LENGTH ?? 12);
+/**
+ * Read when a password is checked, not when this file is imported: .env is
+ * loaded by ConfigModule.forRoot() after the module graph is imported, so a
+ * top-level read only ever saw the default and PASSWORD_MIN_LENGTH did nothing.
+ */
+function minPasswordLength(): number {
+  const n = Number(process.env.PASSWORD_MIN_LENGTH);
+  return Number.isInteger(n) && n > 0 ? n : 6;
+}
+
+/** Same deal as the minimum. Only new passwords are held to it — sign-in is
+ *  not, so an account set up before the cap keeps working. */
+function maxPasswordLength(): number {
+  const n = Number(process.env.PASSWORD_MAX_LENGTH);
+  return Number.isInteger(n) && n > 0 ? n : 12;
+}
 
 /**
  * Reject a new password that is not actually a secret.
@@ -815,9 +830,11 @@ export function assertPasswordPolicy(
 ): void {
   const pw = password.trim();
 
-  if (pw.length < MIN_PASSWORD_LENGTH) {
+  const min = minPasswordLength();
+  const max = maxPasswordLength();
+  if (pw.length < min || pw.length > max) {
     throw new BadRequestException(
-      `Password must be at least ${MIN_PASSWORD_LENGTH} characters. A short sentence you will remember works well.`,
+      `Password must be ${min} to ${max} characters.`,
     );
   }
   // bcrypt silently ignores everything past 72 bytes, so a longer password

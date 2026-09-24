@@ -233,7 +233,8 @@ describe('AuthService.login', () => {
     };
 
     it.each([
-      ['too short', 'short123'],
+      ['too short', 'ab12c'],
+      ['too long', 'abcdefgh12345'],
       ['the employee code itself', '15100001'],
       ['contains the employee code', 'my15100001pass'],
       ['the email address', 'someone@dbl-group.com'],
@@ -242,10 +243,11 @@ describe('AuthService.login', () => {
       expect(() => assertPasswordPolicy(pw, target)).toThrow();
     });
 
-    it('accepts a passphrase, with no composition rules imposed', () => {
-      expect(() =>
-        assertPasswordPolicy('correct horse battery staple', target),
-      ).not.toThrow();
+    it.each([
+      ['the minimum, 6', 'dbl253'],
+      ['the maximum, 12', 'talenthub253'],
+    ])('accepts %s characters, with no composition rules imposed', (_l, pw) => {
+      expect(() => assertPasswordPolicy(pw, target)).not.toThrow();
     });
 
     it('rejects a password longer than bcrypt actually reads', () => {

@@ -333,7 +333,8 @@ openssl rand -hex 32
 | `TOTP_ENCRYPTION_KEY` | **yes, in production** | 32 bytes. Boot refuses to start without it (verified). Store a copy in the password manager — rotating it forces every enrolled user to re-enrol. |
 | `LOGIN_MAX_ATTEMPTS` | no (5) | |
 | `LOGIN_LOCKOUT_MINUTES` | no (15) | |
-| `PASSWORD_MIN_LENGTH` | no (12) | |
+| `PASSWORD_MIN_LENGTH` | no (6) | |
+| `PASSWORD_MAX_LENGTH` | no (12) | |
 
 All documented in `HRM_Backend/.env.example`.
 
