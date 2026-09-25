@@ -128,6 +128,11 @@ export class PermissionsService {
   invalidate(userId?: string): void {
     if (userId) this.cache.delete(`${PERMS_PREFIX}${userId}`);
     else this.cache.deleteByPrefix(PERMS_PREFIX);
+    // The dashboard is cached per user and filtered by these permissions
+    // (dashboard.service.ts), so a role change must not leave it showing what
+    // the old role could see.
+    if (userId) this.cache.delete(`dashboard:${userId}`);
+    else this.cache.deleteByPrefix('dashboard:');
   }
 
   // --- who is away --------------------------------------------------------

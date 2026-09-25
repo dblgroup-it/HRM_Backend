@@ -9,6 +9,8 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from './permissions.service';
+import { sameUnit } from '../../common/util/normalize-unit';
+import { LAYERED_ROLE_KEYS, layerOrder } from './layering';
 import {
   CreateAssignmentDto,
   CreateRoleDto,
@@ -173,6 +175,20 @@ export class RbacService {
         include: { role: true, unit: true, user: { select: { name: true } } },
       });
       this.permissions.invalidate(dto.userId);
+      // A new Factory HR joins the end of the unit's layering.
+      if (unitId && LAYERED_ROLE_KEYS.includes(role.key)) {
+        await this.renumberLayer(dto.roleId, unitId);
+        return (
+          (await this.prisma.roleAssignment.findUnique({
+            where: { id: created.id },
+            include: {
+              role: true,
+              unit: true,
+              user: { select: { name: true } },
+            },
+          })) ?? created
+        );
+      }
       return created;
     } catch (e) {
       throw this.handleUnique(e, 'This person already holds that role here');
@@ -287,7 +303,7 @@ export class RbacService {
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
 
-    const removed = { paths: 0, levels: 0 };
+    const removed = { paths: 0, levels: 0, jobAnalyses: 0 };
     const { userId, unitId, role } = assignment;
 
     if (unitId && role.key === 'requisition_raiser') {
@@ -316,9 +332,60 @@ export class RbacService {
       }
     }
 
+    if (unitId && role.key === 'factory_hr' && assignment.unit) {
+      // A job analysis addressed to them by name (the old rule, or a leave
+      // hand-over) would otherwise stay theirs — on their dashboard and in
+      // their list — after they stop being Factory HR. Released to the
+      // unit's queue, which is where every new one goes anyway.
+      const addressed = await this.prisma.requisition.findMany({
+        where: {
+          status: 'PENDING_JOB_ANALYSIS',
+          jobAnalysisAssigneeId: userId,
+        },
+        select: { id: true, unitFactory: true },
+      });
+      const ids = addressed
+        .filter((r) => sameUnit(r.unitFactory, assignment.unit!.name))
+        .map((r) => r.id);
+      if (ids.length) {
+        const { count } = await this.prisma.requisition.updateMany({
+          where: { id: { in: ids } },
+          data: { jobAnalysisAssigneeId: null },
+        });
+        removed.jobAnalyses = count;
+      }
+    }
+
     await this.prisma.roleAssignment.delete({ where: { id } });
     this.permissions.invalidate(userId);
+    // Close the gap in the unit's layering: 2 and 3 become 1 and 2.
+    if (unitId && LAYERED_ROLE_KEYS.includes(role.key)) {
+      await this.renumberLayer(assignment.roleId, unitId);
+    }
     return { id, removed };
+  }
+
+  /** Number a unit's layered holders 1..n, keeping their order — see layering.ts. */
+  private async renumberLayer(roleId: string, unitId: string): Promise<void> {
+    const rows = await this.prisma.roleAssignment.findMany({
+      where: { roleId, unitId },
+      select: { id: true, userId: true, priority: true, createdAt: true },
+    });
+    const order = layerOrder(rows);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const changed = order
+      .map((id, i) => ({ id, priority: i + 1 }))
+      .filter((r) => byId.get(r.id)!.priority !== r.priority);
+    if (!changed.length) return;
+    await this.prisma.$transaction(
+      changed.map((r) =>
+        this.prisma.roleAssignment.update({
+          where: { id: r.id },
+          data: { priority: r.priority },
+        }),
+      ),
+    );
+    for (const r of rows) this.permissions.invalidate(r.userId);
   }
 
   /** Renumber a path's levels 0..n-1, preserving their order. */
