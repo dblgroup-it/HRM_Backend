@@ -41,6 +41,11 @@ import { extractedCvToProfile } from './cv/cv-extract';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import { bulkCandidateNames } from './bulk-cv';
 import {
+  applicationsCloseAt,
+  applicationsOpen,
+  lastDayToApply,
+} from './application-window';
+import {
   BulkCreateCandidatesDto,
   BulkRejectDto,
   CandidateQueryDto,
@@ -1934,9 +1939,13 @@ export class CandidatesService {
         requiredPosts: true,
         jobDescription: true,
         createdAt: true,
+        posting: true,
       },
     });
-    return reqs.map((r) => ({
+    // Past its closing date, a job leaves the career page — the requisition
+    // stays POSTED for the recruiter, it just stops taking applications.
+    const now = new Date();
+    return reqs.filter((r) => applicationsOpen(r.posting, now)).map((r) => ({
       id: r.id,
       code: r.code,
       designation: r.designation,
@@ -1952,6 +1961,7 @@ export class CandidatesService {
             .trim()
         : null,
       postedAt: r.createdAt.toISOString(),
+      closesAt: applicationsCloseAt(r.posting)?.toISOString() ?? null,
     }));
   }
 
@@ -1983,6 +1993,15 @@ export class CandidatesService {
 
   // --- public job application (no auth) ------------------------------------
 
+  /** Refuse a public application once the closing date has passed. */
+  private assertApplicationsOpen(posting: unknown): void {
+    if (applicationsOpen(posting)) return;
+    const lastDay = lastDayToApply(posting);
+    throw new NotFoundException(
+      `Applications for this position closed${lastDay ? ` on ${lastDay}` : ''}.`,
+    );
+  }
+
   async publicJobInfo(reqId: string) {
     const req = await this.prisma.requisition.findUnique({
       where: { id: reqId },
@@ -1990,6 +2009,7 @@ export class CandidatesService {
     if (!req || req.status !== 'POSTED') {
       throw new NotFoundException('This position is not open for applications');
     }
+    this.assertApplicationsOpen(req.posting);
     return {
       code: req.code,
       designation: req.designation,
@@ -2009,6 +2029,8 @@ export class CandidatesService {
     if (!req || req.status !== 'POSTED') {
       throw new NotFoundException('This position is not open for applications');
     }
+    // Before the CV reaches Drive: a closed position must not collect one.
+    this.assertApplicationsOpen(req.posting);
     const ws = await this.recruitment.ensureWorkspace(req);
     if (!ws) {
       throw new ServiceUnavailableException(
