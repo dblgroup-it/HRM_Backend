@@ -66,6 +66,8 @@ export interface UploadedCv {
 type CandidateRow = Prisma.CandidateGetPayload<object> & {
   /** Present only where the query includes it; the name of whoever rejected. */
   rejectedBy?: { name: string } | null;
+  /** Present only where the query includes it; who sent the regret mail. */
+  regretSentBy?: { name: string } | null;
   /**
    * Present only where the query includes it; open first-interview hand-offs,
    * which decide whether the recruiter's Interviews tab may act on the round
@@ -179,6 +181,7 @@ export class CandidatesService {
           onboarding: { select: { status: true } },
           // So the row can say who turned them down, not just that it happened.
           rejectedBy: { select: { name: true } },
+          regretSentBy: { select: { name: true } },
           // Whose first interview this is. The Interviews tab lists everyone
           // at the Interview stage, and a candidate only reaches that stage
           // because somebody scheduled their first round — often the factory
@@ -488,18 +491,26 @@ export class CandidatesService {
 
   async bulkReject(reqId: string, userId: string, dto: BulkRejectDto) {
     await this.requireReq(reqId, userId);
+    const where = {
+      requisitionId: reqId,
+      stage: { in: ['APPLIED', 'AI_SHORTLISTED'] as CandidateStage[] },
+      matchScore: { lte: dto.maxScore },
+    };
+    // Read first, so the page can offer the regret mail to exactly the people
+    // this turned down — not everyone who was ever rejected on the post.
+    const targets = await this.prisma.candidate.findMany({
+      where,
+      select: { id: true },
+    });
+    const ids = targets.map((t) => t.id);
     const result = await this.prisma.candidate.updateMany({
-      where: {
-        requisitionId: reqId,
-        stage: { in: ['APPLIED', 'AI_SHORTLISTED'] },
-        matchScore: { lte: dto.maxScore },
-      },
+      where: { id: { in: ids }, ...where },
       data: { stage: 'REJECTED' },
     });
     this.notifications.broadcastChange('candidate', reqId, {
       action: 'bulk_rejected',
     });
-    return { rejected: result.count };
+    return { rejected: result.count, ids };
   }
 
   /**
@@ -629,6 +640,7 @@ export class CandidatesService {
           },
         },
         rejectedBy: { select: { name: true } },
+        regretSentBy: { select: { name: true } },
         interviews: {
           orderBy: { createdAt: 'asc' },
           include: {
@@ -716,6 +728,11 @@ export class CandidatesService {
       title: `Rejected${cand.rejectionStage ? ` at ${cand.rejectionStage.replace(/_/g, ' ')}` : ''}`,
       detail: cand.rejectionReason ?? undefined,
       actor: cand.rejectedBy?.name,
+    });
+    pushIf(e, cand.regretSentAt, {
+      phase: 'recruitment',
+      title: 'Regret mail sent',
+      actor: cand.regretSentBy?.name,
     });
 
     // ── Interviews ───────────────────────────────────────────────────
@@ -2664,7 +2681,7 @@ function escapeHtml(s: string): string {
 }
 
 /** Wrap a plain-text message in a simple branded HTML email. */
-function renderEmailHtml(message: string): string {
+export function renderEmailHtml(message: string): string {
   const body = escapeHtml(message).replace(/\n/g, '<br>');
   return `<!doctype html><html><body style="margin:0;background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
@@ -2764,6 +2781,9 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
     rejectionStage: c.rejectionStage ?? null,
     rejectionReason: c.rejectionReason ?? null,
     rejectedByName: c.rejectedBy?.name ?? null,
+    /** The regret letter, once sent — it goes at most once. */
+    regretSentAt: c.regretSentAt ? c.regretSentAt.toISOString() : null,
+    regretSentByName: c.regretSentBy?.name ?? null,
     /**
      * Set while the first interview is out with somebody else, so the
      * recruiter's Interviews tab can show the candidate without offering

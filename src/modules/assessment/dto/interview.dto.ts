@@ -79,6 +79,19 @@ export class BulkFirstInterviewOutcomeDto extends FirstInterviewOutcomeDto {
   candidateIds!: string[];
 }
 
+/**
+ * Send the regret letter to rejected candidates. Capped lower than the other
+ * batches: each one is a real email through Gmail, sent while the request
+ * waits.
+ */
+export class RegretMailDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  candidateIds!: string[];
+}
+
 /** Factory HR Head: approve, return or reject a selection of finalists. */
 export class FirstInterviewApprovalDecisionDto {
   @IsArray()

@@ -17,6 +17,7 @@ import { InterviewService } from './interview.service';
 import { FirstInterviewApprovalService } from './first-interview-approval.service';
 import {
   BulkFirstInterviewOutcomeDto,
+  RegretMailDto,
   BulkScheduleInterviewDto,
   DelegateInterviewsDto,
   DelegateWorkloadDto,
@@ -116,6 +117,19 @@ export class InterviewController {
       { id: user.id, name: user.name },
       dto.note,
     );
+  }
+
+  /**
+   * DBL's regret letter to rejected candidates — one or many. Recruiter or
+   * the Factory HR colleague they were handed to. Per-candidate results.
+   */
+  @Post('candidates/regret-mail')
+  @HttpCode(200)
+  sendRegretMail(@Body() dto: RegretMailDto, @CurrentUser() user: AuthUser) {
+    return this.interviews.sendRegretMail(dto.candidateIds, {
+      id: user.id,
+      name: user.name,
+    });
   }
 
   /** Finalists waiting on this Factory HR Head, oldest first. */

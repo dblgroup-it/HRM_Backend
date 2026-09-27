@@ -261,6 +261,7 @@ model User {
   interviewRoundsCreated        InterviewRound[]       @relation("InterviewRoundCreatedBy")
   candidatesCreated             Candidate[]            @relation("CandidateCreatedBy")
   candidatesRejected            Candidate[]            @relation("CandidateRejectedBy")
+  candidatesRegretSent          Candidate[]            @relation("CandidateRegretSentBy")
   medicalClearances             Onboarding[]           @relation("OnboardingMedicalClearedBy")
   /// Medicals this user submitted for central approval (examining officer).
   medicalSubmissions            Onboarding[]           @relation("OnboardingMedicalSubmittedBy")
@@ -738,6 +739,11 @@ model Candidate {
   rejectedBy            User?                  @relation("CandidateRejectedBy", fields: [rejectedById], references: [id], onDelete: SetNull)
   rejectionStage        String?                @map("rejection_stage") @db.VarChar(30)
   rejectionReason       String?                @map("rejection_reason")
+  /// The regret letter, when one was sent. Opt-in — rejecting never mails
+  /// anybody by itself — and sent at most once, so it is stamped here.
+  regretSentAt          DateTime?              @map("regret_sent_at")
+  regretSentById        String?                @map("regret_sent_by_id")
+  regretSentBy          User?                  @relation("CandidateRegretSentBy", fields: [regretSentById], references: [id], onDelete: SetNull)
   createdById           String?                @map("created_by_id")
   createdBy             User?                  @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Bdjobs inbound: unique per Bdjobs application — used for deduplication.

@@ -15,6 +15,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   EvaluationRecommendation,
@@ -29,7 +30,15 @@ import type { Response } from 'express';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CandidatesService } from '../candidates/candidates.service';
+import {
+  CandidatesService,
+  renderEmailHtml,
+} from '../candidates/candidates.service';
+import {
+  REGRET_MAIL_BODY,
+  regretMailBlocker,
+  regretMailSubject,
+} from '../candidates/regret-mail';
 import { buildCandidateBrief } from './candidate-brief';
 import { rejectBlocker } from './reject-guard';
 import {
@@ -1784,6 +1793,85 @@ export class InterviewService {
     };
   }
 
+  /**
+   * Send DBL's regret letter to rejected candidates — one, or a batch.
+   *
+   * Whoever may run the candidate's interviews may send it: the recruiter
+   * (and Head of Talent Acquisition / CHRO / super), and the Factory HR
+   * colleague the candidate was handed to. Each candidate is judged on its
+   * own, like the other batch actions — one without an email, or already
+   * written to, must not stop the rest, and the reply says which did not go.
+   *
+   * Stamped only after the mail has actually left, so a failure can be tried
+   * again and a success cannot be sent twice.
+   */
+  async sendRegretMail(
+    candidateIds: string[],
+    actor: { id: string; name: string },
+  ) {
+    if (!this.mail.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'Email is not configured on the server, so the regret mail cannot be sent.',
+      );
+    }
+    const results: {
+      candidateId: string;
+      ok: boolean;
+      name?: string;
+      error?: string;
+    }[] = [];
+    const touched = new Set<string>();
+    for (const id of [...new Set(candidateIds)]) {
+      try {
+        const cand = await this.loadCandidate(id, actor.id);
+        const blocker = regretMailBlocker(cand);
+        if (blocker) throw new BadRequestException(blocker);
+        const sent = await this.mail.send({
+          to: cand.email!.trim(),
+          subject: regretMailSubject(cand.requisition.designation),
+          text: REGRET_MAIL_BODY,
+          html: renderEmailHtml(REGRET_MAIL_BODY),
+        });
+        // The master switch swallows mail without an error. Recording that
+        // as sent would tell HR the candidate was written to when nobody was.
+        if (sent.messageId === 'suppressed') {
+          throw new BadRequestException(
+            'Email sending is switched off in Settings, so nothing was sent.',
+          );
+        }
+        const now = new Date();
+        const stamp = now.toISOString().slice(0, 10);
+        const trail = `[${stamp}] Regret mail sent (${actor.name})`;
+        await this.prisma.candidate.update({
+          where: { id: cand.id },
+          data: {
+            regretSentAt: now,
+            regretSentById: actor.id,
+            notes: cand.notes ? `${cand.notes}\n${trail}` : trail,
+          },
+        });
+        touched.add(cand.requisitionId);
+        results.push({ candidateId: id, ok: true, name: cand.name });
+      } catch (err) {
+        results.push({
+          candidateId: id,
+          ok: false,
+          error: (err as Error).message || 'Could not send the regret mail',
+        });
+      }
+    }
+    for (const reqId of touched) {
+      this.notifications.broadcastChange('candidate', reqId, {
+        action: 'regret_sent',
+      });
+    }
+    return {
+      sent: results.filter((r) => r.ok).length,
+      skipped: results.filter((r) => !r.ok).length,
+      results,
+    };
+  }
+
   /** Withdraw a delegation. The audit row survives, marked revoked. */
   async revokeDelegation(
     candidateId: string,
@@ -2270,6 +2358,8 @@ export class InterviewService {
         rejectionStage: r.candidate.rejectionStage,
         rejectionReason: r.candidate.rejectionReason,
         rejectedByName: r.candidate.rejectedBy?.name ?? null,
+        /** The regret letter, once sent — it goes at most once. */
+        regretSentAt: r.candidate.regretSentAt?.toISOString() ?? null,
         // What they earn now and want, as told to whoever interviewed them.
         // Shown on the card so the interviewer can see at a glance whether
         // anybody has asked yet.
