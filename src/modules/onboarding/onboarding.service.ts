@@ -56,6 +56,7 @@ import {
   LETTERHEAD_PDF_MARGIN,
   letterheadFooterHtml,
   letterheadHeaderHtml,
+  APPOINTMENT_PDF_MARGIN,
 } from './letterhead';
 import { NotificationsService } from '../realtime/notifications.service';
 import { DriveService } from '../integrations/google/drive.service';
@@ -874,10 +875,12 @@ export class OnboardingService {
     // travels as a PDF. It also has to — the pad's logo is a data: URI, which
     // Gmail and most clients refuse to load inside a message body, so an
     // inline letter would arrive with a broken image where the letterhead is.
+    // Its own, roomier page (see APPOINTMENT_PDF_MARGIN). The pad templates
+    // take the same side margin so the logo, text and footer share one edge.
     const appointmentPdf = await this.pdf.fromHtml(letter, {
-      headerHtml: letterheadHeaderHtml(),
-      footerHtml: letterheadFooterHtml(),
-      margin: { ...LETTERHEAD_PDF_MARGIN },
+      headerHtml: letterheadHeaderHtml(APPOINTMENT_PDF_MARGIN.left, '12mm'),
+      footerHtml: letterheadFooterHtml(APPOINTMENT_PDF_MARGIN.left),
+      margin: { ...APPOINTMENT_PDF_MARGIN },
       stripSelectors: [...LETTERHEAD_IN_FLOW_SELECTORS],
       // One sheet, the way these are handed over and filed. A long letter is
       // set a little smaller rather than spilling three lines onto page two.

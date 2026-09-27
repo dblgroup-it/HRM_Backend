@@ -42,14 +42,38 @@ export const LETTERHEAD_PDF_MARGIN = {
   right: '18mm',
 } as const;
 
-export function letterheadHeaderHtml(): string {
-  return `<div style="width:100%;padding:8mm 18mm 0;box-sizing:border-box">
+/**
+ * The appointment letter's page. A formal one-page letter with room to
+ * breathe: a wider gutter than the offer letters (which are longer and fitted
+ * to one sheet), and a clear band between the logo and the first line.
+ * The pad's own templates take the same side margin, so the logo, the text
+ * and the footer rule all line up on one edge.
+ */
+export const APPOINTMENT_PDF_MARGIN = {
+  top: '42mm',
+  bottom: '30mm',
+  left: '24mm',
+  right: '24mm',
+} as const;
+
+/**
+ * `side` must equal the page's left/right margin — the template is drawn
+ * across the full sheet, so its padding is what lines the logo up with the
+ * text below it.
+ */
+export function letterheadHeaderHtml(
+  side: string = LETTERHEAD_PDF_MARGIN.left,
+  top = '8mm',
+): string {
+  return `<div style="width:100%;padding:${top} ${side} 0;box-sizing:border-box">
     <img src="${DBL_LOGO_DATA_URI}" style="height:15mm;width:auto;display:block">
   </div>`;
 }
 
-export function letterheadFooterHtml(): string {
-  return `<div style="width:100%;padding:0 18mm 6mm;box-sizing:border-box;font-family:Calibri,Arial,sans-serif;font-size:7.5pt;line-height:1.5;color:#1f3864;text-align:center">
+export function letterheadFooterHtml(
+  side: string = LETTERHEAD_PDF_MARGIN.left,
+): string {
+  return `<div style="width:100%;padding:0 ${side} 6mm;box-sizing:border-box;font-family:Calibri,Arial,sans-serif;font-size:7.5pt;line-height:1.5;color:#1f3864;text-align:center">
     <div style="border-top:1px solid #1f3864;padding-top:3mm">
       ${DBL_LETTERHEAD_FOOTER.office}<br>${DBL_LETTERHEAD_FOOTER.contact}
     </div>

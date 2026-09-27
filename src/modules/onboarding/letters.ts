@@ -224,9 +224,9 @@ const LI = 'margin:0 0 4px;font-size:11pt;line-height:1.45';
  * into each page's margin instead, which is how it repeats on every sheet of a
  * letter that runs to two pages.
  */
-function shell(body: string): string {
+function shell(body: string, padding = '28px 34px'): string {
   return `
-<div class="dbl-letter" style="font-family:Calibri,'Segoe UI',Arial,sans-serif;color:#000;max-width:760px;margin:0 auto;padding:28px 34px;background:#fff;position:relative">
+<div class="dbl-letter" style="font-family:Calibri,'Segoe UI',Arial,sans-serif;color:#000;max-width:760px;margin:0 auto;padding:${padding};background:#fff;position:relative">
   <style>
     .dbl-letter .dbl-pad-head { padding: 0 0 18px }
     .dbl-letter .dbl-pad-foot {
@@ -478,75 +478,90 @@ export function buildAppointmentLetter(input: LetterInput): string {
   const title = input.salutation?.trim()
     ? `${esc(input.salutation.trim())} `
     : '';
-  return shell(`
-  <p style="${P}">
-    Date: ${fmtDate(input.date ?? new Date())}<br>
-    Ref: ${esc(input.reference ?? '')}
-  </p>
+  // A formal one-page letter: more air between the blocks than the offer
+  // letters, which are longer and have to fit one sheet.
+  const AP = 'margin:0 0 14px;font-size:11pt;line-height:1.6;text-align:justify';
+  // Label | colon | value, so the colons stand in one column.
+  const row = (label: string, value: string, bold = false) => `
+    <tr>
+      <td style="padding:0 0 3px;font-weight:700;width:78px;vertical-align:top">${label}</td>
+      <td style="padding:0 8px 3px 0;font-weight:700;width:8px;vertical-align:top">:</td>
+      <td style="padding:0 0 3px;vertical-align:top;${bold ? 'font-weight:700' : ''}">${value}</td>
+    </tr>`;
+  // Both signature columns are built the same way and top-aligned, so the two
+  // rules sit on one line. Table cells centre vertically by default, which
+  // left the candidate's rule lower than the signatory's whenever the two
+  // columns had a different number of lines under them.
+  const signCell = (ink: string, lines: string) => `
+      <td style="width:50%;vertical-align:top;padding-top:6px">
+        <div style="height:62px;display:flex;align-items:flex-end">${ink}</div>
+        <div style="border-top:1px solid #000;width:62mm;max-width:92%"></div>
+        <div style="margin-top:5px;line-height:1.45">${lines}</div>
+      </td>`;
 
-  <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:11pt;margin:0 0 14px">
+  return shell(
+    `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:11pt;margin:0 0 22px">
     <tr>
-      <td style="padding:0 0 2px;font-weight:700;width:110px">Name</td>
-      <td style="padding:0 0 2px;font-weight:700">: ${title}${esc(input.candidateName)}</td>
-    </tr>
-    <tr>
-      <td style="padding:0;font-weight:700">Address</td>
-      <td style="padding:0">: ${esc(input.address ?? '')}</td>
+      <td style="vertical-align:top">Ref: ${esc(input.reference ?? '')}</td>
+      <td style="vertical-align:top;text-align:right;white-space:nowrap">Date: ${fmtDate(input.date ?? new Date())}</td>
     </tr>
   </table>
 
-  <p style="text-align:center;margin:0 0 16px">
-    <span style="font-weight:700;text-decoration:underline;font-size:12pt">Appointment Letter</span>
+  <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:11pt;line-height:1.5;margin:0 0 26px">
+    ${row('Name', `${title}${esc(input.candidateName)}`, true)}
+    ${row('Address', esc(input.address ?? ''))}
+  </table>
+
+  <p style="text-align:center;margin:0 0 24px">
+    <span style="font-weight:700;text-decoration:underline;text-underline-offset:3px;font-size:13pt;letter-spacing:0.3px">Appointment Letter</span>
   </p>
 
-  <p style="${P};font-weight:700">Dear ${title}${esc(lastName(input.candidateName))},</p>
+  <p style="${AP};font-weight:700;margin-bottom:16px">Dear ${title}${esc(lastName(input.candidateName))},</p>
 
-  <p style="${P}">
-    With reference to our offer letter${input.reference ? '' : ''} and your subsequent joining, we are pleased to
+  <p style="${AP}">
+    With reference to our offer letter and your subsequent joining, we are pleased to
     confirm your appointment as
     <strong>${esc(positionTitle(input.designation, input.department))}</strong> in
     <strong>${esc(input.unitFactory)}</strong> with effect from
     <strong>${fmtJoining(input.joiningDate)}</strong>.
   </p>
 
-  <p style="${P}">
+  <p style="${AP}">
     Your appointment is governed by the terms and conditions of the Company's service rules as
     amended from time to time. You are required to devote your whole time and attention to the
     business of the Company and to carry out the duties assigned to you faithfully and diligently.
   </p>
 
-  <p style="${P}">
+  <p style="${AP}">
     All other terms and conditions of your service, including remuneration, leave, and separation,
     are as communicated to you and as set out in the Company's policy in force.
   </p>
 
-  <p style="${P}">
+  <p style="${AP}">
     Please sign and return the duplicate copy of this letter as token of your acceptance.
   </p>
 
-  <p style="${P}">
+  <p style="${AP}">
     We welcome you to ${esc(input.unitFactory.replace(/\.+$/, ''))} and wish you a long and successful career with us.
   </p>
 
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;font-size:11pt">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:34px;font-size:11pt;page-break-inside:avoid">
     <tr>
-      <td style="width:50%">Yours sincerely,</td>
-      <td style="width:50%">Accepted by,</td>
+      <td style="width:50%;vertical-align:top">Yours sincerely,</td>
+      <td style="width:50%;vertical-align:top">Accepted by,</td>
     </tr>
-    <tr>
-      <td style="padding-top:12px">
-        <div style="height:44px">${signatureInk(input.signatorySignature)}</div>
-        <div style="border-top:1px solid #000;width:230px"></div>
-        <div style="font-weight:700;margin-top:4px">${esc(input.signatoryName)}</div>
-        <div>${esc(input.signatoryTitle)}</div>
-      </td>
-      <td style="padding-top:12px">
-        <div style="height:44px">${candidateSignSlot(input)}</div>
-        <div style="border-top:1px solid #000;width:270px"></div>
-        <div style="font-weight:700;margin-top:4px;text-align:center;width:270px">${esc(input.candidateName)}</div>
-      </td>
+    <tr>${signCell(
+      signatureInk(input.signatorySignature),
+      `<strong>${esc(input.signatoryName)}</strong><br>${esc(input.signatoryTitle)}`,
+    )}${signCell(
+      candidateSignSlot(input),
+      `<strong>${esc(input.candidateName)}</strong><br>Date: ${ACCEPT_DATE_BLANK}`,
+    )}
     </tr>
-  </table>`);
+  </table>`,
+    '44px 60px',
+  );
 }
 
 /** "06 (six)" — the junior letter spells the probation period out. */

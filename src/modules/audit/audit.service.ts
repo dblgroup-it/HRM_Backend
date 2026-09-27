@@ -1,8 +1,10 @@
 import { Injectable, Logger, ForbiddenException } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@prisma/client';
+import { Cron } from '@nestjs/schedule';
 
 import { currentContext } from '../../common/context/request-context';
 import { PermissionsService } from '../rbac/permissions.service';
+import { AUDIT_RETENTION_DAYS, auditRetentionCutoff } from './audit-retention';
 
 /** One field that changed. */
 export interface FieldChange {
@@ -162,6 +164,59 @@ export class AuditService {
     } catch (e) {
       this.logger.warn(`Could not write audit entry: ${(e as Error).message}`);
     }
+  }
+
+  // --- retention -----------------------------------------------------------
+
+  /**
+   * Every night: keep the last 30 days of activity, today included, and
+   * delete the rest. See `audit-retention.ts` for how the days are counted.
+   *
+   * Runs in Dhaka time whatever the server's clock is set to. Never throws —
+   * a failed purge is retried the next night, and must not take the scheduler
+   * down with it.
+   */
+  @Cron('10 3 * * *', { name: 'audit-retention', timeZone: 'Asia/Dhaka' })
+  async purgeExpired(now: Date = new Date()): Promise<number> {
+    const cutoff = auditRetentionCutoff(now);
+    let removed = 0;
+    try {
+      // In batches: the first run on a large backlog must not hold one long
+      // lock on a table every request writes to.
+      for (;;) {
+        const n = await this.db.$executeRaw`
+          DELETE FROM "audit_logs"
+           WHERE "id" IN (
+             SELECT "id" FROM "audit_logs"
+              WHERE "created_at" < ${cutoff}
+              LIMIT 5000
+           )`;
+        removed += n;
+        if (n < 5000) break;
+      }
+    } catch (e) {
+      this.logger.error(
+        `Activity log cleanup failed after removing ${removed}: ${(e as Error).message}`,
+      );
+      return removed;
+    }
+    if (removed > 0) {
+      const from = new Date(cutoff.getTime() + 6 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      this.logger.log(
+        `Activity log cleanup: removed ${removed} entries before ${from} (keeping ${AUDIT_RETENTION_DAYS} days)`,
+      );
+      // One line in the log itself, so a shorter history is explained.
+      await this.record({
+        action: 'purged',
+        entity: 'AuditLog',
+        summary: `Removed ${removed} activity entr${removed === 1 ? 'y' : 'ies'} older than ${AUDIT_RETENTION_DAYS} days (before ${from})`,
+        source: 'system',
+        actor: { id: null, name: 'System', type: 'system' },
+      });
+    }
+    return removed;
   }
 
   /**
