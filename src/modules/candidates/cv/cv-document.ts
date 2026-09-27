@@ -1,4 +1,13 @@
-import type { CvEducation, CvEmployment, CvProfile } from './cv-profile.types';
+import type {
+  CvCertification,
+  CvEducation,
+  CvEmployment,
+  CvLanguage,
+  CvProfile,
+  CvReference,
+  CvSkill,
+  CvTraining,
+} from './cv-profile.types';
 
 /**
  * A printable CV built from structured data, for candidates who never sent a file.
@@ -104,13 +113,21 @@ function employmentSection(jobs: CvEmployment[], today: string): string {
             : ''
         }</td>
         <td style="${S.td}"><strong>${esc(j.company)}</strong>${
+          j.location
+            ? `<div style="${S.muted};font-size:11px">${esc(j.location)}</div>`
+            : ''
+        }${
           j.current
             ? ' <span style="font-size:10px;color:#1877c0;font-weight:700">CURRENT</span>'
             : ''
         }</td>
         <td style="${S.td}">${esc(j.designation ?? '—')}${
+          j.expertise
+            ? `<div style="font-size:11px;margin-top:2px"><span style="${S.muted}">Expertise:</span> ${esc(j.expertise)}</div>`
+            : ''
+        }${
           j.role
-            ? `<div style="${S.muted};font-size:11px">${esc(j.role)}</div>`
+            ? `<div style="${S.muted};font-size:11px;margin-top:2px">${esc(j.role)}</div>`
             : ''
         }</td>
       </tr>`;
@@ -134,8 +151,20 @@ function educationSection(quals: CvEducation[]): string {
             ? `<div style="${S.muted};font-size:11px">${esc(q.university)}</div>`
             : ''
         }</td>
-        <td style="${S.td}">${esc(q.degree ?? '—')}</td>
-        <td style="${S.td};width:14%">${esc(q.result ?? '—')}</td>
+        <td style="${S.td}">${esc(q.degree ?? '—')}${
+          q.major
+            ? `<div style="${S.muted};font-size:11px">${esc(q.major)}</div>`
+            : ''
+        }${
+          q.duration
+            ? `<div style="${S.muted};font-size:11px">Duration: ${esc(q.duration)}</div>`
+            : ''
+        }${
+          q.achievement
+            ? `<div style="${S.muted};font-size:11px">Achievement: ${esc(q.achievement)}</div>`
+            : ''
+        }</td>
+        <td style="${S.td};width:16%">${esc(q.result ?? '—')}</td>
       </tr>`,
     )
     .join('');
@@ -149,6 +178,7 @@ function educationSection(quals: CvEducation[]): string {
 function personalSection(p: CvProfile): string {
   const items: [string, string | null][] = [
     ["Father's name", text(p.personal.fatherName)],
+    ["Mother's name", text(p.personal.motherName)],
     [
       'Date of birth',
       monthYear(p.personal.dateOfBirth) ? text(p.personal.dateOfBirth) : null,
@@ -156,6 +186,17 @@ function personalSection(p: CvProfile): string {
     ['Gender', text(p.personal.gender)],
     ['Marital status', text(p.personal.maritalStatus)],
     ['Blood group', text(p.personal.bloodGroup)],
+    ['Religion', text(p.personal.religion)],
+    ['Nationality', text(p.personal.nationality)],
+    [
+      'Height / weight',
+      [
+        p.personal.heightMeters ? `${p.personal.heightMeters} m` : null,
+        p.personal.weightKg ? `${p.personal.weightKg} kg` : null,
+      ]
+        .filter(Boolean)
+        .join(' / ') || null,
+    ],
     ['Present address', text(p.contact.currentAddress)],
     ['Permanent address', text(p.contact.permanentAddress)],
   ];
@@ -173,6 +214,119 @@ function personalSection(p: CvProfile): string {
   <table style="${S.table}">${rows}</table>`;
 }
 
+function table(head: string[], rows: string[][], widths: string[] = []): string {
+  return `<table style="${S.table}">
+    <tr>${head.map((h, i) => `<th style="${S.th}${widths[i] ? `;width:${widths[i]}` : ''}">${esc(h)}</th>`).join('')}</tr>
+    ${rows
+      .map((r) => `<tr>${r.map((c) => `<td style="${S.td}">${c}</td>`).join('')}</tr>`)
+      .join('')}
+  </table>`;
+}
+
+const cell = (v?: string | number | null): string =>
+  v === undefined || v === null || v === '' ? '—' : esc(String(v));
+
+function trainingSection(rows: CvTraining[] = []): string {
+  if (!rows.length) return '';
+  return `<h2 style="${S.h2}">Training</h2>
+  ${table(
+    ['Year', 'Training', 'Institute', 'Duration'],
+    rows.map((t) => [
+      cell(t.year),
+      `<strong>${esc(t.title)}</strong>${t.topic ? `<div style="${S.muted};font-size:11px">${esc(t.topic)}</div>` : ''}`,
+      `${cell(t.institute)}${
+        t.location || t.country
+          ? `<div style="${S.muted};font-size:11px">${esc([t.location, t.country].filter(Boolean).join(', '))}</div>`
+          : ''
+      }`,
+      cell(t.duration),
+    ]),
+    ['12%', '', '', '16%'],
+  )}`;
+}
+
+function certificationSection(rows: CvCertification[] = []): string {
+  if (!rows.length) return '';
+  return `<h2 style="${S.h2}">Professional Certifications</h2>
+  ${table(
+    ['Certification', 'Institute', 'Period'],
+    rows.map((c) => [
+      `<strong>${esc(c.name)}</strong>`,
+      `${cell(c.institute)}${c.location ? `<div style="${S.muted};font-size:11px">${esc(c.location)}</div>` : ''}`,
+      cell([monthYear(c.from), monthYear(c.to)].filter(Boolean).join(' – ')),
+    ]),
+    ['', '', '24%'],
+  )}`;
+}
+
+function careerSection(p: CvProfile): string {
+  const c = p.career;
+  const items: [string, string | null][] = [
+    ['Preferred job category', c?.preferredJobCategories?.join(', ') ?? null],
+    ['Looking for (job level)', text(c?.jobLevel)],
+    [
+      'Present salary',
+      p.compensation.current ? p.compensation.current.toLocaleString('en-US') : null,
+    ],
+    [
+      'Expected salary',
+      p.compensation.expected ? p.compensation.expected.toLocaleString('en-US') : null,
+    ],
+    ['Preferred district', c?.preferredDistricts?.join(', ') ?? null],
+    ['Preferred organization type', c?.preferredOrganizationTypes?.join(', ') ?? null],
+  ];
+  const rows = items.filter(([, v]) => v);
+  if (!rows.length) return '';
+  return `<h2 style="${S.h2}">Career and Application</h2>
+  <table style="${S.table}">${rows
+    .map(
+      ([k, v]) => `<tr><td style="${S.td};width:28%;${S.muted}">${esc(k)}</td><td style="${S.td}">${esc(v as string)}</td></tr>`,
+    )
+    .join('')}</table>`;
+}
+
+function skillsSection(rows: CvSkill[] = []): string {
+  if (!rows.length) return '';
+  const described = rows.some((r) => r.description);
+  if (!described)
+    return `<h2 style="${S.h2}">Skills</h2>
+  <p style="margin:0;font-size:13px;line-height:1.8">${rows
+    .map(
+      (r) =>
+        `<span style="display:inline-block;margin:0 6px 6px 0;padding:2px 10px;border:1px solid #cbd5e1;border-radius:999px">${esc(r.name)}</span>`,
+    )
+    .join('')}</p>`;
+  return `<h2 style="${S.h2}">Skills</h2>
+  ${table(
+    ['Skill', 'Description'],
+    rows.map((r) => [`<strong>${esc(r.name)}</strong>`, cell(r.description)]),
+    ['32%', ''],
+  )}`;
+}
+
+function languageSection(rows: CvLanguage[] = []): string {
+  if (!rows.length) return '';
+  return `<h2 style="${S.h2}">Languages</h2>
+  ${table(
+    ['Language', 'Reading', 'Writing', 'Speaking'],
+    rows.map((l) => [`<strong>${esc(l.language)}</strong>`, cell(l.reading), cell(l.writing), cell(l.speaking)]),
+  )}`;
+}
+
+function referenceSection(rows: CvReference[] = []): string {
+  if (!rows.length) return '';
+  return `<h2 style="${S.h2}">References</h2>
+  ${table(
+    ['Name', 'Organization', 'Relation', 'Contact'],
+    rows.map((r) => [
+      `<strong>${esc(r.name)}</strong>${r.designation ? `<div style="${S.muted};font-size:11px">${esc(r.designation)}</div>` : ''}`,
+      cell(r.organization),
+      cell(r.relation),
+      [r.email, r.phone].filter(Boolean).map((x) => esc(x as string)).join('<br>') || '—',
+    ]),
+  )}`;
+}
+
 /**
  * Render a CV.
  *
@@ -182,6 +336,8 @@ function personalSection(p: CvProfile): string {
 export function buildCvDocument(
   profile: CvProfile,
   now: Date = new Date(),
+  /** The applicant's photo as a data: URI, when one was received. */
+  photo?: string | null,
 ): string {
   const today = now.toISOString().slice(0, 10);
   const name = text(profile.personal.fullName) ?? 'Candidate name not supplied';
@@ -193,7 +349,21 @@ export function buildCvDocument(
     text(profile.contact.currentLocation),
   ]
     .filter(Boolean)
+    .map((v) => esc(v as string))
     .join(' &nbsp;·&nbsp; ');
+  const links = [
+    profile.contact.linkedinUrl
+      ? `<a href="${esc(profile.contact.linkedinUrl)}" style="color:#1877c0">LinkedIn</a>`
+      : null,
+    profile.contact.facebookUrl
+      ? `<a href="${esc(profile.contact.facebookUrl)}" style="color:#1877c0">Facebook</a>`
+      : null,
+  ].filter(Boolean);
+  // Only an inline image is ever embedded; see candidate-photo.ts.
+  const photoTag =
+    photo && /^data:image\/(jpeg|png|webp);base64,/.test(photo)
+      ? `<img src="${photo}" alt="" style="width:96px;height:118px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;display:block">`
+      : '';
 
   // The four things a recruiter looks for before reading anything else.
   const facts: [string, string][] = [];
@@ -232,14 +402,29 @@ export function buildCvDocument(
         ? 'an uploaded document'
         : 'details entered by the recruiter';
 
+  const objective = text(profile.careerObjective);
+
   return `<div style="${S.page}">
-  <h1 style="${S.name}">${esc([salutation, name].filter(Boolean).join(' '))}</h1>
-  ${contact ? `<p style="${S.contact}">${contact}</p>` : ''}
+  <table style="width:100%;border-collapse:collapse"><tr>
+    <td style="vertical-align:top">
+      <h1 style="${S.name}">${esc([salutation, name].filter(Boolean).join(' '))}</h1>
+      ${contact ? `<p style="${S.contact}">${contact}</p>` : ''}
+      ${links.length ? `<p style="${S.contact}">${links.join(' &nbsp;·&nbsp; ')}</p>` : ''}
+    </td>
+    ${photoTag ? `<td style="vertical-align:top;width:96px;padding-left:16px">${photoTag}</td>` : ''}
+  </tr></table>
   <hr style="${S.rule}" />
   ${factRow}
+  ${objective ? `<h2 style="${S.h2}">Career Objective</h2><p style="margin:0;font-size:13px;line-height:1.6">${esc(objective)}</p>` : ''}
   ${employmentSection(profile.employment, today)}
   ${educationSection(profile.education)}
+  ${trainingSection(profile.training)}
+  ${certificationSection(profile.certifications)}
+  ${careerSection(profile)}
+  ${skillsSection(profile.skills)}
+  ${languageSection(profile.languages)}
   ${personalSection(profile)}
+  ${referenceSection(profile.references)}
   <p style="${S.footer}">
     Generated by DBL HRM from ${esc(sourceLabel)} on ${esc(
       now.toLocaleDateString('en-GB', {

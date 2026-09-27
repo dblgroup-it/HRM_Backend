@@ -26,6 +26,13 @@ import { bdjobsProfileToCandidateData } from '../../candidates/cv/bdjobs-profile
 import { BdJobsInboundError } from './bdjobs-inbound.errors';
 import type { CvProfile } from '../../candidates/cv/cv-profile.types';
 import {
+  decodeDataUri,
+  isFetchableUrl,
+  loadPhoto,
+  PhotoError,
+  type LoadedPhoto,
+} from '../../candidates/cv/candidate-photo';
+import {
   BdJobsSettingsService,
   type BdJobsSettings,
 } from './bdjobs-settings.service';
@@ -519,6 +526,15 @@ export class BdJobsService {
         qualifications: number;
         totalExperience: string | null;
         lastOrganization: string | null;
+        // v2 sections — counts of what was read, so a gap shows up here.
+        trainings: number;
+        certifications: number;
+        skills: number;
+        languages: number;
+        references: number;
+        careerInfo: boolean;
+        /** stored | downloading | rejected | none */
+        photo: 'stored' | 'downloading' | 'rejected' | 'none';
       };
     } | null;
     message: string;
@@ -696,6 +712,26 @@ export class BdJobsService {
       applicantId = null;
     }
 
+    // The photo. Inline images are decoded now and any problem reported in
+    // this reply; a link is only checked for shape here and fetched after the
+    // reply is sent, so BDJobs is never held open by somebody else's server.
+    let inlinePhoto: LoadedPhoto | null = null;
+    let photoStatus: 'stored' | 'downloading' | 'rejected' | 'none' = 'none';
+    const photoRef = dto.photo?.url?.trim();
+    if (photoRef) {
+      try {
+        inlinePhoto = decodeDataUri(photoRef);
+        if (inlinePhoto) photoStatus = 'stored';
+        else if (isFetchableUrl(photoRef)) photoStatus = 'downloading';
+        else throw new PhotoError('photo.url is not a public http(s) address or a data: URI.');
+      } catch (e) {
+        photoStatus = 'rejected';
+        warnings.push(
+          `photo was not stored — ${(e as Error).message} The application itself was imported.`,
+        );
+      }
+    }
+
     const candidate = await this.prisma.candidate.create({
       data: {
         requisitionId: requisition.id,
@@ -719,6 +755,19 @@ export class BdJobsService {
         bdjobsJobId: dto.bdJobsJobId,
       },
     });
+
+    if (inlinePhoto) {
+      await this.prisma.candidatePhoto.create({
+        data: {
+          candidateId: candidate.id,
+          mimeType: inlinePhoto.mimeType,
+          data: new Uint8Array(inlinePhoto.data),
+          sourceUrl: null,
+        },
+      });
+    } else if (photoStatus === 'downloading' && photoRef) {
+      this.fetchPhotoLater(candidate.id, photoRef);
+    }
 
     this.logger.log(
       `BDJobs candidate imported: ${candidate.id} (${name}) → ${requisition.code}` +
@@ -753,11 +802,46 @@ export class BdJobsService {
           qualifications: cv?.education.length ?? 0,
           totalExperience: cv?.summary.totalExperienceLabel ?? null,
           lastOrganization: cv?.summary.lastOrganization ?? null,
+          trainings: cv?.training?.length ?? 0,
+          certifications: cv?.certifications?.length ?? 0,
+          skills: cv?.skills?.length ?? 0,
+          languages: cv?.languages?.length ?? 0,
+          references: cv?.references?.length ?? 0,
+          careerInfo: Boolean(cv?.career),
+          photo: photoStatus,
         },
       },
       message: `Imported ${name} against ${requisition.code}, at the Shortlisted stage.`,
       ...(warnings.length ? { warnings } : {}),
     };
+  }
+
+  /**
+   * Download a photo link after the reply has gone. Failures are logged, not
+   * thrown: the application is already in, and a missing picture must not
+   * undo it.
+   */
+  private fetchPhotoLater(candidateId: string, url: string): void {
+    void (async () => {
+      try {
+        const loaded = await loadPhoto(url);
+        const photo = {
+          mimeType: loaded.mimeType,
+          data: new Uint8Array(loaded.data),
+          sourceUrl: loaded.sourceUrl,
+        };
+        await this.prisma.candidatePhoto.upsert({
+          where: { candidateId },
+          create: { candidateId, ...photo },
+          update: photo,
+        });
+        this.logger.log(
+          `BDJobs photo stored for ${candidateId} (${photo.mimeType}, ${photo.data.length} bytes)`,
+        );
+      } catch (e) {
+        this.logger.warn(`BDJobs photo for ${candidateId} not stored: ${(e as Error).message}`);
+      }
+    })();
   }
 }
 

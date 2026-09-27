@@ -718,6 +718,12 @@ model Candidate {
   /// selected and nobody knows where they live. HR reads it back when they go
   /// through the hire's facility requirements and have to arrange the run.
   transportPickup       String?                @map("transport_pickup") @db.VarChar(200)
+  /// Who last saved the facilities fields above, and when. Several HR
+  /// interviewers can sit on one panel; the record is shared, so each save is
+  /// stamped and a save made over a colleague's newer one is refused.
+  packageUpdatedAt      DateTime?              @map("package_updated_at")
+  packageUpdatedById    String?                @map("package_updated_by_id")
+  packageUpdatedByName  String?                @map("package_updated_by_name") @db.VarChar(150)
   /// AI CV-screening: match score 0-100 against the role + a short rationale.
   matchScore            Float?                 @map("match_score")
   matchSummary          String?                @map("match_summary")
@@ -744,6 +750,9 @@ model Candidate {
   regretSentAt          DateTime?              @map("regret_sent_at")
   regretSentById        String?                @map("regret_sent_by_id")
   regretSentBy          User?                  @relation("CandidateRegretSentBy", fields: [regretSentById], references: [id], onDelete: SetNull)
+  /// The applicant's profile picture, when BDJobs sent one. Its own table so
+  /// the bytes are never loaded with a candidate list.
+  photo                 CandidatePhoto?
   createdById           String?                @map("created_by_id")
   createdBy             User?                  @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Bdjobs inbound: unique per Bdjobs application — used for deduplication.
@@ -1019,6 +1028,10 @@ model InterviewPanelist {
   round   InterviewRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
   userId  String         @map("user_id")
   user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Sits on this panel for HR. Set by whoever arranges the round, per round:
+  /// the same person can be HR on one panel and not on another. Only HR
+  /// panelists see and fill the facilities section of the evaluation form.
+  fromHr  Boolean        @default(false) @map("from_hr")
 
   @@unique([roundId, userId])
   @@index([userId])
@@ -1861,4 +1874,19 @@ model ReferenceCheck {
 
   @@index([candidateId])
   @@map("reference_checks")
+}
+
+/// A candidate's profile picture, as received from BDJobs (fetched once from
+/// the link they sent, or decoded from an inline data: URI).
+model CandidatePhoto {
+  candidateId String   @id @map("candidate_id")
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  /// image/jpeg | image/png | image/webp — checked against the bytes, not the header.
+  mimeType    String   @map("mime_type") @db.VarChar(20)
+  data        Bytes
+  /// Where it came from; null when it arrived inline.
+  sourceUrl   String?  @map("source_url") @db.VarChar(1000)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("candidate_photos")
 }

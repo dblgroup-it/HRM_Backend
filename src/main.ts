@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import { json, type NextFunction, type Request, type Response } from 'express';
 
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -93,6 +94,39 @@ async function bootstrap(): Promise<void> {
   const corsOrigin = config.get<string>('corsOrigin', '*');
 
   app.setGlobalPrefix(apiPrefix);
+  // The BDJobs webhook may carry the applicant's photo inline as a data: URI
+  // (up to 2 MB of image, ~2.7 MB as base64), well past the default 100 KB
+  // JSON limit. Raised for that one route only: registered before Nest's own
+  // parser, which then sees the body already parsed and leaves it alone.
+  //
+  // Wrapped, not passed directly: Nest skips registering its own JSON parser
+  // when it finds a middleware named `jsonParser` already in the stack, and
+  // body-parser's function carries exactly that name — so passing it straight
+  // in left every other route without a parsed body (sign-in included).
+  const bdjobsJson = json({ limit: '4mb' });
+  app.use(
+    `/${apiPrefix}/integrations/bdjobs/candidates`,
+    (req: Request, res: Response, next: NextFunction) =>
+      bdjobsJson(req, res, (err?: unknown) => {
+        if (!err) return next();
+        // Answered here, in the webhook's own error shape: an error thrown
+        // by a parser registered this early never reaches the route's
+        // exception filter, and BDJobs got a bare "Internal server error".
+        const e = err as { type?: string; status?: number; message?: string };
+        const tooLarge = e.type === 'entity.too.large';
+        res.status(tooLarge ? 413 : (e.status ?? 400)).json({
+          success: false,
+          data: null,
+          code: tooLarge ? 'PAYLOAD_TOO_LARGE' : 'INVALID_JSON',
+          message: tooLarge
+            ? 'The request body is larger than 4 MB.'
+            : `The request body is not valid JSON: ${e.message ?? 'parse error'}.`,
+          hint: tooLarge
+            ? 'Send the photo as a link (photo.url) rather than inline, or keep an inline photo under 2 MB.'
+            : 'Send Content-Type: application/json with a single JSON object.',
+        });
+      }),
+  );
   app.enableCors({
     origin: corsOrigin.split(','),
     credentials: true,

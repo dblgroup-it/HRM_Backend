@@ -3,6 +3,7 @@ import type {
   CvEmployment,
   CvProfile,
 } from '../candidates/cv/cv-profile.types';
+import { estimateAge, type AgeEstimate } from './approx-age';
 
 /**
  * The candidate, as an interviewer needs to read them in the room.
@@ -25,6 +26,11 @@ export interface CandidateBrief {
   address: string | null;
   /** Whole years, from the date of birth the CV stated. */
   age: number | null;
+  /**
+   * Only when `age` is null: an estimate from the SSC (at 16) or HSC (at 18)
+   * pass year. Always printed as an estimate — see `approx-age.ts`.
+   */
+  ageEstimate: AgeEstimate | null;
   education: CandidateBriefEducation[];
   employment: CandidateBriefJob[];
   /**
@@ -237,6 +243,12 @@ function jobRow(j: CvEmployment): CandidateBriefJob | null {
   };
 }
 
+/** 2024 from "2024-03-01"; null when there is no usable year. */
+function yearOf(iso?: string | null): number | null {
+  const y = Number(String(iso ?? '').slice(0, 4));
+  return Number.isInteger(y) && y > 1900 ? y : null;
+}
+
 /** The stored JSON, if it is a CV profile at all. */
 function readProfile(value: unknown): CvProfile | null {
   if (!value || typeof value !== 'object') return null;
@@ -255,6 +267,29 @@ export function buildCandidateBrief(
   const education = (profile?.education ?? [])
     .map(educationRow)
     .filter((row): row is CandidateBriefEducation => row !== null)
+    // BDJobs v2 sends certifications and training as their own lists. They
+    // belong in the sheet's "Professional Certifications" block, beside the
+    // courses the education list already yields.
+    .concat(
+      (profile?.certifications ?? [])
+        .filter((c) => clean(c.name))
+        .map((c) => ({
+          degree: clean(c.name)!,
+          institute: clean([c.institute, c.location].filter(Boolean).join(', ')),
+          year: yearOf(c.to ?? c.from),
+          result: null,
+          kind: 'certification' as const,
+        })),
+      (profile?.training ?? [])
+        .filter((t) => clean(t.title))
+        .map((t) => ({
+          degree: clean(t.title)!,
+          institute: clean(t.institute),
+          year: t.year ?? null,
+          result: clean(t.duration),
+          kind: 'certification' as const,
+        })),
+    )
     // Most recent first: the qualification that matters is the latest one,
     // and sources disagree about the order they send them in.
     .sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
@@ -296,17 +331,21 @@ export function buildCandidateBrief(
       clean(contact.currentLocation) ??
       clean(contact.permanentAddress),
     age: ageFrom(personal?.dateOfBirth),
+    ageEstimate: null,
     education,
     employment,
     companies,
     totalService: clean(summary?.totalExperienceLabel) ?? computedService,
     empty: false,
   };
+  if (brief.age === null)
+    brief.ageEstimate = estimateAge(profile?.education ?? []);
   brief.empty =
     !brief.phone &&
     !brief.email &&
     !brief.address &&
     brief.age === null &&
+    brief.ageEstimate === null &&
     !brief.totalService &&
     education.length === 0 &&
     employment.length === 0;

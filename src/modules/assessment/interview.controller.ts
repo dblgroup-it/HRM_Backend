@@ -233,7 +233,12 @@ export class InterviewController {
     @Body() dto: AddPanelistsDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.interviews.addPanelists(roundId, dto.panelistUserIds, user.id);
+    return this.interviews.addPanelists(
+      roundId,
+      dto.panelistUserIds,
+      user.id,
+      dto.fromHr ?? false,
+    );
   }
 
   /** What the candidate earns now and what they are asking for. */
@@ -243,7 +248,25 @@ export class InterviewController {
     @Body() dto: CandidatePackageDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.interviews.setCandidatePackage(candidateId, user.id, dto);
+    return this.interviews.setCandidatePackage(
+      candidateId,
+      { id: user.id, name: user.name },
+      dto,
+    );
+  }
+
+  /** An HR panelist saves the facilities from My Interviews. */
+  @Patch('my-interviews/:roundId/facilities')
+  saveFacilities(
+    @Param('roundId') roundId: string,
+    @Body() dto: CandidatePackageDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.saveFacilitiesAsPanelist(
+      roundId,
+      { id: user.id, name: user.name },
+      dto,
+    );
   }
 
   /** Turn the candidate down from the interview screen, at any round. */

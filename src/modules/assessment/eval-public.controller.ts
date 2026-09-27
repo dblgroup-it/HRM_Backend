@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 
 import { Public } from '../../common/decorators/public.decorator';
 import { InterviewService } from './interview.service';
-import { SubmitEvaluationDto } from './dto/interview.dto';
+import { CandidatePackageDto, SubmitEvaluationDto } from './dto/interview.dto';
 
 /** Public, token-linked evaluation endpoints (no login required). */
 @Controller('eval')
@@ -23,6 +23,14 @@ export class EvalPublicController {
   @Post(':token')
   submit(@Param('token') token: string, @Body() dto: SubmitEvaluationDto) {
     return this.interviews.submitEvalByToken(token, dto);
+  }
+
+  /** An HR panelist on this link saves the candidate's facilities. */
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Patch(':token/facilities')
+  saveFacilities(@Param('token') token: string, @Body() dto: CandidatePackageDto) {
+    return this.interviews.saveFacilitiesByToken(token, dto);
   }
 
   /**

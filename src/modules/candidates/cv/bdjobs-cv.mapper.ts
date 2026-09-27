@@ -1,4 +1,13 @@
-import type { CvEducation, CvEmployment, CvProfile } from './cv-profile.types';
+import type {
+  CvCertification,
+  CvEducation,
+  CvEmployment,
+  CvLanguage,
+  CvProfile,
+  CvReference,
+  CvSkill,
+  CvTraining,
+} from './cv-profile.types';
 
 /**
  * Bdjobs' candidate payload, exactly as they send it.
@@ -11,6 +20,64 @@ export interface BdJobsCandidateData {
   personalData?: Record<string, unknown>;
   EmploymentHistory?: Record<string, unknown>[];
   qualifications?: Record<string, unknown>[];
+  // Added with the 51-field parameter list (v2). All optional; a payload
+  // without them is read exactly as before.
+  trainings?: unknown;
+  professionalQualifications?: unknown;
+  careerInfo?: unknown;
+  skills?: unknown;
+  languages?: unknown;
+  references?: unknown;
+}
+
+/** Rows that are objects; anything else in the array is dropped. */
+function rows(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v)
+    ? v.filter(
+        (r): r is Record<string, unknown> =>
+          typeof r === 'object' && r !== null && !Array.isArray(r),
+      )
+    : [];
+}
+
+/** The first of several spellings that holds something. */
+function pick(row: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = text(row[k]);
+    if (v) return tidy(v);
+  }
+  return undefined;
+}
+
+/**
+ * A list sent as an array, or as one string separated by commas or pipes —
+ * Bdjobs uses both for multi-select answers.
+ */
+function list(v: unknown): string[] | undefined {
+  const parts = Array.isArray(v)
+    ? v.map((x) => text(x))
+    : (text(v) ?? '').split(/[|,]/).map((x) => text(x));
+  const out = [...new Set(parts.filter((x): x is string => Boolean(x)).map(tidy))];
+  return out.length ? out : undefined;
+}
+
+/** Height or weight: a positive number, from "1.72" or 1.72. */
+function measure(v: unknown): number | undefined {
+  const n = positiveNumber(typeof v === 'string' ? v.replace(/[^\d.]/g, '') : v);
+  return n ? Math.round(n * 100) / 100 : undefined;
+}
+
+/** Only an http(s) link is kept — anything else is not a profile URL. */
+function link(v: unknown): string | undefined {
+  const t = text(v);
+  if (!t) return undefined;
+  const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  try {
+    const u = new URL(withScheme);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.toString() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** "" , "   ", null, undefined → undefined. Everything else, trimmed. */
@@ -166,7 +233,10 @@ export function bdjobsToCvProfile(
         designation: text(e.designation)
           ? tidy(String(e.designation))
           : undefined,
-        role: text(e.role) ? tidy(String(e.role)) : undefined,
+        // Duties: `role` in the first version, `responsibilities` in v2.
+        role: pick(e, 'responsibilities', 'duties', 'role'),
+        location: pick(e, 'companyLocation', 'location', 'branch'),
+        expertise: pick(e, 'areaOfExpertise', 'expertise'),
         from,
         to,
         // Bdjobs has no "currently working" flag; an end date that has not
@@ -209,7 +279,10 @@ export function bdjobsToCvProfile(
         // the pass year — and with it the sheet's Education column — for every
         // candidate arriving from the live job board.
         passYear: positiveNumber(q.passYear ?? q.passingYear),
-        result: text(q.grade) ?? text(q.percentage),
+        result: educationResult(q),
+        major: pick(q, 'concentration', 'major', 'subject'),
+        duration: pick(q, 'duration'),
+        achievement: pick(q, 'achievement', 'achievements'),
       };
     }),
     (q) => `${q.institute}|${q.passYear ?? ''}|${q.result ?? ''}`,
@@ -230,10 +303,106 @@ export function bdjobsToCvProfile(
     warnings?.push(
       'personalData.emailId is empty — this candidate cannot be emailed from here.',
     );
-  if (text(p.Dob) && !isoDate(p.Dob))
+  if (text(p.Dob ?? p.dateOfBirth) && !isoDate(p.Dob ?? p.dateOfBirth))
     warnings?.push(
-      `personalData.Dob "${String(p.Dob)}" could not be read — expected dd/MM/yyyy.`,
+      `personalData.Dob "${String(p.Dob ?? p.dateOfBirth)}" could not be read — expected dd/MM/yyyy.`,
     );
+  for (const key of ['facebookUrl', 'linkedinUrl'] as const)
+    if (text(p[key]) && !link(p[key]))
+      warnings?.push(`personalData.${key} "${String(p[key])}" is not a web address and was ignored.`);
+
+  const training: CvTraining[] = rows(data.trainings)
+    .map((t, i) => {
+      const title = pick(t, 'title', 'trainingTitle');
+      if (!title) warnings?.push(`trainings[${i}] has no title and was ignored.`);
+      return {
+        title: title ?? '',
+        topic: pick(t, 'topic', 'topicsCovered'),
+        institute: pick(t, 'institute', 'institution'),
+        country: pick(t, 'country'),
+        location: pick(t, 'location'),
+        year: positiveNumber(t.year),
+        duration: pick(t, 'duration'),
+      };
+    })
+    .filter((t) => t.title)
+    .sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+
+  const certifications: CvCertification[] = rows(data.professionalQualifications)
+    .map((c, i) => {
+      const name = pick(c, 'certification', 'name', 'title');
+      if (!name)
+        warnings?.push(
+          `professionalQualifications[${i}] has no certification name and was ignored.`,
+        );
+      const from = isoDate(c.fromDate);
+      const to = isoDate(c.toDate);
+      if (text(c.fromDate) && !from)
+        warnings?.push(
+          `professionalQualifications[${i}].fromDate "${String(c.fromDate)}" could not be read — expected dd/MM/yyyy.`,
+        );
+      if (text(c.toDate) && !to)
+        warnings?.push(
+          `professionalQualifications[${i}].toDate "${String(c.toDate)}" could not be read — expected dd/MM/yyyy.`,
+        );
+      return {
+        name: name ?? '',
+        institute: pick(c, 'institute', 'institution'),
+        location: pick(c, 'location'),
+        from,
+        to,
+      };
+    })
+    .filter((c) => c.name);
+
+  const skills: CvSkill[] = dedupe(
+    rows(data.skills)
+      .map((k) => ({
+        name: pick(k, 'name', 'skill', 'fieldOfSkill') ?? '',
+        description: pick(k, 'description', 'skillDescription'),
+      }))
+      .filter((k) => k.name),
+    (k) => k.name,
+  );
+
+  const languages: CvLanguage[] = rows(data.languages)
+    .map((l) => ({
+      language: pick(l, 'language', 'name') ?? '',
+      reading: pick(l, 'reading'),
+      writing: pick(l, 'writing'),
+      speaking: pick(l, 'speaking'),
+    }))
+    .filter((l) => l.language);
+
+  const references: CvReference[] = rows(data.references)
+    .map((r, i) => {
+      const name = pick(r, 'name');
+      if (!name) warnings?.push(`references[${i}] has no name and was ignored.`);
+      return {
+        name: name ?? '',
+        organization: pick(r, 'organization', 'organisation', 'company'),
+        designation: pick(r, 'designation'),
+        relation: pick(r, 'relation'),
+        email: pick(r, 'email', 'emailId'),
+        phone: pick(r, 'phone', 'mobileNo', 'mobile'),
+        address: pick(r, 'address'),
+      };
+    })
+    .filter((r) => r.name);
+
+  const ci =
+    data.careerInfo && typeof data.careerInfo === 'object' && !Array.isArray(data.careerInfo)
+      ? (data.careerInfo as Record<string, unknown>)
+      : {};
+  const career = {
+    preferredJobCategories: list(ci.preferredJobCategories ?? ci.preferredJobCategory),
+    jobLevel: pick(ci, 'jobLevel', 'lookingFor'),
+    preferredDistricts: list(ci.preferredDistricts ?? ci.preferredDistrict),
+    preferredOrganizationTypes: list(
+      ci.preferredOrganizationTypes ?? ci.preferredOrganizationType,
+    ),
+  };
+  const hasCareer = Object.values(career).some(Boolean);
 
   // A job still running beats one that has ended, however recently.
   const latestJob = employment.find((e) => e.current) ?? employment[0];
@@ -250,12 +419,18 @@ export function bdjobsToCvProfile(
       middleName: text(p.middleName),
       lastName: text(p.lastName),
       fatherName: text(p.fatherName),
+      motherName: text(p.motherName),
       gender: text(p.gender),
-      dateOfBirth: isoDate(p.Dob),
-      maritalStatus: text(p.MaritalStatus),
-      bloodGroup: text(p.BloodGroup),
-      nationalId: text(p.aadharNo),
+      dateOfBirth: isoDate(p.Dob ?? p.dateOfBirth),
+      maritalStatus: text(p.MaritalStatus ?? p.maritalStatus),
+      bloodGroup: text(p.BloodGroup ?? p.bloodGroup),
+      nationalId: text(p.nationalId ?? p.aadharNo),
+      religion: text(p.religion),
+      nationality: text(p.nationality),
+      heightMeters: measure(p.heightMeters ?? p.height),
+      weightKg: measure(p.weightKg ?? p.weight),
     },
+    careerObjective: text(p.careerObjective) ? tidy(String(p.careerObjective)) : undefined,
     contact: {
       email: text(p.emailId),
       phone: phone || undefined,
@@ -265,12 +440,21 @@ export function bdjobsToCvProfile(
           .filter(Boolean)
           .join(', ') || undefined,
       permanentAddress: text(p.permanentAddress),
+      facebookUrl: link(p.facebookUrl),
+      linkedinUrl: link(p.linkedinUrl),
     },
     employment,
     education,
+    ...(training.length ? { training } : {}),
+    ...(certifications.length ? { certifications } : {}),
+    ...(skills.length ? { skills } : {}),
+    ...(languages.length ? { languages } : {}),
+    ...(references.length ? { references } : {}),
+    ...(hasCareer ? { career } : {}),
     compensation: {
-      current: positiveNumber(p.currentSalary),
-      expected: positiveNumber(p.expectedSalary),
+      // v1 sends these in personalData; v2 may send them under careerInfo.
+      current: positiveNumber(p.currentSalary ?? ci.presentSalary),
+      expected: positiveNumber(p.expectedSalary ?? ci.expectedSalary),
     },
     summary: {
       latestEducation: topEducation
@@ -281,7 +465,15 @@ export function bdjobsToCvProfile(
       totalExperienceYears: months
         ? Math.round((months / 12) * 10) / 10
         : undefined,
-      totalExperienceLabel: experienceLabel(months),
+      statedExperienceYears: positiveNumber(p.totalExperienceYears),
+      // Computed from the job dates where there are any. With none, what the
+      // candidate stated is printed — marked as such, so it is never read as
+      // a figure somebody checked.
+      totalExperienceLabel:
+        experienceLabel(months) ??
+        (positiveNumber(p.totalExperienceYears)
+          ? `${positiveNumber(p.totalExperienceYears)} years (stated)`
+          : undefined),
       lastOrganization: latestJob?.company,
       lastDesignation: latestJob?.designation,
       currentlyEmployed: employment.some((e) => e.current),
@@ -293,4 +485,15 @@ export function bdjobsToCvProfile(
       currentCompanyName: text(p.currentCompanyName),
     },
   };
+}
+
+/**
+ * The result as a reader wants it: "3.50 out of 4", "A+ out of 5", or the
+ * grade / percentage the first version sent.
+ */
+function educationResult(q: Record<string, unknown>): string | undefined {
+  const result = text(q.result) ?? text(q.grade) ?? text(q.percentage);
+  if (!result) return undefined;
+  const scale = text(q.resultScale ?? q.scale ?? q.outOf);
+  return scale && !/out of/i.test(result) ? `${result} out of ${scale}` : result;
 }

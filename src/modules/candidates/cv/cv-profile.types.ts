@@ -24,13 +24,22 @@ export interface CvProfile {
     middleName?: string;
     lastName?: string;
     fatherName?: string;
+    motherName?: string;
     gender?: string;
     /** ISO date (yyyy-mm-dd) — sources send several formats. */
     dateOfBirth?: string;
     maritalStatus?: string;
     bloodGroup?: string;
     nationalId?: string;
+    religion?: string;
+    nationality?: string;
+    /** Metres, e.g. 1.72. */
+    heightMeters?: number;
+    weightKg?: number;
   };
+
+  /** The candidate's own statement of what they are looking for. */
+  careerObjective?: string;
 
   contact: {
     email?: string;
@@ -39,10 +48,28 @@ export interface CvProfile {
     currentLocation?: string;
     currentAddress?: string;
     permanentAddress?: string;
+    facebookUrl?: string;
+    linkedinUrl?: string;
   };
 
   employment: CvEmployment[];
   education: CvEducation[];
+  /** Courses and workshops — "Training Summary" on a Bdjobs CV. */
+  training?: CvTraining[];
+  /** Professional certifications — "Professional Qualification". */
+  certifications?: CvCertification[];
+  skills?: CvSkill[];
+  languages?: CvLanguage[];
+  references?: CvReference[];
+
+  /** "Career and Application Information" — what they are applying for. */
+  career?: {
+    preferredJobCategories?: string[];
+    /** "Entry", "Mid", "Top" — Bdjobs' "Looking For". */
+    jobLevel?: string;
+    preferredDistricts?: string[];
+    preferredOrganizationTypes?: string[];
+  };
 
   compensation: {
     /** Monthly, in the source's currency. Absent when the source sent 0. */
@@ -68,6 +95,12 @@ export interface CvProfile {
     latestEducation?: string;
     /** Years of real experience, overlapping jobs counted once. */
     totalExperienceYears?: number;
+    /**
+     * What the candidate said their experience is. Kept apart from the figure
+     * computed from the job dates: the two disagree often enough that the
+     * sheet must never print one as if it were the other.
+     */
+    statedExperienceYears?: number;
     /** The same figure written the way the approval sheet prints it. */
     totalExperienceLabel?: string;
     lastOrganization?: string;
@@ -89,6 +122,10 @@ export interface CvEmployment {
   to?: string;
   /** Still there — no end date, or one that has not arrived yet. */
   current: boolean;
+  /** Branch or city — "Company Location" on a Bdjobs CV. */
+  location?: string;
+  /** "Area of Expertise" for this post. */
+  expertise?: string;
 }
 
 export interface CvEducation {
@@ -98,6 +135,54 @@ export interface CvEducation {
   degree?: string;
   country?: string;
   passYear?: number;
-  /** "45%", "CGPA 3.5", "A" — sources disagree, so it stays a string. */
+  /** "45%", "CGPA 3.5 out of 4" — sources disagree, so it stays a string. */
   result?: string;
+  /** Concentration / major, e.g. "Accounting". */
+  major?: string;
+  /** e.g. "4 years" — often blank on a Bdjobs CV. */
+  duration?: string;
+  achievement?: string;
+}
+
+export interface CvTraining {
+  title: string;
+  topic?: string;
+  institute?: string;
+  country?: string;
+  location?: string;
+  year?: number;
+  /** As written, e.g. "2 weeks". */
+  duration?: string;
+}
+
+export interface CvCertification {
+  name: string;
+  institute?: string;
+  location?: string;
+  /** ISO date (yyyy-mm-dd). */
+  from?: string;
+  to?: string;
+}
+
+export interface CvSkill {
+  name: string;
+  description?: string;
+}
+
+export interface CvLanguage {
+  language: string;
+  /** "High" / "Medium" / "Low", as Bdjobs rates them. */
+  reading?: string;
+  writing?: string;
+  speaking?: string;
+}
+
+export interface CvReference {
+  name: string;
+  organization?: string;
+  designation?: string;
+  relation?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
 }

@@ -36,6 +36,7 @@ import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import type { CvProfile } from './cv/cv-profile.types';
 import { buildCvDocument } from './cv/cv-document';
+import { photoDataUri } from './cv/candidate-photo';
 import { cvProfileToText } from './cv/cv-text';
 import { extractedCvToProfile } from './cv/cv-extract';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
@@ -588,7 +589,11 @@ export class CandidatesService {
         'No structured CV is stored for this candidate, so there is nothing to render. Upload a CV file instead.',
       );
     }
-    return buildCvDocument(profile);
+    const photo = await this.prisma.candidatePhoto.findUnique({
+      where: { candidateId },
+      select: { mimeType: true, data: true },
+    });
+    return buildCvDocument(profile, new Date(), photo ? photoDataUri(photo) : null);
   }
 
   /**

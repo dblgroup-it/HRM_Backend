@@ -128,6 +128,15 @@ export class ScheduleInterviewDto {
   @IsString({ each: true })
   panelistUserIds!: string[];
 
+  /**
+   * Which of `panelistUserIds` sit on the panel for HR. Optional: omitted,
+   * everyone is "from another department", as before this existed.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  hrPanelistUserIds?: string[];
+
   @IsOptional()
   @IsBoolean()
   notifyCandidate?: boolean;
@@ -163,6 +172,15 @@ export class UpdateInterviewDto {
   @IsArray()
   @IsString({ each: true })
   panelistUserIds?: string[];
+
+  /**
+   * Which of `panelistUserIds` sit on the panel for HR. Optional: omitted,
+   * everyone is "from another department", as before this existed.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  hrPanelistUserIds?: string[];
 }
 
 export class BulkScheduleInterviewDto {
@@ -191,6 +209,15 @@ export class BulkScheduleInterviewDto {
   @IsArray()
   @IsString({ each: true })
   panelistUserIds!: string[];
+
+  /**
+   * Which of `panelistUserIds` sit on the panel for HR. Optional: omitted,
+   * everyone is "from another department", as before this existed.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  hrPanelistUserIds?: string[];
 
   @IsOptional()
   @IsBoolean()
@@ -240,6 +267,11 @@ export class AddPanelistsDto {
   @ArrayMinSize(1)
   @IsString({ each: true })
   panelistUserIds!: string[];
+
+  /** Add them to the panel as "from HR". */
+  @IsOptional()
+  @IsBoolean()
+  fromHr?: boolean;
 }
 
 /**
@@ -283,6 +315,16 @@ export class CandidatePackageDto {
   @IsString()
   @MaxLength(200)
   transportPickup?: string | null;
+
+  /**
+   * The `updatedAt` of the values this form was showing. Several HR
+   * interviewers can fill the same record; a save based on values a colleague
+   * has since changed is refused rather than silently overwriting theirs.
+   * Null when the form was empty. Omitted by older screens, which skip the check.
+   */
+  @IsOptional()
+  @IsString()
+  baseUpdatedAt?: string | null;
 }
 
 /** Why the candidate is being turned down at the interview stage. */

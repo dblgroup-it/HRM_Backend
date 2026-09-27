@@ -42,6 +42,10 @@ function jobLines(job: CvEmployment, index: number): string[] {
     .filter(Boolean)
     .join(' at ');
   const out = [`${index + 1}. ${head || 'Role not stated'} (${period(job)})`];
+  const location = text(job.location);
+  if (location) out.push(`   Location: ${location}`);
+  const expertise = text(job.expertise);
+  if (expertise) out.push(`   Area of expertise: ${expertise}`);
   const role = text(job.role);
   if (role) out.push(`   Responsibilities: ${role}`);
   return out;
@@ -50,6 +54,7 @@ function jobLines(job: CvEmployment, index: number): string[] {
 function eduLine(e: CvEducation, index: number): string {
   const parts = [
     text(e.degree),
+    text(e.major) ? `major ${text(e.major)}` : null,
     text(e.institute),
     // Bdjobs often repeats the institute as the university; the mapper drops
     // it when it does, so anything left here is genuinely different.
@@ -57,6 +62,7 @@ function eduLine(e: CvEducation, index: number): string {
     e.passYear ? `passed ${e.passYear}` : null,
     text(e.result) ? `result ${text(e.result)}` : null,
     text(e.country),
+    text(e.achievement) ? `achievement: ${text(e.achievement)}` : null,
   ].filter(Boolean);
   return `${index + 1}. ${parts.join(' · ') || 'Qualification not stated'}`;
 }
@@ -76,6 +82,7 @@ export function cvProfileToText(profile: CvProfile): string {
     text(p.gender) && `Gender: ${text(p.gender)}`,
     text(p.dateOfBirth) && `Date of birth: ${text(p.dateOfBirth)}`,
     text(p.maritalStatus) && `Marital status: ${text(p.maritalStatus)}`,
+    text(p.nationality) && `Nationality: ${text(p.nationality)}`,
     text(c.email) && `Email: ${text(c.email)}`,
     text(c.phone) && `Phone: ${text(c.phone)}`,
     text(c.currentLocation) && `Current location: ${text(c.currentLocation)}`,
@@ -116,6 +123,77 @@ export function cvProfileToText(profile: CvProfile): string {
     );
   } else {
     blocks.push('EDUCATION\nNone stated in the application.');
+  }
+
+  const objective = text(profile.careerObjective);
+  if (objective) blocks.splice(1, 0, `CAREER OBJECTIVE\n${objective}`);
+  if (s.statedExperienceYears)
+    blocks.push(
+      `STATED EXPERIENCE\nThe candidate states ${s.statedExperienceYears} years of experience.`,
+    );
+
+  const training = profile.training ?? [];
+  if (training.length)
+    blocks.push(
+      `TRAINING\n${training
+        .map(
+          (t, i) =>
+            `${i + 1}. ${[
+              text(t.title),
+              text(t.topic),
+              text(t.institute),
+              [text(t.location), text(t.country)].filter(Boolean).join(', ') || null,
+              t.year ? String(t.year) : null,
+              text(t.duration),
+            ]
+              .filter(Boolean)
+              .join(' · ')}`,
+        )
+        .join('\n')}`,
+    );
+
+  const certs = profile.certifications ?? [];
+  if (certs.length)
+    blocks.push(
+      `PROFESSIONAL CERTIFICATIONS\n${certs
+        .map(
+          (c, i) =>
+            `${i + 1}. ${[text(c.name), text(c.institute), text(c.location), [monthYear(c.from), monthYear(c.to)].filter(Boolean).join(' – ') || null]
+              .filter(Boolean)
+              .join(' · ')}`,
+        )
+        .join('\n')}`,
+    );
+
+  const skills = profile.skills ?? [];
+  if (skills.length)
+    blocks.push(
+      `SKILLS\n${skills
+        .map((k) => (text(k.description) ? `${text(k.name)}: ${text(k.description)}` : text(k.name)))
+        .join('\n')}`,
+    );
+
+  const languages = profile.languages ?? [];
+  if (languages.length)
+    blocks.push(
+      `LANGUAGES\n${languages
+        .map(
+          (l) =>
+            `${text(l.language)} — reading ${text(l.reading) ?? '?'}, writing ${text(l.writing) ?? '?'}, speaking ${text(l.speaking) ?? '?'}`,
+        )
+        .join('\n')}`,
+    );
+
+  const career = profile.career;
+  if (career) {
+    const lines = [
+      career.preferredJobCategories?.length && `Preferred job category: ${career.preferredJobCategories.join(', ')}`,
+      text(career.jobLevel) && `Looking for: ${text(career.jobLevel)} level`,
+      career.preferredDistricts?.length && `Preferred district: ${career.preferredDistricts.join(', ')}`,
+      career.preferredOrganizationTypes?.length &&
+        `Preferred organization type: ${career.preferredOrganizationTypes.join(', ')}`,
+    ].filter(Boolean);
+    if (lines.length) blocks.push(`CAREER PREFERENCES\n${lines.join('\n')}`);
   }
 
   return blocks.join('\n\n');

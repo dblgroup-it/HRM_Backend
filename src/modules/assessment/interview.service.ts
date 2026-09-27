@@ -61,6 +61,11 @@ import { listTests, unmarkedTests } from './tests-gate';
 import { FACTORY_HR_HEAD_ROLE_KEY } from './first-interview-approval';
 import { benefitsConflict, normaliseBenefits } from './candidate-benefits';
 import {
+  facilitiesConflict,
+  facilitiesView,
+  type FacilitiesView,
+} from './facilities';
+import {
   formatSlotShort,
   panelNotice,
   type PanelEmailInput,
@@ -109,6 +114,17 @@ type RoundFull = Prisma.InterviewRoundGetPayload<{
 }>;
 
 /** The requisition fields a panel notice prints. */
+/** The facilities fields and who last saved them. */
+const FACILITIES_SELECT = {
+  presentSalary: true,
+  salaryExpectation: true,
+  salaryBenefitsNote: true,
+  salaryBenefits: true,
+  transportPickup: true,
+  packageUpdatedAt: true,
+  packageUpdatedByName: true,
+} satisfies Prisma.CandidateSelect;
+
 const PANEL_REQ_SELECT = {
   code: true,
   designation: true,
@@ -246,6 +262,7 @@ export class InterviewService {
         panelists: {
           create: [...new Set(dto.panelistUserIds)].map((uid) => ({
             userId: uid,
+            fromHr: (dto.hrPanelistUserIds ?? []).includes(uid),
           })),
         },
       },
@@ -326,6 +343,7 @@ export class InterviewService {
           scheduledAt: dto.scheduledAts?.[i],
           location: dto.location,
           panelistUserIds: dto.panelistUserIds,
+          hrPanelistUserIds: dto.hrPanelistUserIds,
           notifyCandidate: dto.notifyCandidate,
           // Held back and sent once below, covering the whole batch.
           notifyPanel: false,
@@ -412,7 +430,12 @@ export class InterviewService {
    * adding someone to it afterwards mints an evaluation link for an interview
    * they never attended.
    */
-  async addPanelists(roundId: string, userIds: string[], actorId: string) {
+  async addPanelists(
+    roundId: string,
+    userIds: string[],
+    actorId: string,
+    fromHr = false,
+  ) {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
       include: {
@@ -453,7 +476,7 @@ export class InterviewService {
     }
 
     await this.prisma.interviewPanelist.createMany({
-      data: fresh.map((userId) => ({ roundId, userId })),
+      data: fresh.map((userId) => ({ roundId, userId, fromHr })),
       skipDuplicates: true,
     });
     await this.generateEvalTokens(roundId, fresh, round.scheduledAt);
@@ -500,7 +523,7 @@ export class InterviewService {
             coverUntil: true,
           },
         },
-        panelists: { select: { userId: true } },
+        panelists: { select: { userId: true, fromHr: true } },
       },
     });
     if (!round) throw new NotFoundException('Interview not found');
@@ -549,6 +572,13 @@ export class InterviewService {
     const newPanelistIds = dto.panelistUserIds
       ? [...new Set(dto.panelistUserIds)]
       : null;
+    // Who sits for HR: as sent, or — when the screen did not say — as they
+    // were, so re-saving a panel from an older form does not wipe the marks.
+    const wasHr = new Set(
+      round.panelists.filter((p) => p.fromHr).map((p) => p.userId),
+    );
+    const isHr = (uid: string) =>
+      dto.hrPanelistUserIds ? dto.hrPanelistUserIds.includes(uid) : wasHr.has(uid);
 
     await this.prisma.interviewRound.update({
       where: { id: roundId },
@@ -568,12 +598,29 @@ export class InterviewService {
           ? {
               panelists: {
                 deleteMany: {},
-                create: newPanelistIds.map((uid) => ({ userId: uid })),
+                create: newPanelistIds.map((uid) => ({
+                  userId: uid,
+                  fromHr: isHr(uid),
+                })),
               },
             }
           : {}),
       },
     });
+
+    // Only the HR marks changed, not who is on the panel.
+    if (!newPanelistIds && dto.hrPanelistUserIds) {
+      await this.prisma.$transaction([
+        this.prisma.interviewPanelist.updateMany({
+          where: { roundId, userId: { in: dto.hrPanelistUserIds } },
+          data: { fromHr: true },
+        }),
+        this.prisma.interviewPanelist.updateMany({
+          where: { roundId, userId: { notIn: dto.hrPanelistUserIds } },
+          data: { fromHr: false },
+        }),
+      ]);
+    }
 
     // Sync evaluation tokens when panelists change.
     if (newPanelistIds) {
@@ -665,6 +712,7 @@ export class InterviewService {
             cvFileId: true,
             cvAddress: true,
             cvProfile: true,
+            ...FACILITIES_SELECT,
           },
         },
         requisition: {
@@ -676,6 +724,7 @@ export class InterviewService {
           },
         },
         evaluations: { where: { evaluatorId: userId } },
+        panelists: { where: { userId }, select: { fromHr: true } },
       },
       /**
        * Most recent first.
@@ -705,8 +754,12 @@ export class InterviewService {
 
     return rounds.map((r) => {
       const mine = r.evaluations[0];
+      const fromHr = r.panelists[0]?.fromHr ?? false;
       return {
         id: r.id,
+        /** Sits for HR on this panel — the form shows the facilities section. */
+        fromHr,
+        facilities: fromHr ? facilitiesView(r.candidate) : null,
         kind: r.kind.toLowerCase(),
         mode: r.mode.toLowerCase(),
         scheduledAt: r.scheduledAt?.toISOString() ?? null,
@@ -861,8 +914,10 @@ export class InterviewService {
                 phone: true,
                 cvAddress: true,
                 cvProfile: true,
+                ...FACILITIES_SELECT,
               },
             },
+            panelists: { select: { userId: true, fromHr: true } },
             requisition: {
               select: {
                 designation: true,
@@ -916,10 +971,17 @@ export class InterviewService {
       },
     });
 
+    const fromHr = et.round.panelists.some(
+      (p) => p.userId === et.panelistUserId && p.fromHr,
+    );
     return {
       status: et.status,
       alreadySubmitted: !!existingEval,
       panelistName: et.panelistUser.name,
+      /** Sits for HR on this panel — the form shows the facilities section. */
+      fromHr,
+      // Only to HR: salary figures are not the rest of the panel's business.
+      facilities: fromHr ? facilitiesView(et.round.candidate) : null,
       candidate: {
         name: et.round.candidate.name,
         // Scoped to this evaluation token. The panelist has no login, so the
@@ -1458,10 +1520,43 @@ export class InterviewService {
    */
   async setCandidatePackage(
     candidateId: string,
-    actorId: string,
+    actor: { id: string; name: string },
     dto: CandidatePackageDto,
   ) {
-    const cand = await this.loadCandidate(candidateId, actorId);
+    const cand = await this.loadCandidate(candidateId, actor.id);
+    return this.writeFacilities(cand.id, cand.requisitionId, actor, dto);
+  }
+
+  /**
+   * The one place the facilities fields are written — the recruiter's modal,
+   * the delegate's card and an HR panelist's evaluation form all come here,
+   * so the stamp and the overwrite check cannot be skipped by any of them.
+   */
+  private async writeFacilities(
+    candidateId: string,
+    requisitionId: string,
+    actor: { id: string; name: string },
+    dto: CandidatePackageDto,
+  ): Promise<FacilitiesView> {
+    const current = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: {
+        packageUpdatedAt: true,
+        packageUpdatedById: true,
+        packageUpdatedByName: true,
+      },
+    });
+    const conflict = facilitiesConflict(
+      dto.baseUpdatedAt,
+      {
+        at: current?.packageUpdatedAt ?? null,
+        byName: current?.packageUpdatedByName ?? null,
+        byId: current?.packageUpdatedById ?? null,
+      },
+      actor.id,
+    );
+    if (conflict) throw new ConflictException(conflict);
+
     // `null` clears, `undefined` leaves alone — the form sends only what it
     // touched, so a blank benefits note must not wipe a salary figure.
     const data: Prisma.CandidateUpdateInput = {};
@@ -1473,29 +1568,89 @@ export class InterviewService {
       data.salaryBenefitsNote = dto.salaryBenefitsNote?.trim() || null;
     }
     if (dto.salaryBenefits !== undefined) {
-      const conflict = benefitsConflict(dto.salaryBenefits);
-      if (conflict) throw new BadRequestException(conflict);
+      const clash = benefitsConflict(dto.salaryBenefits);
+      if (clash) throw new BadRequestException(clash);
       data.salaryBenefits = normaliseBenefits(dto.salaryBenefits);
     }
     if (dto.transportPickup !== undefined) {
       data.transportPickup = dto.transportPickup?.trim() || null;
     }
+    data.packageUpdatedAt = new Date();
+    data.packageUpdatedById = actor.id;
+    data.packageUpdatedByName = actor.name.slice(0, 150);
+
     const updated = await this.prisma.candidate.update({
-      where: { id: cand.id },
+      where: { id: candidateId },
       data,
-      select: {
-        id: true,
-        presentSalary: true,
-        salaryExpectation: true,
-        salaryBenefitsNote: true,
-        salaryBenefits: true,
-        transportPickup: true,
-      },
+      select: FACILITIES_SELECT,
     });
-    this.notifications.broadcastChange('candidate', cand.requisitionId, {
+    this.notifications.broadcastChange('candidate', requisitionId, {
       action: 'candidate_package',
     });
-    return updated;
+    return facilitiesView(updated);
+  }
+
+  /**
+   * An HR panelist's own facilities form, from the evaluation screen.
+   *
+   * Only a panelist this round lists as "from HR" may write it — the rest of
+   * the panel never sees the section. The emailed-link path passes the
+   * token's panelist; My Interviews passes the signed-in user.
+   */
+  private async hrPanelistFacilities(
+    roundId: string,
+    userId: string,
+  ): Promise<{ candidateId: string; requisitionId: string }> {
+    const row = await this.prisma.interviewPanelist.findUnique({
+      where: { roundId_userId: { roundId, userId } },
+      select: {
+        fromHr: true,
+        round: { select: { candidateId: true, requisitionId: true, status: true } },
+      },
+    });
+    if (!row) throw new ForbiddenException('You are not on this interview panel.');
+    if (!row.fromHr)
+      throw new ForbiddenException(
+        'The facilities section is filled by the interviewers from HR on this panel.',
+      );
+    if (row.round.status === 'CANCELLED')
+      throw new BadRequestException('This interview was cancelled.');
+    return {
+      candidateId: row.round.candidateId,
+      requisitionId: row.round.requisitionId,
+    };
+  }
+
+  /** My Interviews: an HR panelist saves the facilities. */
+  async saveFacilitiesAsPanelist(
+    roundId: string,
+    actor: { id: string; name: string },
+    dto: CandidatePackageDto,
+  ) {
+    const { candidateId, requisitionId } = await this.hrPanelistFacilities(roundId, actor.id);
+    return this.writeFacilities(candidateId, requisitionId, actor, dto);
+  }
+
+  /** Emailed link: an HR panelist saves the facilities. The token is the credential. */
+  async saveFacilitiesByToken(token: string, dto: CandidatePackageDto) {
+    const et = await this.prisma.evaluationToken.findFirst({
+      where: tokenLookupWhere(token),
+      select: {
+        roundId: true,
+        status: true,
+        expiresAt: true,
+        panelistUser: { select: { id: true, name: true } },
+      },
+    });
+    if (!et) throw new NotFoundException('Evaluation link not found');
+    if (et.status !== 'submitted' && et.expiresAt < new Date()) {
+      throw new GoneException('This evaluation link has expired. Please contact HR.');
+    }
+    const { candidateId, requisitionId } = await this.hrPanelistFacilities(
+      et.roundId,
+      et.panelistUser.id,
+    );
+    return this.writeFacilities(candidateId, requisitionId, et.panelistUser, dto);
   }
 
   /**
@@ -2369,6 +2524,9 @@ export class InterviewService {
         salaryBenefits: r.candidate.salaryBenefits,
         /** Where they are picked up from, if transport comes with the post. */
         transportPickup: r.candidate.transportPickup,
+        /** Who last saved the facilities, so a second HR interviewer sees it. */
+        packageUpdatedAt: r.candidate.packageUpdatedAt?.toISOString() ?? null,
+        packageUpdatedByName: r.candidate.packageUpdatedByName,
       },
       // So the worklist can show "not scheduled yet" versus an existing round.
       rounds: r.candidate.interviews.map((i) => ({
@@ -2510,6 +2668,8 @@ function serializeRound(r: RoundFull) {
         userId: p.userId,
         name: p.user.name,
         designation: p.user.employee?.designation ?? null,
+        /** Sits on this panel for HR — sees the facilities section. */
+        fromHr: p.fromHr,
         hasMarked: evaluated.has(p.userId),
         tokenStatus: tok?.status ?? null,
         evalLink: tok?.token ? evalLink(tok.token) : null,
