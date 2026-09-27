@@ -10,25 +10,17 @@
  * Decorator-free so the spec can import it.
  */
 
-export const AUDIT_RETENTION_DAYS = 30;
+import { retentionCutoff } from '../../common/util/retention-cutoff';
 
-/** Bangladesh has no daylight saving: UTC+6 all year. */
-const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const AUDIT_RETENTION_DAYS = 30;
 
 /**
  * The first instant that is kept. Every entry created before it is deleted.
+ * The day-counting rule is shared with the notification cleanup.
  */
 export function auditRetentionCutoff(
   now: Date,
   days: number = AUDIT_RETENTION_DAYS,
 ): Date {
-  if (!Number.isInteger(days) || days < 1) {
-    throw new RangeError('days must be a whole number of at least 1');
-  }
-  // Shift into Dhaka wall-clock time, drop to that day's midnight, step back
-  // (days − 1) days so today counts as the first of them, and shift back.
-  const local = now.getTime() + DHAKA_OFFSET_MS;
-  const localMidnight = local - (((local % DAY_MS) + DAY_MS) % DAY_MS);
-  return new Date(localMidnight - (days - 1) * DAY_MS - DHAKA_OFFSET_MS);
+  return retentionCutoff(now, days);
 }

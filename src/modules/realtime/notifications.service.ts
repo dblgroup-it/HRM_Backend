@@ -1,9 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { EventsGateway } from './events.gateway';
+import {
+  cutoffDay,
+  retentionCutoff,
+} from '../../common/util/retention-cutoff';
+
+/** Notifications are kept this many calendar days, today included. */
+export const NOTIFICATION_RETENTION_DAYS = 60;
 
 export interface NotifyEmail {
   subject: string;
@@ -40,6 +48,45 @@ export class NotificationsService {
     private readonly mail: MailService,
     private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Every night: delete notifications older than 60 days, read or not.
+   *
+   * A bell holding a year of "Candidate assigned" is a bell nobody reads, and
+   * the requisition itself keeps its own history — a notification is a nudge,
+   * not the record. Runs in Dhaka time whatever the server clock says; in
+   * batches so a first run over a large backlog never holds one long lock on a
+   * table every action writes to. Never throws: a failed night is retried the
+   * next one.
+   */
+  @Cron('20 3 * * *', { name: 'notification-retention', timeZone: 'Asia/Dhaka' })
+  async purgeExpired(now: Date = new Date()): Promise<number> {
+    const cutoff = retentionCutoff(now, NOTIFICATION_RETENTION_DAYS);
+    let removed = 0;
+    try {
+      for (;;) {
+        const n = await this.prisma.$executeRaw`
+          DELETE FROM "notifications"
+           WHERE "id" IN (
+             SELECT "id" FROM "notifications"
+              WHERE "created_at" < ${cutoff}
+              LIMIT 5000
+           )`;
+        removed += n;
+        if (n < 5000) break;
+      }
+    } catch (e) {
+      this.logger.error(
+        `Notification cleanup failed after removing ${removed}: ${(e as Error).message}`,
+      );
+      return removed;
+    }
+    if (removed > 0)
+      this.logger.log(
+        `Notification cleanup: removed ${removed} older than ${cutoffDay(cutoff)} (keeping ${NOTIFICATION_RETENTION_DAYS} days)`,
+      );
+    return removed;
+  }
 
   /** Persist a notification for a user, push it live, and optionally email it. */
   async notify(userId: string, input: NotifyInput): Promise<void> {
