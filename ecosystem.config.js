@@ -23,15 +23,18 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
 
-      // Restart a worker that leaks past 1 GB (safety net)
-      max_memory_restart: '1G',
+      // Restart a worker that leaks past 1.5 GB (safety net). Sized for the
+      // prod box (4 cores, 5.7 GB RAM): leaves room for PostgreSQL and the
+      // Chromium that each PDF letter starts.
+      max_memory_restart: '1500M',
 
       // Never restart more than 10× in 60 s (prevents crash loop)
       max_restarts: 10,
       min_uptime: '10s',
 
-      // Always production
-      node_args: '--max-old-space-size=512',
+      // Always production. Heap cap below max_memory_restart, so a leak is
+      // caught by PM2's restart rather than a V8 out-of-memory crash.
+      node_args: '--max-old-space-size=1024',
       env: {
         NODE_ENV: 'production',
       },
