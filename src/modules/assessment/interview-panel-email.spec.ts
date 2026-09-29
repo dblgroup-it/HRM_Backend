@@ -112,3 +112,29 @@ describe('interview panel email', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
   });
 });
+
+describe('interview panel email — rescheduled', () => {
+  const moved = panelNotice(
+    'SECOND',
+    req,
+    [{ round: round('Rabbi Hasan', second), path: '/evaluate/tok-a' }],
+    { from: first, reason: 'Panel chair travelling' },
+  )({ name: 'Ayesha Rahman', origin: 'https://hrm.dbl' });
+
+  it('says it moved, from when and why, and keeps the marking link', () => {
+    expect(moved.subject).toBe(
+      'Interview rescheduled: Rabbi Hasan — Senior Executive',
+    );
+    expect(moved.html).toContain('Interview Rescheduled');
+    expect(moved.html).toContain('previously');
+    expect(moved.html).toContain('11:36');
+    expect(moved.html).toContain('Reason: Panel chair travelling');
+    expect(moved.html).toContain('href="https://hrm.dbl/evaluate/tok-a"');
+    expect(moved.text).toContain('Rescheduled — previously');
+  });
+
+  it('leaves a first invitation as it was', () => {
+    expect(email.subject).not.toMatch(/rescheduled/i);
+    expect(email.html).not.toContain('Interview Rescheduled');
+  });
+});

@@ -66,16 +66,19 @@ import {
   type FacilitiesView,
 } from './facilities';
 import {
+  formatInterviewSlot,
   formatSlotShort,
   panelNotice,
   type PanelEmailInput,
 } from './interview-panel-email';
+import { rescheduleRefusal } from './reschedule';
 import {
   BulkScheduleInterviewDto,
   DelegationTestsDto,
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
+  RescheduleInterviewDto,
   AddPanelistsDto,
   CandidatePackageDto,
   RejectAtInterviewDto,
@@ -665,6 +668,126 @@ export class InterviewService {
     return fresh ? serializeRound(fresh) : { id: roundId };
   }
 
+  /**
+   * Move an arranged interview to a new time, and tell everyone.
+   *
+   * Editing a round already moved the calendar event, but nobody was told —
+   * a candidate would arrive at the old time. This is the deliberate version:
+   * the new slot (and venue or mode, if they changed), an optional reason,
+   * then an email to the candidate and a notice to every panelist with their
+   * unchanged marking link. Open to whoever runs the round: the recruiter
+   * side, or the Factory HR colleague a first interview was handed to.
+   */
+  async reschedule(
+    roundId: string,
+    actor: { id: string; name: string },
+    dto: RescheduleInterviewDto,
+  ) {
+    const round = await this.prisma.interviewRound.findUnique({
+      where: { id: roundId },
+      include: {
+        ...roundInclude,
+        requisition: {
+          select: {
+            ...PANEL_REQ_SELECT,
+            recruiterId: true,
+            coverRecruiterId: true,
+            coverUntil: true,
+          },
+        },
+      },
+    });
+    if (!round) throw new NotFoundException('Interview not found');
+    await this.requireInterviewAccess(round.candidateId, round.requisition, actor.id);
+
+    const to = toDate(dto.scheduledAt);
+    const refusal = rescheduleRefusal({
+      status: round.status,
+      evaluationCount: round.evaluations.length,
+      from: round.scheduledAt,
+      to,
+    });
+    if (refusal) throw new BadRequestException(refusal);
+
+    const reason = dto.reason?.trim() || null;
+    await this.prisma.interviewRound.update({
+      where: { id: roundId },
+      data: {
+        scheduledAt: to,
+        ...(dto.mode ? { mode: dto.mode.toUpperCase() as InterviewMode } : {}),
+        ...(dto.location !== undefined
+          ? { location: dto.location.trim() || null }
+          : {}),
+        previousScheduledAt: round.scheduledAt,
+        rescheduleCount: { increment: 1 },
+        rescheduleReason: reason,
+        rescheduledAt: new Date(),
+        rescheduledByName: actor.name.slice(0, 150),
+      },
+    });
+    // The marking links stay the same; they just have to outlive the new time.
+    await this.prisma.evaluationToken.updateMany({
+      where: { roundId, status: { not: 'submitted' } },
+      data: { expiresAt: new Date(to!.getTime() + EVAL_TOKEN_VALID_MS) },
+    });
+
+    let fresh = await this.prisma.interviewRound.findUnique({
+      where: { id: roundId },
+      include: roundInclude,
+    });
+    if (!fresh) return { id: roundId };
+    const synced = await this.syncCalendarUpdate(fresh, round.requisition.designation);
+    if (synced) fresh = synced;
+
+    const moved = { from: round.scheduledAt, reason };
+    let panelTold = 0;
+    if (dto.notifyPanel !== false) {
+      const tokenFor = new Map(
+        fresh.evaluationTokens.map((t) => [t.panelistUserId, t.token]),
+      );
+      for (const p of fresh.panelists) {
+        const path = evaluatePath(tokenFor.get(p.userId));
+        await this.notifications.notify(p.userId, {
+          type: 'interview_rescheduled',
+          title: 'Interview rescheduled',
+          message: `${fresh.candidate.name} · ${round.requisition.designation} — ${fresh.kind.toLowerCase()} interview moved to ${formatSlotShort(fresh.scheduledAt)}.`,
+          link: path,
+          email: panelNotice(fresh.kind, round.requisition, [{ round: fresh, path }], moved),
+        });
+        panelTold++;
+      }
+    }
+
+    let candidateTold = false;
+    if (dto.notifyCandidate !== false && fresh.candidate.email && this.mail.isConfigured()) {
+      try {
+        await this.mail.send({
+          to: fresh.candidate.email,
+          subject: `Interview Rescheduled — ${round.requisition.designation} | DBL Group`,
+          text: candidateRescheduleText({
+            name: fresh.candidate.name,
+            designation: round.requisition.designation,
+            kind: fresh.kind,
+            from: round.scheduledAt,
+            to: fresh.scheduledAt,
+            mode: fresh.mode,
+            location: fresh.location,
+            meetLink: fresh.meetLink,
+            reason,
+          }),
+        });
+        candidateTold = true;
+      } catch (err) {
+        this.logger.warn(`Reschedule email failed: ${(err as Error).message}`);
+      }
+    }
+
+    this.notifications.broadcastChange('candidate', round.requisitionId, {
+      action: 'interview_rescheduled',
+    });
+    return { ...serializeRound(fresh), notified: { candidate: candidateTold, panel: panelTold } };
+  }
+
   async remove(roundId: string, userId: string) {
     const round = await this.prisma.interviewRound.findUnique({
       where: { id: roundId },
@@ -1233,12 +1356,9 @@ export class InterviewService {
     dto: ScheduleInterviewDto,
   ) {
     const { designation } = req;
-    const when = round.scheduledAt
-      ? new Date(round.scheduledAt).toLocaleString('en-GB', {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-        })
-      : 'a time to be confirmed';
+    // Dhaka time (GMT+6) always — not whatever zone the server runs in.
+    const at = formatInterviewSlot(round.scheduledAt);
+    const when = at ? `${at.date}, ${at.time} (GMT+6)` : 'a time to be confirmed';
     const kindLabel = round.kind.toLowerCase();
     const modeLabel = round.mode.toLowerCase();
 
@@ -2660,6 +2780,16 @@ function serializeRound(r: RoundFull) {
     status: r.status.toLowerCase(),
     meetLink: r.meetLink ?? null,
     calendarSynced: Boolean(r.calendarEventId),
+    /** Set once it has been moved: from when, why, by whom, how often. */
+    rescheduled: r.rescheduleCount
+      ? {
+          count: r.rescheduleCount,
+          from: r.previousScheduledAt?.toISOString() ?? null,
+          reason: r.rescheduleReason ?? null,
+          at: r.rescheduledAt?.toISOString() ?? null,
+          byName: r.rescheduledByName ?? null,
+        }
+      : null,
     criteria: EVALUATION_CRITERIA,
     panelists: r.panelists.map((p) => {
       const tok = tokenMap.get(p.userId);
@@ -2687,6 +2817,45 @@ function serializeRound(r: RoundFull) {
     })),
     evaluationCount: r.evaluations.length,
   };
+}
+
+/** The candidate's "your interview has moved" email, in Dhaka time. */
+function candidateRescheduleText(input: {
+  name: string;
+  designation: string;
+  kind: string;
+  from: Date | null;
+  to: Date | null;
+  mode: string;
+  location: string | null;
+  meetLink: string | null;
+  reason: string | null;
+}): string {
+  const slot = (d: Date | null) => {
+    const at = formatInterviewSlot(d);
+    return at ? `${at.date}, ${at.time} (GMT+6)` : 'to be confirmed';
+  };
+  const where = input.meetLink
+    ? `Google Meet: ${input.meetLink}`
+    : input.location
+      ? `Where: ${input.location}`
+      : '';
+  return [
+    `Dear ${input.name},`,
+    '',
+    `Your ${input.kind.toLowerCase()} interview for the ${input.designation} position has been rescheduled.`,
+    '',
+    `New time: ${slot(input.to)}`,
+    `Previously: ${slot(input.from)}`,
+    `Mode: ${input.mode.toLowerCase()}`,
+    ...(where ? [where] : []),
+    ...(input.reason ? ['', `Reason: ${input.reason}`] : []),
+    '',
+    'We apologise for any inconvenience. If the new time does not suit you, please reply to this email.',
+    '',
+    'Best regards,',
+    'DBL Group Recruitment',
+  ].join('\n');
 }
 
 function evalLink(token: string): string {

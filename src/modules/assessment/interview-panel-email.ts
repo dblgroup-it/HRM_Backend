@@ -35,6 +35,11 @@ export interface PanelEmailInput {
   };
   slots: PanelEmailSlot[];
   myInterviewsUrl: string;
+  /**
+   * Set when this is a reschedule notice rather than a first invitation: the
+   * time it was booked for, and why it moved. The slot carries the new time.
+   */
+  rescheduled?: { from: Date | null; reason?: string | null };
 }
 
 export interface PanelEmail {
@@ -112,15 +117,29 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
     .map((s) => s?.trim())
     .filter(Boolean);
 
-  const subject =
-    n === 1
+  const moved = input.rescheduled;
+  const subject = moved
+    ? `Interview rescheduled: ${slots[0]?.candidateName ?? 'candidate'} — ${req.designation}`
+    : n === 1
       ? `Interview panel: ${slots[0].candidateName} — ${req.designation}`
       : `Interview panel: ${n} candidates — ${req.designation}`;
 
-  const intro =
-    n === 1
+  const intro = moved
+    ? `The following ${kind} interview has been moved to a new time. Please update your calendar — your marking link is unchanged.`
+    : n === 1
       ? `You have been nominated to the panel for the following ${kind} interview.`
       : `You have been nominated to the panel for the following ${n} ${kind} interviews, listed in order of their time slots.`;
+
+  const was = moved ? formatInterviewSlot(moved.from) : null;
+  const wasLine = was ? `${was.date}, ${was.time}` : 'the earlier time';
+  const reason = moved?.reason?.trim();
+  const movedBox = moved
+    ? `
+    <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:12px 20px;margin-bottom:8px">
+      <p style="margin:0;font-size:13px;color:#92400e"><strong>Rescheduled</strong> &nbsp;·&nbsp; previously <span style="text-decoration:line-through">${esc(wasLine)}</span></p>
+      ${reason ? `<p style="margin:4px 0 0;font-size:13px;color:#92400e">Reason: ${esc(reason)}</p>` : ''}
+    </div>`
+    : '';
 
   const rows = slots
     .map((slot, i) => {
@@ -166,7 +185,7 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
       <tr>
         <td style="vertical-align:middle">
           <p style="margin:0;font-size:18px;font-weight:700;color:#1877c0;letter-spacing:-0.2px">DBL Group</p>
-          <p style="margin:3px 0 0;font-size:12px;color:#6b7c93;letter-spacing:0.3px">HR Department &nbsp;·&nbsp; Interview Panel Notice</p>
+          <p style="margin:3px 0 0;font-size:12px;color:#6b7c93;letter-spacing:0.3px">HR Department &nbsp;·&nbsp; ${moved ? 'Interview Rescheduled' : 'Interview Panel Notice'}</p>
         </td>
         <td style="vertical-align:middle;text-align:right">
           <p style="margin:0;font-size:12px;color:#6b7c93;white-space:nowrap">${esc(today)}</p>
@@ -186,6 +205,7 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
       <p style="margin:0;font-size:15px;font-weight:700;color:#1877c0">${esc(position[0] ?? '')}</p>
       ${position.length > 1 ? `<p style="margin:2px 0 0;font-size:13px;color:#6b7c93">${esc(position.slice(1).join(' · '))}</p>` : ''}
     </div>
+${movedBox}
 
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
       ${rows}
@@ -232,6 +252,9 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
     '',
     `Position: ${position.join(' · ')}`,
     `Ref: ${req.code}`,
+    ...(moved
+      ? [`Rescheduled — previously ${wasLine}${reason ? `. Reason: ${reason}` : ''}`]
+      : []),
     '',
     textRows.join('\n\n'),
     '',
@@ -264,12 +287,14 @@ export function panelNotice(
     };
     path: string;
   }[],
+  rescheduled?: PanelEmailInput['rescheduled'],
 ) {
   return (to: { name: string; origin: string }): PanelEmail =>
     buildPanelEmail({
       recipientName: to.name,
       kind,
       requisition,
+      rescheduled,
       slots: slots.map(({ round, path }) => ({
         candidateName: round.candidate.name,
         scheduledAt: round.scheduledAt,

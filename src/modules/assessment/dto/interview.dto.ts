@@ -183,6 +183,37 @@ export class UpdateInterviewDto {
   hrPanelistUserIds?: string[];
 }
 
+/** Move an arranged interview to a new time, and tell everyone. */
+export class RescheduleInterviewDto {
+  /** The new date and time (ISO). */
+  @IsString()
+  scheduledAt!: string;
+
+  @IsOptional()
+  @IsIn(['online', 'offline', 'physical'])
+  mode?: string;
+
+  /** Venue or meeting link; left out, the old one stands. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  location?: string;
+
+  /** Why it moved — printed in the candidate's and the panel's email. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  reason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  notifyCandidate?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  notifyPanel?: boolean;
+}
+
 export class BulkScheduleInterviewDto {
   /** IDs of candidates to schedule for (order matters for sequential slots). */
   @IsArray()

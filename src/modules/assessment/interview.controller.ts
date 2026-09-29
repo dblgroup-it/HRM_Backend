@@ -26,6 +26,7 @@ import {
   ScheduleInterviewDto,
   SubmitEvaluationDto,
   UpdateInterviewDto,
+  RescheduleInterviewDto,
   AddPanelistsDto,
   CandidatePackageDto,
   RejectAtInterviewDto,
@@ -207,6 +208,20 @@ export class InterviewController {
   ) {
     return this.interviews.schedule(
       candidateId,
+      { id: user.id, name: user.name },
+      dto,
+    );
+  }
+
+  /** Move an arranged interview to a new time; tells candidate and panel. */
+  @Post('interviews/:roundId/reschedule')
+  reschedule(
+    @Param('roundId') roundId: string,
+    @Body() dto: RescheduleInterviewDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.interviews.reschedule(
+      roundId,
       { id: user.id, name: user.name },
       dto,
     );
