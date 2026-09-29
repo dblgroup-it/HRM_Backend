@@ -127,11 +127,12 @@ export const ACCEPT_DATE_BLANK = '______________________';
  *
  * Fixed height so one person's 900x300 crop and another's phone photo print
  * at the same size, and `margin-bottom:-2px` so the ink meets the rule rather
- * than floating above it.
+ * than floating above it. Centred over the rule, like a pen signature over the
+ * name printed under it.
  */
 export function signatureInk(dataUri?: string | null): string {
   if (!dataUri) return '';
-  return `<img src="${dataUri}" alt="" style="height:44px;width:auto;max-width:220px;display:block;margin-bottom:-2px">`;
+  return `<img src="${dataUri}" alt="" style="height:44px;width:auto;max-width:220px;display:block;margin:0 auto -2px">`;
 }
 
 /** The candidate's signature slot — empty on a letter going out. */
@@ -286,6 +287,21 @@ function head(input: LetterInput, showDate: boolean): string {
   <p style="${P};font-weight:700">Dear ${title}${esc(lastName(input.candidateName))},</p>`;
 }
 
+/**
+ * One signature: ink, rule, and the printed name under it — all on the same
+ * centre line, so the signature sits in the middle of the rule and the name in
+ * the middle beneath it. Both columns use it at one width, so the two rules
+ * match. The flex row centres whatever the slot holds, including the marker
+ * span the accepted copy fills in later.
+ */
+function signBlock(ink: string, lines: string): string {
+  return `<div style="width:250px;text-align:center">
+          <div style="height:44px;display:flex;align-items:flex-end;justify-content:center">${ink}</div>
+          <div style="border-top:1px solid #000"></div>
+          <div style="margin-top:4px">${lines}</div>
+        </div>`;
+}
+
 function signatures(input: LetterInput): string {
   return `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:26px;font-size:11pt">
@@ -302,17 +318,14 @@ function signatures(input: LetterInput): string {
       <td></td>
     </tr>
     <tr>
-      <td style="padding-top:12px">
-        <div style="height:44px">${signatureInk(input.signatorySignature)}</div>
-        <div style="border-top:1px solid #000;width:230px"></div>
-        <div style="font-weight:700;margin-top:4px">${esc(input.signatoryName)}</div>
-        <div>${esc(input.signatoryTitle)}</div>
-      </td>
-      <td style="padding-top:12px">
-        <div style="height:44px">${candidateSignSlot(input)}</div>
-        <div style="border-top:1px solid #000;width:270px"></div>
-        <div style="font-weight:700;margin-top:4px;text-align:center;width:270px">${esc(input.candidateName)}</div>
-      </td>
+      <td style="padding-top:12px;vertical-align:top">${signBlock(
+        signatureInk(input.signatorySignature),
+        `<div style="font-weight:700">${esc(input.signatoryName)}</div><div>${esc(input.signatoryTitle)}</div>`,
+      )}</td>
+      <td style="padding-top:12px;vertical-align:top">${signBlock(
+        candidateSignSlot(input),
+        `<div style="font-weight:700">${esc(input.candidateName)}</div>`,
+      )}</td>
     </tr>
   </table>`;
 }
@@ -494,9 +507,11 @@ export function buildAppointmentLetter(input: LetterInput): string {
   // columns had a different number of lines under them.
   const signCell = (ink: string, lines: string) => `
       <td style="width:50%;vertical-align:top;padding-top:6px">
-        <div style="height:62px;display:flex;align-items:flex-end">${ink}</div>
-        <div style="border-top:1px solid #000;width:62mm;max-width:92%"></div>
-        <div style="margin-top:5px;line-height:1.45">${lines}</div>
+        <div style="width:62mm;max-width:92%;text-align:center">
+          <div style="height:62px;display:flex;align-items:flex-end;justify-content:center">${ink}</div>
+          <div style="border-top:1px solid #000"></div>
+          <div style="margin-top:5px;line-height:1.45">${lines}</div>
+        </div>
       </td>`;
 
   return shell(

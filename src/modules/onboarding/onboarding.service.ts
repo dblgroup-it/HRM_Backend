@@ -989,6 +989,32 @@ export class OnboardingService {
   }
 
   /**
+   * The name a letter is addressed to.
+   *
+   * The candidate record carries whatever a recruiter typed when adding them —
+   * often an informal, shortened or plainly wrong form. An employment contract
+   * should carry the legal name: first the name as printed on their NID, when
+   * they have given it; failing that, the name read off the CV itself (BDJobs'
+   * structured data or the AI read of an uploaded PDF). The typed name is the
+   * last resort.
+   */
+  private resolveLetterName(
+    cand: { name: string; cvProfile?: unknown },
+    nidName?: string | null,
+  ): string {
+    if (nidName?.trim()) return nidName.trim();
+    const profile = cand.cvProfile as
+      | { personal?: { fullName?: unknown } }
+      | null
+      | undefined;
+    const fromCv = profile?.personal?.fullName;
+    if (typeof fromCv === 'string' && fromCv.trim()) {
+      return fromCv.trim().replace(/\s+/g, ' ');
+    }
+    return cand.name;
+  }
+
+  /**
    * Settle which designation this candidate is hired at, and remember it.
    *
    * Validated against what the requisition actually offers rather than taken on
@@ -1077,15 +1103,7 @@ export class OnboardingService {
       dto.fixedDesignation?.trim() || ob.fixedDesignation?.trim() || null;
     const signatory = await this.resolveSignatory(dto.signatoryUserId);
     return {
-      /**
-       * The name as printed on their NID, when they have given it.
-       *
-       * The candidate record carries whatever a recruiter typed off a CV —
-       * often an informal or shortened form. An employment contract should
-       * carry the legal name, and this is the only place we have it from the
-       * person themselves.
-       */
-      candidateName: ob.nidName?.trim() || cand.name,
+      candidateName: this.resolveLetterName(cand, ob.nidName),
       salutation: dto.salutation ?? null,
       address: this.resolveAddress(
         dto.address,

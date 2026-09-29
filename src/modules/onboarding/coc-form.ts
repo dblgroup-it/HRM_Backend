@@ -62,8 +62,8 @@ function crumbs(): string {
 /** A labelled field with a rule under it, the way the paper form sets them. */
 function field(label: string, value: string, width: string): string {
   return `<td style="width:${width};padding:0 10px 0 0;vertical-align:bottom">
-    <div style="min-height:20px;font-size:10.5pt;padding:0 2px 3px">${value}</div>
-    <div style="border-top:1px solid #000;padding-top:3px;font-size:9pt;font-weight:700">${esc(label)}</div>
+    <div style="min-height:20px;font-size:10.5pt;padding:0 2px 3px;text-align:center">${value}</div>
+    <div style="border-top:1px solid #000;padding-top:3px;font-size:9pt;font-weight:700;text-align:center">${esc(label)}</div>
   </td>`;
 }
 
@@ -71,7 +71,7 @@ export function buildCocForm(input: CocInput): string {
   const name = esc(input.employeeName ?? '');
   const signed = Boolean(input.signedAt);
   const signature = input.signatureDataUri
-    ? `<img src="${input.signatureDataUri}" alt="" style="height:34px;width:auto;display:block;margin-bottom:2px">`
+    ? `<img src="${input.signatureDataUri}" alt="" style="height:34px;width:auto;max-width:100%;display:block;margin:0 auto 2px">`
     : '';
 
   return `
