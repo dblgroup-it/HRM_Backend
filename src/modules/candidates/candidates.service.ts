@@ -43,6 +43,7 @@ import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import { bulkCandidateNames } from './bulk-cv';
 import { applyCounts, emailKey, phoneKey, sameApplicant } from './apply-identity';
 import { normalizeGender } from './gender';
+import { cvHeadline } from './cv/cv-headline';
 import { CV_SOURCE_LABEL } from '../requisition/cv-sources';
 import {
   applicationsCloseAt,
@@ -2984,6 +2985,8 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
     cvSource: c.cvSource ?? null,
     /** 'male' | 'female' off the CV, or null when unknown. */
     gender: normalizeGender(c.gender),
+    /** Latest title · company · years, from the CV once it has been read. */
+    headline: cvHeadline(c.cvProfile),
     /** Set when the unit's Factory HR / Factory HR Head sent this CV in. */
     addedBy: c.addedByRole
       ? { name: c.createdBy?.name ?? null, role: c.addedByRole }
