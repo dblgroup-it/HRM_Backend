@@ -1081,6 +1081,20 @@ export class CandidatesService {
     if (!files.length) throw new BadRequestException('Attach at least one CV');
     // Checked once, before any file goes to Drive.
     const intake = await this.requireCvIntake(reqId, userId, dto.cvSource);
+    // A referrer who is not in the directory would fail every file the same
+    // way — say it once, before anything goes to Drive.
+    const referredByCode = dto.referredByCode?.trim() || undefined;
+    if (
+      referredByCode &&
+      !(await this.prisma.employee.findFirst({
+        where: { employeeCode: referredByCode },
+        select: { id: true },
+      }))
+    ) {
+      throw new BadRequestException(
+        `No employee with ID ${referredByCode} in the directory`,
+      );
+    }
     const names = bulkCandidateNames(
       dto.names,
       files.map((f) => f.originalname),
@@ -1092,7 +1106,12 @@ export class CandidatesService {
         created.push(
           await this.create(
             reqId,
-            { name: names[i], source: 'upload', cvSource: dto.cvSource },
+            {
+              name: names[i],
+              source: 'upload',
+              cvSource: dto.cvSource,
+              referredByCode,
+            },
             userId,
             file,
             false,

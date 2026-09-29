@@ -145,6 +145,15 @@ export class BulkCreateCandidatesDto {
   @IsString()
   @MaxLength(20_000)
   names?: string;
+
+  /**
+   * One employee referring the whole batch — somebody who passes on several
+   * CVs at once. Every candidate in it carries the same referrer.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  referredByCode?: string;
 }
 
 export class UpdateCandidateDto {
