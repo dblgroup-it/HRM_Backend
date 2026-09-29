@@ -1080,7 +1080,11 @@ export class CandidatesService {
   ) {
     if (!files.length) throw new BadRequestException('Attach at least one CV');
     // Checked once, before any file goes to Drive.
-    const intake = await this.requireCvIntake(reqId, userId, dto.cvSource);
+    const intake = await this.requireCvIntake(
+      reqId,
+      userId,
+      dto.referredByCode?.trim() ? 'employee_referral' : dto.cvSource,
+    );
     // A referrer who is not in the directory would fail every file the same
     // way — say it once, before anything goes to Drive.
     const referredByCode = dto.referredByCode?.trim() || undefined;
@@ -1151,7 +1155,12 @@ export class CandidatesService {
     file?: UploadedCv,
     announce = true,
   ) {
-    const { req, role } = await this.requireCvIntake(reqId, userId, dto.cvSource);
+    // An employee referral IS the source — nobody should have to pick one
+    // as well.
+    const cvSource = dto.referredByCode?.trim()
+      ? 'employee_referral'
+      : dto.cvSource;
+    const { req, role } = await this.requireCvIntake(reqId, userId, cvSource);
 
     // An employee referral arrives with the referrer and the CV together —
     // "referred by X" with nothing to read is not a referral anyone can act on.
@@ -1214,7 +1223,7 @@ export class CandidatesService {
         phone: dto.phone ?? null,
         notes: dto.notes ?? null,
         source: dto.source ?? (file ? 'upload' : 'manual'),
-        cvSource: dto.cvSource ?? null,
+        cvSource: cvSource ?? null,
         createdById: userId,
         addedByRole: role,
         cvFileId,

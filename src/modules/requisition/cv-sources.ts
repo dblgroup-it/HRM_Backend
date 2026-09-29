@@ -15,6 +15,8 @@ export const CV_SOURCES = [
   'internal_posting',
   'cv_bank',
   'talent_pool',
+  /** An employee put them forward — the referrer is recorded on the candidate. */
+  'employee_referral',
 ] as const;
 
 export type CvSource = (typeof CV_SOURCES)[number];
@@ -29,6 +31,7 @@ export const CV_SOURCE_LABEL: Record<CvSource, string> = {
   internal_posting: 'Internal Posting',
   cv_bank: 'CV Bank',
   talent_pool: 'Talent Pool',
+  employee_referral: 'Employee Referral',
 };
 
 /** De-duplicated, in catalogue order — so the stored list never depends on
