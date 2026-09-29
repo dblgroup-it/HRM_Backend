@@ -37,6 +37,7 @@ import {
   type BdJobsSettings,
 } from './bdjobs-settings.service';
 import { CandidatesService } from '../../candidates/candidates.service';
+import { normalizeGender } from '../../candidates/gender';
 
 const BDJOBS_API = 'https://api.bdjobs.com/EmployerApi/api';
 
@@ -750,6 +751,8 @@ export class BdJobsService {
         cvProfile: cv ? (cv as unknown as Prisma.InputJsonValue) : undefined,
         cvProfileAt: cv ? new Date() : undefined,
         salaryExpectation: cv?.compensation.expected ?? null,
+        // For the indicator on the candidate row — BDJobs states it.
+        gender: normalizeGender(cv?.personal.gender),
         bdjobsApplicationId: dto.applicationId,
         bdjobsApplicantId: applicantId,
         bdjobsJobId: dto.bdJobsJobId,

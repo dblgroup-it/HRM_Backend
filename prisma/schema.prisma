@@ -779,6 +779,15 @@ model Candidate {
   /// Distinct from `source`, which is how the record got into the system
   /// (upload, email, application). Null on candidates added before it was asked.
   cvSource              String?                @map("cv_source") @db.VarChar(30)
+  /// 'male' | 'female', read by the AI off the CV or taken from BDJobs. Null
+  /// when nobody has read the CV yet or it does not say — the row then shows
+  /// no indicator rather than a guess.
+  gender                String?                @db.VarChar(10)
+  /// Set when the unit's Factory HR ('factory_hr') or Factory HR Head
+  /// ('factory_hr_head') sent this CV in from the requisition's Profile &
+  /// Posting tab. They send; the recruiter shortlists. Null for the
+  /// recruiter's own additions and every other way in.
+  addedByRole           String?                @map("added_by_role") @db.VarChar(30)
   bdjobsApplicationId   String?                @unique @map("bdjobs_application_id") @db.VarChar(100)
   /// Bdjobs inbound: the applicant's Bdjobs profile ID.
   bdjobsApplicantId     String?                @map("bdjobs_applicant_id") @db.VarChar(100)

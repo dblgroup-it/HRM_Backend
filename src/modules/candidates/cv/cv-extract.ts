@@ -1,5 +1,6 @@
 import type { ExtractedCv } from '../../integrations/ai/ai-grader.service';
 import type { CvEmployment, CvProfile } from './cv-profile.types';
+import { normalizeGender } from '../gender';
 
 const clean = (v?: string | null): string | undefined => {
   const t = (v ?? '').replace(/\s+/g, ' ').trim();
@@ -121,6 +122,7 @@ export function extractedCvToProfile(extracted: ExtractedCv): CvProfile {
     capturedAt: new Date().toISOString(),
     personal: {
       fullName: clean(extracted.fullName) ?? '',
+      gender: normalizeGender(extracted.gender) ?? undefined,
       // A stated date of birth wins; an age alone is enough to show an age.
       dateOfBirth: isoDay(extracted.dateOfBirth) ?? dobFromAge(extracted.age),
     },

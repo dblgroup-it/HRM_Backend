@@ -41,6 +41,9 @@ import { cvProfileToText } from './cv/cv-text';
 import { extractedCvToProfile } from './cv/cv-extract';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
 import { bulkCandidateNames } from './bulk-cv';
+import { applyCounts, emailKey, phoneKey, sameApplicant } from './apply-identity';
+import { normalizeGender } from './gender';
+import { CV_SOURCE_LABEL } from '../requisition/cv-sources';
 import {
   applicationsCloseAt,
   applicationsOpen,
@@ -77,6 +80,8 @@ type CandidateRow = Prisma.CandidateGetPayload<object> & {
   interviewDelegations?: HoldDelegationRow[] | null;
   /** Present only where the query includes it; rounds that were held. */
   interviews?: { kind: string }[] | null;
+  /** Present only where the query includes it; who added the candidate. */
+  createdBy?: { name: string } | null;
   /** Present only where the query includes it; the Factory HR Head sign-off. */
   firstInterviewApproval?: {
     status: string;
@@ -183,6 +188,8 @@ export class CandidatesService {
           // So the row can say who turned them down, not just that it happened.
           rejectedBy: { select: { name: true } },
           regretSentBy: { select: { name: true } },
+          // "Added by … (Factory HR)" on the row.
+          createdBy: { select: { name: true } },
           // Whose first interview this is. The Interviews tab lists everyone
           // at the Interview stage, and a candidate only reaches that stage
           // because somebody scheduled their first round — often the factory
@@ -258,19 +265,9 @@ export class CandidatesService {
       stageCountMap[r.stage.toLowerCase()] = r._count.id;
     }
 
-    // applyCount: how many times each email has applied across ALL requisitions.
-    const emails = [
-      ...new Set(rows.map((r) => r.email).filter(Boolean)),
-    ] as string[];
-    const emailCounts =
-      emails.length > 0
-        ? await this.prisma.candidate.groupBy({
-            by: ['email'],
-            where: { email: { in: emails } },
-            _count: { id: true },
-          })
-        : [];
-    const countMap = new Map(emailCounts.map((e) => [e.email, e._count.id]));
+    // applyCount: how many times each person has applied across ALL
+    // requisitions — same email or same mobile (see apply-identity.ts).
+    const countMap = applyCounts(rows, await this.sameApplicantPool(rows));
 
     // Finalized salary fixation result, shown as a badge on the candidate row.
     const rowIds = rows.map((r) => r.id);
@@ -286,7 +283,7 @@ export class CandidatesService {
     return {
       items: rows.map((r) => ({
         ...serializeCandidate(r, this.files),
-        applyCount: r.email ? (countMap.get(r.email) ?? 1) : 1,
+        applyCount: countMap.get(r.id) ?? 1,
         proposedSalary: fixationMap.get(r.id)?.proposedSalary ?? null,
         salaryJobGrade: fixationMap.get(r.id)?.jobGrade ?? null,
         onboardingStatus: r.onboarding?.status ?? null,
@@ -867,20 +864,24 @@ export class CandidatesService {
       include: { requisition: true },
     });
     if (!cand) throw new NotFoundException('Candidate not found');
-    await this.requireRecruitmentAccess(cand.requisition, userId);
+    // Whoever sent the CV in from the factory may see where else that person
+    // applied — it is what "Applied 3×" on their own list opens.
+    if (cand.createdById !== userId) {
+      await this.requireRecruitmentAccess(cand.requisition, userId);
+    }
 
-    if (!cand.email)
-      return { name: cand.name, email: null, total: 1, applications: [] };
-
+    const ids = sameApplicant(cand, await this.sameApplicantPool([cand])).map(
+      (m) => m.id,
+    );
     const all = await this.prisma.candidate.findMany({
-      where: { email: cand.email, deletedAt: null },
+      where: { id: { in: ids.length ? ids : [cand.id] }, deletedAt: null },
       include: { requisition: true },
       orderBy: { createdAt: 'desc' },
     });
 
     return {
       name: cand.name,
-      email: cand.email,
+      email: cand.email || null,
       total: all.length,
       applications: all.map((a) => ({
         candidateId: a.id,
@@ -1078,6 +1079,8 @@ export class CandidatesService {
     files: UploadedCv[],
   ) {
     if (!files.length) throw new BadRequestException('Attach at least one CV');
+    // Checked once, before any file goes to Drive.
+    const intake = await this.requireCvIntake(reqId, userId, dto.cvSource);
     const names = bulkCandidateNames(
       dto.names,
       files.map((f) => f.originalname),
@@ -1115,6 +1118,9 @@ export class CandidatesService {
       this.notifications.broadcastChange('candidate', reqId, {
         action: 'created',
       });
+      if (intake.role) {
+        await this.notifyFactoryIntake(intake.req, userId, intake.role, created.length);
+      }
     }
     return { created, failed };
   }
@@ -1126,7 +1132,7 @@ export class CandidatesService {
     file?: UploadedCv,
     announce = true,
   ) {
-    const req = await this.requireReq(reqId, userId);
+    const { req, role } = await this.requireCvIntake(reqId, userId, dto.cvSource);
 
     // An employee referral arrives with the referrer and the CV together —
     // "referred by X" with nothing to read is not a referral anyone can act on.
@@ -1191,6 +1197,7 @@ export class CandidatesService {
         source: dto.source ?? (file ? 'upload' : 'manual'),
         cvSource: dto.cvSource ?? null,
         createdById: userId,
+        addedByRole: role,
         cvFileId,
         cvUrl,
         ...(referrer && {
@@ -1211,10 +1218,178 @@ export class CandidatesService {
       this.notifications.broadcastChange('candidate', reqId, {
         action: 'created',
       });
+      if (role) await this.notifyFactoryIntake(req, userId, role, 1);
     }
-    if (cvFileId) this.autoScreen(created.id);
+    if (cvFileId) {
+      this.autoScreen(created.id);
+      // Read now, not at the first interview: the row's gender indicator and
+      // "Applied 2×" (by email or mobile) both need what is on the CV.
+      this.queueCvRead(created.id, reqId);
+    }
     return serializeCandidate(created, this.files);
   }
+
+  /**
+   * Who may add a candidate here, and as what.
+   *
+   * The recruiting side (recruiter, their stand-in, Head of Talent
+   * Acquisition, CHRO, super) adds as always. Otherwise the unit's Factory HR
+   * or Factory HR Head may send CVs in — only once the job is posted, and
+   * always saying where the CV came from, since the recruiter shortlists from
+   * what they send. `role` is null on the recruiting side.
+   */
+  private async requireCvIntake(
+    reqId: string,
+    userId: string,
+    cvSource?: string | null,
+  ): Promise<{
+    req: Prisma.RequisitionGetPayload<object>;
+    role: 'factory_hr' | 'factory_hr_head' | null;
+  }> {
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+    });
+    if (!req) throw new NotFoundException('Requisition not found');
+    const recruits = await this.permissions.canRunRecruitment(
+      userId,
+      req.unitFactory,
+      req.recruiterId,
+      { userId: req.coverRecruiterId, until: req.coverUntil },
+    );
+    if (recruits) return { req, role: null };
+
+    const role = await this.permissions.cvSubmitterRole(userId, req.unitFactory);
+    if (!role) {
+      // The recruiting side's own refusal, which names who may.
+      await this.requireRecruitmentAccess(req, userId);
+    }
+    if (req.status !== 'POSTED') {
+      throw new BadRequestException(
+        'CVs can be sent in once the recruiter has published this job',
+      );
+    }
+    if (!cvSource) {
+      throw new BadRequestException('Choose where the CV came from');
+    }
+    return { req, role };
+  }
+
+  /** Tell the recruiting side that the factory has sent CVs in. */
+  private async notifyFactoryIntake(
+    req: Prisma.RequisitionGetPayload<object>,
+    userId: string,
+    role: 'factory_hr' | 'factory_hr_head',
+    count: number,
+  ) {
+    const [sender, recipients] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
+      }),
+      this.permissions.recruitmentRecipients(req.unitFactory, req.recruiterId, {
+        userId: req.coverRecruiterId,
+        until: req.coverUntil,
+      }),
+    ]);
+    const who = `${sender?.name ?? 'Factory HR'} (${role === 'factory_hr_head' ? 'Factory HR Head' : 'Factory HR'})`;
+    await this.notifications.notifyMany(recipients, {
+      type: 'factory_cv_intake',
+      title: 'CVs sent in from the factory',
+      message: `${who} sent ${count} CV${count === 1 ? '' : 's'} for ${req.code} · ${req.designation}. They are in the pipeline as Applied for you to shortlist.`,
+      link: `/requisitions/${req.id}?tab=recruitment`,
+    });
+  }
+
+  /**
+   * The CVs this user sent in to a requisition, for their own list on the
+   * Profile & Posting tab — with the gender indicator and "Applied N×", but
+   * nothing of the recruiter's assessment.
+   */
+  async submittedByMe(reqId: string, userId: string) {
+    const req = await this.prisma.requisition.findUnique({
+      where: { id: reqId },
+    });
+    if (!req) throw new NotFoundException('Requisition not found');
+    const role = await this.permissions.cvSubmitterRole(userId, req.unitFactory);
+    if (!role) {
+      await this.requireRecruitmentAccess(req, userId);
+    }
+    const rows = await this.prisma.candidate.findMany({
+      where: { requisitionId: reqId, createdById: userId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    const counts = applyCounts(rows, await this.sameApplicantPool(rows));
+    return rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email ?? '',
+      phone: c.phone ?? '',
+      gender: normalizeGender(c.gender),
+      cvSource: c.cvSource,
+      cvSourceLabel: c.cvSource
+        ? (CV_SOURCE_LABEL[c.cvSource as keyof typeof CV_SOURCE_LABEL] ??
+          c.cvSource)
+        : null,
+      referral: c.referredByCode
+        ? {
+            employeeCode: c.referredByCode,
+            name: c.referredByName ?? '',
+            designation: c.referredByDesignation ?? null,
+          }
+        : null,
+      cvUrl:
+        this.files.url(c.cvFileId, 'cv', { filename: `${c.name} — CV` }) ??
+        c.cvUrl,
+      applyCount: counts.get(c.id) ?? 1,
+      createdAt: c.createdAt.toISOString(),
+    }));
+  }
+
+  /**
+   * Every live application that could be the same person as one of `rows`:
+   * same email or same last-ten-digits mobile, across all requisitions. One
+   * query for the whole page; `apply-identity.ts` then does the matching.
+   */
+  private async sameApplicantPool(
+    rows: { id: string; email?: string | null; phone?: string | null }[],
+  ): Promise<{ id: string; email: string | null; phone: string | null }[]> {
+    const emails = [
+      ...new Set(rows.map((r) => emailKey(r.email)).filter(Boolean)),
+    ] as string[];
+    const phones = [
+      ...new Set(rows.map((r) => phoneKey(r.phone)).filter(Boolean)),
+    ] as string[];
+    if (!emails.length && !phones.length) return [];
+    return this.prisma.$queryRaw<
+      { id: string; email: string | null; phone: string | null }[]
+    >`
+      SELECT id, email, phone FROM candidates
+      WHERE deleted_at IS NULL
+        AND (
+          lower(btrim(email)) = ANY(${emails}::text[])
+          OR right(regexp_replace(coalesce(phone, ''), '\D', '', 'g'), 10) = ANY(${phones}::text[])
+        )`;
+  }
+
+  /**
+   * Read uploaded CVs one at a time, in the background, then refresh the
+   * pipeline. Sequential so a bulk upload of thirty does not fire thirty AI
+   * calls at once.
+   */
+  private queueCvRead(candidateId: string, reqId: string): void {
+    this.cvReadQueue = this.cvReadQueue
+      .then(async () => {
+        if (await this.ensureCvProfile(candidateId)) {
+          this.notifications.broadcastChange('candidate', reqId, {
+            action: 'cv_read',
+          });
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  private cvReadQueue: Promise<void> = Promise.resolve();
 
   /**
    * Internal (Gmail ingestion): create a candidate from an emailed CV with no
@@ -1733,7 +1908,15 @@ export class CandidatesService {
   async ensureCvProfile(candidateId: string, force = false): Promise<boolean> {
     const cand = await this.prisma.candidate.findUnique({
       where: { id: candidateId },
-      select: { id: true, name: true, cvFileId: true, cvProfile: true },
+      select: {
+        id: true,
+        name: true,
+        cvFileId: true,
+        cvProfile: true,
+        email: true,
+        phone: true,
+        gender: true,
+      },
     });
     if (!cand) return false;
     if (cand.cvProfile && !force) return true;
@@ -1750,6 +1933,15 @@ export class CandidatesService {
       // stop this ever trying again.
       if (extracted.employment.length === 0 && extracted.education.length === 0) {
         this.logger.warn(`CV extraction found nothing for ${cand.name}`);
+        // No history worth storing, but the male / female indicator is
+        // always decided — keep that much.
+        const gender = normalizeGender(extracted.gender);
+        if (!cand.gender && gender) {
+          await this.prisma.candidate.update({
+            where: { id: cand.id },
+            data: { gender },
+          });
+        }
         return false;
       }
       const profile = extractedCvToProfile(extracted);
@@ -1761,6 +1953,17 @@ export class CandidatesService {
           // Backfill only what nobody has typed in by hand.
           ...(profile.contact.currentAddress
             ? { cvAddress: profile.contact.currentAddress.slice(0, 300) }
+            : {}),
+          ...(!cand.gender && profile.personal.gender
+            ? { gender: profile.personal.gender }
+            : {}),
+          // Email and mobile make "Applied 2×" work for a CV that arrived
+          // with only a name.
+          ...(!cand.email && profile.contact.email
+            ? { email: profile.contact.email.slice(0, 254) }
+            : {}),
+          ...(!cand.phone && phoneKey(profile.contact.phone)
+            ? { phone: profile.contact.phone!.slice(0, 40) }
             : {}),
         },
       });
@@ -2751,6 +2954,12 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
     source: c.source,
     /** Where the recruiter found the CV — a CV_SOURCES key, or null. */
     cvSource: c.cvSource ?? null,
+    /** 'male' | 'female' off the CV, or null when unknown. */
+    gender: normalizeGender(c.gender),
+    /** Set when the unit's Factory HR / Factory HR Head sent this CV in. */
+    addedBy: c.addedByRole
+      ? { name: c.createdBy?.name ?? null, role: c.addedByRole }
+      : null,
     stage: c.stage.toLowerCase(),
     cvFileId: c.cvFileId,
     cvUrl:

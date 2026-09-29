@@ -90,6 +90,8 @@ export interface JobAnalysisInput {
  */
 export interface ExtractedCv {
   fullName?: string;
+  /** 'male' | 'female' as the model answered; normalised by the caller. */
+  gender?: string;
   dateOfBirth?: string;
   age?: number;
   phone?: string;
@@ -678,12 +680,13 @@ Use clear field names that match the document, for example: Full Name, Document 
     const prompt = `Read this CV and return what it says. Do not infer, guess or invent anything: if the CV does not state something, leave the field out.
 
 Return ONLY a compact JSON object:
-{"fullName":"<as written>","dateOfBirth":"<yyyy-mm-dd, only if the CV states a date of birth>","age":<number, only if the CV states an age>,"phone":"<primary number, with any country code as written>","email":"<primary email>","address":"<present/mailing address as one line>","education":[{"degree":"<e.g. MBA, B.Sc. in Textile Engineering, ISO 9001:2015 Lead Auditor>","institute":"<institution, with country if given>","year":<pass year as a number>,"result":"<CGPA/class, if stated>"}],"employment":[{"company":"<employer>","designation":"<job title>","from":"<yyyy-mm-dd, or yyyy-01-01 if only a year is given>","to":"<yyyy-mm-dd, omit if still there>","current":<true if this is their present job>}],"totalExperienceLabel":"<total years of work as the CV states it, e.g. '22 years', only if stated>"}
+{"fullName":"<as written>","gender":"<male or female — see the rule below>","dateOfBirth":"<yyyy-mm-dd, only if the CV states a date of birth>","age":<number, only if the CV states an age>,"phone":"<primary number, with any country code as written>","email":"<primary email>","address":"<present/mailing address as one line>","education":[{"degree":"<e.g. MBA, B.Sc. in Textile Engineering, ISO 9001:2015 Lead Auditor>","institute":"<institution, with country if given>","year":<pass year as a number>,"result":"<CGPA/class, if stated>"}],"employment":[{"company":"<employer>","designation":"<job title>","from":"<yyyy-mm-dd, or yyyy-01-01 if only a year is given>","to":"<yyyy-mm-dd, omit if still there>","current":<true if this is their present job>}],"totalExperienceLabel":"<total years of work as the CV states it, e.g. '22 years', only if stated>"}
 
 Rules:
 - List education most recent first, and include professional certifications and training as education entries.
 - List employment most recent first, one entry per position — if somebody held two positions at the same company, that is two entries.
-- Use the CV's own wording for titles and company names.`;
+- Use the CV's own wording for titles and company names.
+- gender is the one field you must always answer and may judge rather than copy: always give "male" or "female", never leave it out. Use the strongest evidence the CV has, in this order: a stated Gender or Sex line; a title (Mr., Mrs., Ms., Miss), the prefixes Md./Mohammad/Muhammad (male) or Mst./Mosammat/Mosammet (female), or a "son of" / "daughter of" / "wife of" line; the full name as it is used in Bangladesh; the candidate's own photograph on the CV. If it is still uncertain, give your best judgement.`;
 
     const raw =
       this.provider === 'claude'
@@ -713,6 +716,7 @@ Rules:
           : [];
       return {
         fullName: str(obj.fullName),
+        gender: str(obj.gender),
         dateOfBirth: str(obj.dateOfBirth),
         age: num(obj.age),
         phone: str(obj.phone),

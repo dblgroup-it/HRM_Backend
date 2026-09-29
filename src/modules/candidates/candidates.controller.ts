@@ -93,6 +93,12 @@ export class CandidatesController {
     return this.candidates.rescanTalentBankMatches(reqId, user.id);
   }
 
+  /** The CVs this user sent in from the factory side, for their own list. */
+  @Get('requisitions/:reqId/candidates/submitted')
+  submitted(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {
+    return this.candidates.submittedByMe(reqId, user.id);
+  }
+
   @Get('requisitions/:reqId/candidates/screening-status')
   screeningStatus(
     @Param('reqId') reqId: string,

@@ -269,6 +269,19 @@ export class PermissionsService {
         unitFactory: { in: scope.unitNames },
       });
     }
+    // A posted requisition in their unit is one they may send CVs in to, so
+    // the unit's Factory HR and Factory HR Head can open it — on leave or not.
+    if (
+      scope.unitNames.length > 0 &&
+      perms.roles.some(
+        (r) => r.key === 'factory_hr' || r.key === 'factory_hr_head',
+      )
+    ) {
+      clauses.push({
+        status: 'POSTED',
+        unitFactory: { in: scope.unitNames },
+      });
+    }
     // A Corporate Recruiter covers only units with no Factory HR available —
     // and only the requisitions that were left unaddressed, never one sitting
     // with a named person.
@@ -619,6 +632,32 @@ export class PermissionsService {
       select: { id: true },
     });
     return Boolean(row);
+  }
+
+  /**
+   * May this user send CVs in to a posted requisition of this unit?
+   *
+   * The unit's Factory HR and Factory HR Head know who is looking for work
+   * locally, and used to pass CVs to the recruiter by hand. They send them in
+   * from the requisition's Profile & Posting tab; the recruiter still does the
+   * shortlisting. Sending is all this grants — it does not open the pipeline.
+   * Returns the role they send as, or null.
+   */
+  async cvSubmitterRole(
+    userId: string,
+    unitName: string,
+  ): Promise<'factory_hr_head' | 'factory_hr' | null> {
+    const perms = await this.getUserPermissions(userId);
+    const target = normalizeUnitName(unitName);
+    const holds = (key: string) =>
+      perms.roles.some(
+        (r) =>
+          r.key === key &&
+          (r.unitId === null || normalizeUnitName(r.unitName) === target),
+      );
+    if (holds('factory_hr_head')) return 'factory_hr_head';
+    if (holds('factory_hr')) return 'factory_hr';
+    return null;
   }
 
   /** `canRunRecruitment`, but throws instead of returning false. */

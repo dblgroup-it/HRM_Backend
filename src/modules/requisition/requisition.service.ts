@@ -1915,9 +1915,16 @@ export class RequisitionService {
               req.unitFactory,
               req.jobAnalysisAssigneeId,
             ));
-          if (!owed) {
+          // Posted, and they are the unit's Factory HR or Factory HR Head —
+          // they open it to send CVs in from Profile & Posting.
+          const sendsCvs =
+            !owed &&
+            req.status === 'POSTED' &&
+            (await this.permissions.cvSubmitterRole(userId, req.unitFactory)) !==
+              null;
+          if (!owed && !sendsCvs) {
             throw new ForbiddenException(
-              'You can only open requisitions you raised, need to approve, are recruiting for, or owe a job analysis',
+              'You can only open requisitions you raised, need to approve, are recruiting for, owe a job analysis, or send CVs to',
             );
           }
         }
