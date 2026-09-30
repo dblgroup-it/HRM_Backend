@@ -18,6 +18,7 @@ import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sameUnit } from '../../common/util/normalize-unit';
+import { isCodeCollision, nextRequisitionCode } from './requisition-code';
 import { OrganogramService } from '../organogram/organogram.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
@@ -192,9 +193,9 @@ export class RequisitionService {
     // (and prints on the form) rather than a step in the chain.
     const raisedBy = dto.signatories.departmentHeadName || raiser.name;
 
-    const created = await this.prisma.requisition.create({
+    const created = await this.withFreshCode((code) => this.prisma.requisition.create({
       data: {
-        code: await this.nextCode(),
+        code,
         designation: dto.designation,
         alternateDesignations,
         requirementType,
@@ -251,7 +252,7 @@ export class RequisitionService {
         },
       },
       include: reqWithRelations,
-    });
+    }));
 
     const serialized = this.ser(created);
     this.notifications.broadcastChange('requisition', created.id, {
@@ -2161,10 +2162,32 @@ export class RequisitionService {
     return serialized;
   }
 
+  /** Highest number in use plus one — see requisition-code.ts for why. */
   private async nextCode(): Promise<string> {
-    const year = new Date().getFullYear();
-    const count = await this.prisma.requisition.count();
-    return `REQ-${year}-${String(count + 1).padStart(3, '0')}`;
+    const rows = await this.prisma.requisition.findMany({
+      select: { code: true },
+    });
+    return nextRequisitionCode(
+      rows.map((r) => r.code),
+      new Date().getFullYear(),
+    );
+  }
+
+  /**
+   * Run a create with the next free code. Two raises at the same moment can
+   * pick the same one; the unique constraint refuses the second, which then
+   * takes the one after instead of failing with a 500.
+   */
+  private async withFreshCode<T>(
+    create: (code: string) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await create(await this.nextCode());
+      } catch (err) {
+        if (!isCodeCollision(err) || attempt >= 5) throw err;
+      }
+    }
   }
 }
 
