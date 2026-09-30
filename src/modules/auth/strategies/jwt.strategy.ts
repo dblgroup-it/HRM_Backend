@@ -15,6 +15,8 @@ export interface JwtPayload {
   tv?: number;
   /** Set on the short-lived token issued between password + 2FA steps. */
   pending2fa?: boolean;
+  /** Set on the forgot-password token: it may set a password, nothing else. */
+  pwreset?: boolean;
   /** The account still holds a password it did not choose (see FirstLoginGuard). */
   mcp?: boolean;
   /** Wrong 2FA codes already spent against this challenge. */
@@ -42,6 +44,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // A pending-2FA token only authorizes the /auth/login/2fa step.
     if (payload.pending2fa) {
       throw new UnauthorizedException('Two-factor verification required');
+    }
+    // Same secret, so it must be refused here: a reset token opens only
+    // POST /auth/password/reset, never a session.
+    if (payload.pwreset) {
+      throw new UnauthorizedException('Not a session token');
     }
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },

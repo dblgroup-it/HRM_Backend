@@ -15,6 +15,7 @@ import {
   AuthUser,
 } from '../../common/decorators/current-user.decorator';
 import { AuthService } from './auth.service';
+import { PasswordResetService } from './password-reset.service';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -23,6 +24,11 @@ import {
   TwoFactorCodeDto,
   TwoFactorLoginDto,
 } from './dto/two-factor.dto';
+import {
+  ForgotPasswordDto,
+  ResetPasswordDto,
+  VerifyResetCodeDto,
+} from './dto/password-reset.dto';
 
 /**
  * Request ceilings for the authentication routes.
@@ -62,11 +68,23 @@ const AUTH_RATE = {
   twoFactorEnrol: 30,
   /** Sending an email OTP. Lower, because each one sends a real message. */
   twoFactorEmailStart: 20,
+  /**
+   * Forgot password. Each request can send a real email, and the per-account
+   * cooldown in PasswordResetService is the real limit; this only stops one
+   * source spraying addresses.
+   */
+  passwordResetRequest: 20,
+  /** Checking a reset code. The per-code attempt cap is the real defence. */
+  passwordResetVerify: 30,
+  passwordReset: 30,
 } as const;
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly passwordReset: PasswordResetService,
+  ) {}
 
   @Public()
   @Throttle({ default: { limit: AUTH_RATE.login, ttl: 60_000 } })
@@ -118,6 +136,35 @@ export class AuthController {
     @CurrentUser() actor: AuthUser,
   ) {
     return this.authService.resetPasswordToDefault(userId, actor.id);
+  }
+
+  // --- forgot password (emailed code) ------------------------------------
+
+  /** Step 1: email a reset code. Always answers `{ ok: true }`. */
+  @Public()
+  @Throttle({ default: { limit: AUTH_RATE.passwordResetRequest, ttl: 60_000 } })
+  @Post('password/forgot')
+  @HttpCode(200)
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.passwordReset.request(dto.email);
+  }
+
+  /** Step 2: check the code; returns a short-lived reset token. */
+  @Public()
+  @Throttle({ default: { limit: AUTH_RATE.passwordResetVerify, ttl: 60_000 } })
+  @Post('password/verify')
+  @HttpCode(200)
+  verifyResetCode(@Body() dto: VerifyResetCodeDto) {
+    return this.passwordReset.verify(dto.email, dto.code);
+  }
+
+  /** Step 3: set the new password. Ends every session on the account. */
+  @Public()
+  @Throttle({ default: { limit: AUTH_RATE.passwordReset, ttl: 60_000 } })
+  @Post('password/reset')
+  @HttpCode(200)
+  resetForgottenPassword(@Body() dto: ResetPasswordDto) {
+    return this.passwordReset.reset(dto.resetToken, dto.newPassword);
   }
 
   // --- two-factor authentication -----------------------------------------

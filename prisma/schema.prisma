@@ -233,6 +233,14 @@ model User {
   /// Transient one-time code (hashed) for email 2FA + its expiry.
   otpHash                       String?                @map("otp_hash") @db.VarChar(100)
   otpExpiresAt                  DateTime?              @map("otp_expires_at")
+  /// Forgot-password: the emailed reset code (hashed), when it lapses, how many
+  /// wrong guesses it has taken, and when it was sent (for the resend
+  /// cooldown). Separate from `otpHash` so a reset never clobbers a sign-in
+  /// code in flight. See auth/password-reset.service.ts.
+  resetOtpHash                  String?                @map("reset_otp_hash") @db.VarChar(100)
+  resetOtpExpiresAt             DateTime?              @map("reset_otp_expires_at")
+  resetOtpAttempts              Int                    @default(0) @map("reset_otp_attempts")
+  resetOtpSentAt                DateTime?              @map("reset_otp_sent_at")
   /// The account still holds a password someone else chose for it — the
   /// employee code it was provisioned with, or an administrator's reset.
   /// Until it is changed the session may only change the password or sign out.
