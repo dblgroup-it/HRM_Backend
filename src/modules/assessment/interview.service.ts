@@ -71,6 +71,7 @@ import {
   panelNotice,
   type PanelEmailInput,
 } from './interview-panel-email';
+import { buildCandidateInterviewEmail } from './interview-candidate-email';
 import { rescheduleRefusal } from './reschedule';
 import {
   BulkScheduleInterviewDto,
@@ -107,6 +108,7 @@ const roundInclude = {
   panelists: { include: { user: { include: { employee: true } } } },
   evaluations: { include: { evaluator: { select: { name: true } } } },
   candidate: { select: { id: true, name: true, email: true } },
+  createdBy: { select: { name: true, email: true, phone: true } },
   evaluationTokens: {
     select: { panelistUserId: true, token: true, status: true },
   },
@@ -358,6 +360,7 @@ export class InterviewService {
         [...new Set(dto.panelistUserIds)],
         results.map((r) => r.id),
         dto.kind,
+        actor.name,
       );
     }
     return results;
@@ -374,6 +377,7 @@ export class InterviewService {
     panelistUserIds: string[],
     roundIds: string[],
     kind: string,
+    senderName?: string | null,
   ) {
     const rounds = await this.prisma.interviewRound.findMany({
       where: { id: { in: roundIds } },
@@ -415,6 +419,8 @@ export class InterviewService {
                 ?.token,
             ),
           })),
+          undefined,
+          senderName,
         ),
       });
     }
@@ -752,7 +758,13 @@ export class InterviewService {
           title: 'Interview rescheduled',
           message: `${fresh.candidate.name} · ${round.requisition.designation} — ${fresh.kind.toLowerCase()} interview moved to ${formatSlotShort(fresh.scheduledAt)}.`,
           link: path,
-          email: panelNotice(fresh.kind, round.requisition, [{ round: fresh, path }], moved),
+          email: panelNotice(
+            fresh.kind,
+            round.requisition,
+            [{ round: fresh, path }],
+            moved,
+            actor.name,
+          ),
         });
         panelTold++;
       }
@@ -1356,11 +1368,7 @@ export class InterviewService {
     dto: ScheduleInterviewDto,
   ) {
     const { designation } = req;
-    // Dhaka time (GMT+6) always — not whatever zone the server runs in.
-    const at = formatInterviewSlot(round.scheduledAt);
-    const when = at ? `${at.date}, ${at.time} (GMT+6)` : 'a time to be confirmed';
     const kindLabel = round.kind.toLowerCase();
-    const modeLabel = round.mode.toLowerCase();
 
     if (dto.notifyPanel !== false) {
       // Each panelist gets THEIR OWN evaluation link, not a link to the app.
@@ -1390,7 +1398,13 @@ export class InterviewService {
           title: 'Interview to conduct',
           message: `${round.candidate.name} · ${designation} — ${kindLabel} interview on ${formatSlotShort(round.scheduledAt)}.`,
           link: path,
-          email: panelNotice(round.kind, req, [{ round, path }]),
+          email: panelNotice(
+            round.kind,
+            req,
+            [{ round, path }],
+            undefined,
+            round.createdBy?.name,
+          ),
         });
       }
     }
@@ -1401,10 +1415,21 @@ export class InterviewService {
       this.mail.isConfigured()
     ) {
       try {
+        const email = buildCandidateInterviewEmail({
+          candidateName: round.candidate.name,
+          designation,
+          scheduledAt: round.scheduledAt,
+          mode: round.mode,
+          location: round.location,
+          meetLink: round.meetLink,
+          recruiter: round.createdBy,
+        });
         await this.mail.send({
           to: round.candidate.email,
-          subject: `Interview Invitation — ${designation} | DBL Group`,
-          text: `Dear ${round.candidate.name},\n\nYou are invited to a ${kindLabel} interview for the ${designation} position.\n\nWhen: ${when}\nMode: ${modeLabel}${round.meetLink ? `\nGoogle Meet: ${round.meetLink}` : round.location ? `\nWhere: ${round.location}` : ''}\n\nA calendar invitation has also been sent to this address if scheduling is connected.\n\nBest regards,\nDBL Group Recruitment`,
+          subject: email.subject,
+          text: email.text,
+          html: email.html,
+          replyTo: round.createdBy?.email ?? undefined,
         });
       } catch (err) {
         this.logger.warn(`Interview email failed: ${(err as Error).message}`);

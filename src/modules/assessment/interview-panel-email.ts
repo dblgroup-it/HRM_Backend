@@ -25,6 +25,7 @@ export interface PanelEmailSlot {
 
 export interface PanelEmailInput {
   recipientName: string;
+  senderName?: string | null;
   /** InterviewKind — FIRST / SECOND / FINAL. */
   kind: string;
   requisition: {
@@ -107,6 +108,7 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
   const { requisition: req, slots } = input;
   const kind = KIND_LABEL[input.kind] ?? input.kind.toLowerCase();
   const n = slots.length;
+  const senderName = input.senderName?.trim() || 'Corporate HR';
   const today = new Date().toLocaleDateString('en-GB', {
     timeZone: TIMEZONE,
     day: 'numeric',
@@ -125,10 +127,10 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
       : `Interview panel: ${n} candidates — ${req.designation}`;
 
   const intro = moved
-    ? `The following ${kind} interview has been moved to a new time. Please update your calendar — your marking link is unchanged.`
+    ? `The following ${kind} interview has been moved to a new time. Please update your calendar - your marking link is unchanged.`
     : n === 1
-      ? `You have been nominated to the panel for the following ${kind} interview.`
-      : `You have been nominated to the panel for the following ${n} ${kind} interviews, listed in order of their time slots.`;
+      ? `You are kindly requested to participate as a member of the Interview Panel for the recruitment of ${req.designation}.`
+      : `You are kindly requested to participate as a member of the Interview Panel for the recruitment of ${req.designation}.`;
 
   const was = moved ? formatInterviewSlot(moved.from) : null;
   const wasLine = was ? `${was.date}, ${was.time}` : 'the earlier time';
@@ -169,6 +171,8 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
     })
     .join('');
 
+  const summary = panelSummary(slots);
+
   const html = `<!doctype html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -197,8 +201,10 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
 
   <tr><td style="background:#ffffff;padding:28px 28px 32px">
 
-    <p style="margin:0 0 6px;font-size:15px;color:#1a202c">Dear <strong>${esc(input.recipientName)}</strong>,</p>
-    <p style="margin:0 0 24px;font-size:14px;color:#4a5568;line-height:1.7">${esc(intro)}</p>
+    <p style="margin:0 0 6px;font-size:15px;color:#1a202c">Dear Sir/Ma'am,</p>
+    <p style="margin:0 0 14px;font-size:14px;color:#4a5568;line-height:1.7">Greetings from Corporate HR.</p>
+    <p style="margin:0 0 10px;font-size:14px;color:#4a5568;line-height:1.7">${esc(intro)}</p>
+    <p style="margin:0 0 24px;font-size:14px;color:#4a5568;line-height:1.7">The interview has been scheduled as per the following details:</p>
 
     <div style="background:#f7faff;border:1px solid #c3d9f8;border-radius:8px;padding:14px 20px;margin-bottom:8px">
       <p style="margin:0 0 2px;font-size:11px;color:#6b7c93;text-transform:uppercase;letter-spacing:0.6px">Position</p>
@@ -207,19 +213,33 @@ export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
     </div>
 ${movedBox}
 
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 18px">
+      ${detailRow('Position', req.designation)}
+      ${detailRow('Date', summary.date)}
+      ${detailRow('Time', summary.time)}
+      ${detailRow('Venue', summary.venue)}
+      ${detailRow('No. of Candidates', String(n))}
+    </table>
+
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
       ${rows}
     </table>
 
     <p style="margin:0 0 8px;font-size:13px;color:#4a5568;line-height:1.7">
-      Each <strong>Evaluate</strong> button opens your own marking sheet for that candidate. No sign-in is needed, so please do not forward this email.
+      The candidate profiles/CVs and other relevant information will be shared with you for your kind review prior to the interview.
+    </p>
+    <p style="margin:0 0 8px;font-size:13px;color:#4a5568;line-height:1.7">
+      Please use each <strong>Evaluate</strong> button below to open your own assessment sheet for that candidate. No sign-in is needed, so please do not forward this email.
     </p>
     <p style="margin:0 0 24px;font-size:13px;color:#4a5568;line-height:1.7">
-      You can also find all of your interviews under
+      Your valuable time and professional insights will be highly appreciated in assessing the candidates and supporting the selection process.
+    </p>
+    <p style="margin:0 0 24px;font-size:13px;color:#4a5568;line-height:1.7">
+      We look forward to your kind participation. You can also find all of your interviews under
       <a href="${attr(input.myInterviewsUrl)}" style="color:#1877c0;text-decoration:none;font-weight:600">My Interviews</a> in DBL HRM.
     </p>
 
-    <p style="margin:0;font-size:14px;color:#4a5568;line-height:1.6">Best regards,<br><strong style="color:#1a202c">DBL Group Recruitment</strong></p>
+    <p style="margin:0;font-size:14px;color:#4a5568;line-height:1.6">Best Regards,<br><strong style="color:#1a202c">${esc(senderName)}</strong><br>Head, Talent Management<br>Corporate HR | DBL Group</p>
   </td></tr>
 
   <tr><td style="background:#f8fafc;padding:16px 28px;border-top:1px solid #e9eef4">
@@ -246,23 +266,36 @@ ${movedBox}
   });
 
   const text = [
-    `Dear ${input.recipientName},`,
+    "Dear Sir/Ma'am,",
+    '',
+    'Greetings from Corporate HR.',
     '',
     intro,
     '',
-    `Position: ${position.join(' · ')}`,
+    'The interview has been scheduled as per the following details:',
+    '',
+    `Position: ${req.designation}`,
+    `Date: ${summary.date}`,
+    `Time: ${summary.time}`,
+    `Venue: ${summary.venue}`,
+    `No. of Candidates: ${n}`,
     `Ref: ${req.code}`,
     ...(moved
-      ? [`Rescheduled — previously ${wasLine}${reason ? `. Reason: ${reason}` : ''}`]
+      ? [`Rescheduled - previously ${wasLine}${reason ? `. Reason: ${reason}` : ''}`]
       : []),
     '',
     textRows.join('\n\n'),
     '',
-    'Each Evaluate link opens your own marking sheet for that candidate. No sign-in is needed, so please do not forward this email.',
+    'The candidate profiles/CVs and other relevant information will be shared with you for your kind review prior to the interview.',
+    'Please use each Evaluate link to open your own assessment sheet for that candidate. No sign-in is needed, so please do not forward this email.',
+    'Your valuable time and professional insights will be highly appreciated in assessing the candidates and supporting the selection process.',
+    'We look forward to your kind participation.',
     `All your interviews: ${input.myInterviewsUrl}`,
     '',
-    'Best regards,',
-    'DBL Group Recruitment',
+    'Best Regards,',
+    senderName,
+    'Head, Talent Management',
+    'Corporate HR | DBL Group',
   ].join('\n');
 
   return { subject, html, text };
@@ -288,10 +321,12 @@ export function panelNotice(
     path: string;
   }[],
   rescheduled?: PanelEmailInput['rescheduled'],
+  senderName?: string | null,
 ) {
   return (to: { name: string; origin: string }): PanelEmail =>
     buildPanelEmail({
       recipientName: to.name,
+      senderName,
       kind,
       requisition,
       rescheduled,
@@ -305,6 +340,48 @@ export function panelNotice(
       })),
       myInterviewsUrl: `${to.origin}/my-interviews`,
     });
+}
+
+function panelSummary(slots: PanelEmailSlot[]): {
+  date: string;
+  time: string;
+  venue: string;
+} {
+  const dated = slots
+    .map((slot) => formatInterviewSlot(slot.scheduledAt))
+    .filter((slot): slot is { date: string; time: string } => Boolean(slot));
+  const first = dated[0];
+  const last = dated[dated.length - 1];
+  const date =
+    first && last
+      ? first.date === last.date
+        ? first.date
+        : `${first.date} - ${last.date}`
+      : 'To be confirmed';
+  const time =
+    first && last
+      ? first.time === last.time
+        ? first.time
+        : `${first.time} - ${last.time}`
+      : 'To be confirmed';
+  const venues = [...new Set(slots.map(venue).filter(Boolean))];
+  return {
+    date,
+    time,
+    venue:
+      venues.length === 0
+        ? 'To be confirmed'
+        : venues.length === 1
+          ? venues[0]
+          : 'Multiple venues / meeting links',
+  };
+}
+
+function detailRow(label: string, value: string): string {
+  return `<tr>
+    <td style="width:150px;padding:8px 12px;border:1px solid #dbeafe;background:#eff6ff;font-size:13px;font-weight:700;color:#334155">${esc(label)}</td>
+    <td style="padding:8px 12px;border:1px solid #dbeafe;font-size:13px;color:#1e293b">${esc(value)}</td>
+  </tr>`;
 }
 
 function esc(s: string): string {

@@ -42,11 +42,13 @@ describe('interview panel email', () => {
     expect(email.html).not.toMatch(/Mark here/);
   });
 
-  it('greets the panelist and names the position', () => {
-    expect(email.html).toContain('Dear <strong>Ayesha Rahman</strong>');
+  it('uses the formal panel invitation copy and names the position', () => {
+    expect(email.html).toContain("Dear Sir/Ma'am");
     expect(email.html).toContain('Senior Executive');
     expect(email.html).toContain('Merchandising · Jinnat Textile Mills Ltd.');
     expect(email.html).toContain('Ref: REQ-0042');
+    expect(email.html).toContain('Greetings from Corporate HR.');
+    expect(email.html).toContain('No. of Candidates');
     expect(email.subject).toBe(
       'Interview panel: 2 candidates — Senior Executive',
     );
@@ -63,6 +65,7 @@ describe('interview panel email', () => {
       '1. Rabbi Hasan\n   Mon, 21 Sept 2026, 11:36 AM — HR Conference Room, Level 4\n   Evaluate: https://hrm.dbl/evaluate/tok-a',
     );
     expect(email.text).toContain('2. Robiul Hasan');
+    expect(email.text).toContain('No. of Candidates: 2');
   });
 
   it('names the one candidate in the subject for a single interview', () => {
@@ -70,7 +73,7 @@ describe('interview panel email', () => {
       { round: round('Rabbi Hasan', null), path: '/my-interviews' },
     ])({ name: 'X', origin: 'https://hrm.dbl' });
     expect(one.subject).toBe('Interview panel: Rabbi Hasan — Senior Executive');
-    expect(one.html).toContain('following final interview.');
+    expect(one.html).toContain('participate as a member of the Interview Panel');
     expect(one.html).toContain('Time to be confirmed');
   });
 
@@ -107,9 +110,11 @@ describe('interview panel email', () => {
         },
       ],
       myInterviewsUrl: 'https://hrm.dbl/my-interviews',
+      senderName: 'Nusrat Jahan',
     }).html;
     expect(html).not.toContain('<img src=x');
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('Nusrat Jahan');
   });
 });
 
@@ -130,7 +135,7 @@ describe('interview panel email — rescheduled', () => {
     expect(moved.html).toContain('11:36');
     expect(moved.html).toContain('Reason: Panel chair travelling');
     expect(moved.html).toContain('href="https://hrm.dbl/evaluate/tok-a"');
-    expect(moved.text).toContain('Rescheduled — previously');
+    expect(moved.text).toContain('Rescheduled - previously');
   });
 
   it('leaves a first invitation as it was', () => {

@@ -73,6 +73,9 @@ describe('NotificationsService — custom email', () => {
       message: 'Message',
     });
     await flush();
-    expect(send.mock.calls[0][0].subject).toBe('Title | DBL HRM');
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: 'Title | DBL HRM' }),
+    );
   });
 });
