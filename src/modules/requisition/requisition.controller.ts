@@ -19,6 +19,7 @@ import {
 } from '../../common/decorators/current-user.decorator';
 import { ATTACHMENT_UPLOAD } from '../../common/upload/file-upload';
 import { RequisitionService } from './requisition.service';
+import { RequisitionBoardService } from './requisition-board.service';
 import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
@@ -37,7 +38,10 @@ import {
 
 @Controller('requisitions')
 export class RequisitionController {
-  constructor(private readonly requisitionService: RequisitionService) {}
+  constructor(
+    private readonly requisitionService: RequisitionService,
+    private readonly boardService: RequisitionBoardService,
+  ) {}
 
   @Get()
   findAll(@Query() query: QueryRequisitionsDto, @CurrentUser() user: AuthUser) {
@@ -170,10 +174,25 @@ export class RequisitionController {
     @Body() dto: ApprovalActionDto,
     @CurrentUser() user: AuthUser,
   ) {
+    // The CHRO's hand-off to the board lives in its own service.
+    if (dto.decision === 'send_to_board') {
+      return this.boardService.sendToBoard(
+        id,
+        dto.boardMemberIds ?? [],
+        dto.note?.trim() ?? '',
+        { id: user.id, name: user.name },
+      );
+    }
     return this.requisitionService.act(id, dto, {
       id: user.id,
       name: user.name,
     });
+  }
+
+  /** Board groups and members the CHRO may send this requisition to. */
+  @Get(':id/board-members')
+  boardMembers(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.boardService.boardMembers(id, user.id);
   }
 
   @Patch(':id/resubmit')

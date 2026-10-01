@@ -71,6 +71,9 @@ enum ApprovalRole {
   SBU_HEAD
   CORPORATE_HR
   CHRO
+  /// Appended when the CHRO sends a requisition on to the board; decided by
+  /// the members' emailed votes (RequisitionBoardVote), not in the app.
+  BOARD
 }
 
 enum StepStatus {
@@ -252,6 +255,7 @@ model User {
   lockedUntil                   DateTime?              @map("locked_until")
   employee                      Employee?
   roleAssignments               RoleAssignment[]
+  requisitionBoardVotes         RequisitionBoardVote[] @relation("RequisitionBoardVoter")
   notifications                 Notification[]
   committeeRoles                CommitteeMember[]
   interviewPanels               InterviewPanelist[]
@@ -639,6 +643,7 @@ model Requisition {
   /// Optional supporting files (JD, approvals, etc.) — array of { name, fileId, url, size, uploadedAt }.
   attachments           Json?
   approvalSteps         ApprovalStep[]
+  boardVotes            RequisitionBoardVote[]
   activities            RequisitionActivity[]
   candidates            Candidate[]
   committeeMembers      CommitteeMember[]
@@ -1506,9 +1511,35 @@ model ApprovalStep {
   note           String        @default("")
   actedAt        DateTime?     @map("acted_at")
 
+  boardVotes     RequisitionBoardVote[]
+
   @@unique([requisitionId, orderIndex])
   @@index([approverUserId])
   @@map("approval_steps")
+}
+
+/// One board member's emailed vote on a requisition the CHRO sent to the
+/// board. The first answer decides the board step, as on approval sheets.
+model RequisitionBoardVote {
+  id             String          @id @default(cuid())
+  requisitionId  String          @map("requisition_id")
+  requisition    Requisition     @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  /// The BOARD approval step this vote decides.
+  stepId         String          @map("step_id")
+  step           ApprovalStep    @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  userId         String          @map("user_id")
+  user           User            @relation("RequisitionBoardVoter", fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the emailed link's token; the raw value is never stored.
+  tokenHash      String          @unique @map("token_hash") @db.VarChar(64)
+  tokenExpiresAt DateTime        @map("token_expires_at")
+  status         BoardVoteStatus @default(pending)
+  notes          String?
+  respondedAt    DateTime?       @map("responded_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  @@index([requisitionId])
+  @@index([stepId])
+  @@map("requisition_board_votes")
 }
 
 // ---------------------------------------------------------------------------

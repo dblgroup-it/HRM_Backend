@@ -6,6 +6,8 @@ import { ApprovalPathsModule } from '../approval-paths/approval-paths.module';
 import { MasterDataModule } from '../master-data/master-data.module';
 import { RequisitionService } from './requisition.service';
 import { RequisitionController } from './requisition.controller';
+import { RequisitionBoardService } from './requisition-board.service';
+import { RequisitionBoardPublicController } from './requisition-board-public.controller';
 
 @Module({
   imports: [
@@ -14,7 +16,7 @@ import { RequisitionController } from './requisition.controller';
     ApprovalPathsModule,
     MasterDataModule,
   ],
-  providers: [RequisitionService],
-  controllers: [RequisitionController],
+  providers: [RequisitionService, RequisitionBoardService],
+  controllers: [RequisitionController, RequisitionBoardPublicController],
 })
 export class RequisitionModule {}

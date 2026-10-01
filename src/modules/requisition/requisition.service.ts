@@ -72,6 +72,10 @@ const reqWithRelations = {
   jobAnalysisAssignee: { select: { id: true, name: true } },
   coverRecruiter: { select: { id: true, name: true, employeeCode: true } },
   activities: { orderBy: { createdAt: 'asc' } },
+  boardVotes: {
+    orderBy: { createdAt: 'asc' },
+    include: { user: { select: { id: true, name: true } } },
+  },
   candidates: {
     // Removed candidates are soft-deleted, and the candidates API filters
     // them out — so counting them here made the tab badges and the pipeline
@@ -81,7 +85,7 @@ const reqWithRelations = {
   },
 } satisfies Prisma.RequisitionInclude;
 
-type RequisitionFull = Prisma.RequisitionGetPayload<{
+export type RequisitionFull = Prisma.RequisitionGetPayload<{
   include: typeof reqWithRelations;
 }>;
 
@@ -913,6 +917,25 @@ export class RequisitionService {
     return this.ser(req);
   }
 
+  /** For RequisitionBoardService: the full record, access-checked. */
+  async loadForBoard(id: string, userId?: string): Promise<RequisitionFull> {
+    return this.load(id, userId);
+  }
+
+  /** For RequisitionBoardService: the same step rule `act` enforces. */
+  async mayActOnStep(
+    step: RequisitionFull['approvalSteps'][number],
+    unitName: string,
+    userId: string,
+  ): Promise<boolean> {
+    return this.canActOnStep(step, unitName, userId);
+  }
+
+  /** For RequisitionBoardService. */
+  serialize(req: RequisitionFull) {
+    return this.ser(req);
+  }
+
   /** Step 2 — act on the active (first pending) sign-off. */
   async act(
     id: string,
@@ -947,6 +970,21 @@ export class RequisitionService {
         current.approverUserId
           ? `Only ${current.assignee} can action the "${current.title}" step`
           : `You don't hold the "${current.title}" role for ${req.unitFactory}`,
+      );
+    }
+
+    // The board is the CHRO's hand-off; it has its own service and route.
+    if (dto.decision === 'send_to_board') {
+      throw new BadRequestException('Send to the board from the CHRO step.');
+    }
+    // Already with the CHRO (or past them, with the board): sending it to
+    // the CHRO again would append a second CHRO step.
+    if (
+      dto.decision === 'escalate' &&
+      (current.role === 'CHRO' || current.role === 'BOARD')
+    ) {
+      throw new BadRequestException(
+        'This requisition is already with the CHRO — send it to the board instead.',
       );
     }
 
@@ -1064,7 +1102,20 @@ export class RequisitionService {
       }
     });
 
-    const updated = await this.notifyAfterAction(id, dto.decision, actorName);
+    return this.finishDecision(id, dto.decision, actorName);
+  }
+
+  /**
+   * Everything after a sign-off decision lands: live updates, notifications,
+   * the Talent Bank match, and the optional automatic role profile on full
+   * approval. Shared by in-app decisions and the board's emailed votes.
+   */
+  async finishDecision(
+    id: string,
+    decision: ApprovalActionDto['decision'],
+    actorName: string,
+  ) {
+    const updated = await this.notifyAfterAction(id, decision, actorName);
 
     if (updated.status === 'APPROVED') {
       this.candidates.syncTalentBankMatchesOnRequisitionEvent(id);
@@ -1616,6 +1667,7 @@ export class RequisitionService {
       jobDescription: string;
       responsibilities: string[];
       requirements: string[];
+      source?: 'job_analysis';
     },
     actor: { id: string; name: string },
   ) {
@@ -1635,7 +1687,11 @@ export class RequisitionService {
       responsibilities: clean(dto.responsibilities),
       requirements: clean(dto.requirements),
       generatedAt: new Date().toISOString(),
-      generatedBy: 'manual' as const,
+      // Kept as the job analysis said it, or changed by hand.
+      generatedBy:
+        dto.source === 'job_analysis'
+          ? ('job_analysis' as const)
+          : ('manual' as const),
     };
 
     const updated = await this.prisma.requisition.update({
@@ -2329,6 +2385,14 @@ function serialize(req: RequisitionFull, files?: FileGrantService) {
       status: low(s.status),
       note: s.note,
       actedAt: s.actedAt?.toISOString() ?? null,
+    })),
+    // The board's emailed answers, shown under the BOARD step.
+    boardVotes: req.boardVotes.map((v) => ({
+      stepId: v.stepId,
+      name: v.user.name,
+      status: v.status,
+      notes: v.notes,
+      respondedAt: v.respondedAt?.toISOString() ?? null,
     })),
     activityLog: req.activities.map((a) => ({
       actor: a.actor,

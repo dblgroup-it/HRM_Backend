@@ -228,11 +228,35 @@ export class ReturnToRaiserDto {
 }
 
 export class ApprovalActionDto {
-  @IsIn(['approved', 'rejected', 'need_more_info', 'escalate'])
-  decision!: 'approved' | 'rejected' | 'need_more_info' | 'escalate';
+  @IsIn(['approved', 'rejected', 'need_more_info', 'escalate', 'send_to_board'])
+  decision!:
+    | 'approved'
+    | 'rejected'
+    | 'need_more_info'
+    | 'escalate'
+    | 'send_to_board';
 
   @IsOptional()
   @IsString()
+  note?: string;
+
+  /** Who votes, on `send_to_board` — members of a board group. */
+  @ValidateIf((o: ApprovalActionDto) => o.decision === 'send_to_board')
+  @IsArray()
+  @ArrayMinSize(1, { message: 'Choose at least one board member.' })
+  @ArrayMaxSize(30)
+  @IsString({ each: true })
+  boardMemberIds?: string[];
+}
+
+/** A board member's answer on the emailed requisition link. */
+export class RequisitionBoardVoteDto {
+  @IsIn(['approved', 'rejected'])
+  decision!: 'approved' | 'rejected';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
   note?: string;
 }
 
@@ -273,6 +297,11 @@ export class UpdateRoleProfileDto {
   @MaxLength(500, { each: true })
   @ArrayMaxSize(20)
   requirements!: string[];
+
+  /** Saved unchanged from the draft built off Factory HR's job analysis. */
+  @IsOptional()
+  @IsIn(['job_analysis'])
+  source?: 'job_analysis';
 }
 
 export class PostRequisitionDto {
