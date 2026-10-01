@@ -443,6 +443,9 @@ export class SalaryFixationService {
       salaryExpectation: number | null;
       salaryBenefitsNote: string | null;
       salaryBenefits: string[];
+      transportPickup: string | null;
+      packageUpdatedAt: string | null;
+      packageUpdatedByName: string | null;
     },
   ) {
     const base = record ?? {
@@ -560,6 +563,11 @@ export class SalaryFixationService {
       salaryBenefitsNote: candidatePackage.salaryBenefitsNote,
       /** The same, as ticked keys — lunch, pick and drop, housing, tax. */
       salaryBenefits: candidatePackage.salaryBenefits,
+      // So the recruiter can correct these from here, through the same
+      // stamped save as the interview form (it refuses a stale overwrite).
+      transportPickup: candidatePackage.transportPickup,
+      packageUpdatedAt: candidatePackage.packageUpdatedAt,
+      packageUpdatedByName: candidatePackage.packageUpdatedByName,
       status,
       offeredAt: base.offeredAt?.toISOString() ?? null,
       offeredById: base.offeredById,
@@ -905,11 +913,17 @@ function candidatePackageOf(cand: {
   salaryExpectation: number | null;
   salaryBenefitsNote: string | null;
   salaryBenefits: string[];
+  transportPickup: string | null;
+  packageUpdatedAt: Date | null;
+  packageUpdatedByName: string | null;
 }) {
   return {
     presentSalary: cand.presentSalary,
     salaryExpectation: cand.salaryExpectation,
     salaryBenefitsNote: cand.salaryBenefitsNote,
     salaryBenefits: cand.salaryBenefits,
+    transportPickup: cand.transportPickup,
+    packageUpdatedAt: cand.packageUpdatedAt?.toISOString() ?? null,
+    packageUpdatedByName: cand.packageUpdatedByName,
   };
 }
