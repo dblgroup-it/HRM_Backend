@@ -270,6 +270,15 @@ export class CandidatesService {
     // requisitions — same email or same mobile (see apply-identity.ts).
     const countMap = applyCounts(rows, await this.sameApplicantPool(rows));
 
+    // A row still missing its male / female indicator gets one background
+    // read (or inherits it from the same person's other application).
+    for (const r of rows) {
+      if (!r.gender && r.cvFileId && !this.genderTried.has(r.id)) {
+        this.genderTried.add(r.id);
+        this.queueCvRead(r.id, r.requisitionId);
+      }
+    }
+
     // Finalized salary fixation result, shown as a badge on the candidate row.
     const rowIds = rows.map((r) => r.id);
     const fixations =
@@ -1419,6 +1428,28 @@ export class CandidatesService {
   }
 
   private cvReadQueue: Promise<void> = Promise.resolve();
+  /**
+   * Candidates already queued for a gender read in this process, so a CV
+   * the AI cannot decide on is not re-read on every pipeline load.
+   */
+  private readonly genderTried = new Set<string>();
+
+  /** The same person's gender from another application, if one has it. */
+  private async genderFromOtherApplications(cand: {
+    id: string;
+    email: string | null;
+    phone: string | null;
+  }): Promise<string | null> {
+    const others = sameApplicant(cand, await this.sameApplicantPool([cand]))
+      .map((r) => r.id)
+      .filter((id) => id !== cand.id);
+    if (!others.length) return null;
+    const hit = await this.prisma.candidate.findFirst({
+      where: { id: { in: others }, gender: { not: null } },
+      select: { gender: true },
+    });
+    return normalizeGender(hit?.gender);
+  }
 
   /**
    * Internal (Gmail ingestion): create a candidate from an emailed CV with no
@@ -1468,6 +1499,8 @@ export class CandidatesService {
       action: 'created',
     });
     this.autoScreen(created.id);
+    // Gender and "Applied N×" need what is on the CV, as for any upload.
+    this.queueCvRead(created.id, reqId);
     return created;
   }
 
@@ -1948,7 +1981,58 @@ export class CandidatesService {
       },
     });
     if (!cand) return false;
-    if (cand.cvProfile && !force) return true;
+
+    // "Applied 2×": the same person may already be known on another
+    // application — take their gender from there before asking the AI.
+    if (!cand.gender) {
+      const inherited = await this.genderFromOtherApplications(cand);
+      if (inherited) {
+        await this.prisma.candidate.update({
+          where: { id: cand.id },
+          data: { gender: inherited },
+        });
+        cand.gender = inherited;
+      }
+    }
+
+    if (cand.cvProfile && !force) {
+      if (cand.gender) return true;
+      // Read before gender was asked for. The profile is never overwritten
+      // (see above), so ask for the gender alone.
+      const fromProfile = normalizeGender(
+        (cand.cvProfile as { personal?: { gender?: unknown } })?.personal
+          ?.gender,
+      );
+      if (fromProfile) {
+        await this.prisma.candidate.update({
+          where: { id: cand.id },
+          data: { gender: fromProfile },
+        });
+        return true;
+      }
+      if (!cand.cvFileId || !this.ai.isConfigured()) return true;
+      try {
+        const { buffer, mimeType } = await this.drive.getFileBuffer(
+          cand.cvFileId,
+        );
+        const extracted = await this.ai.extractCvProfile({
+          mimeType,
+          base64: buffer.toString('base64'),
+        });
+        const gender = normalizeGender(extracted.gender);
+        if (gender) {
+          await this.prisma.candidate.update({
+            where: { id: cand.id },
+            data: { gender },
+          });
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Could not read the gender from ${cand.name}'s CV: ${(err as Error).message}`,
+        );
+      }
+      return true;
+    }
     if (!cand.cvFileId || !this.ai.isConfigured()) return false;
 
     try {
@@ -2323,6 +2407,8 @@ export class CandidatesService {
     });
     // Auto-screen the fresh CV against the role in the background.
     this.autoScreen(created.id);
+    // Gender and "Applied N×" need what is on the CV, as for any upload.
+    this.queueCvRead(created.id, reqId);
     return { ok: true };
   }
 
@@ -2449,9 +2535,15 @@ export class CandidatesService {
         stage: 'APPLIED' as CandidateStage,
         cvFileId: source.cvFileId,
         cvUrl: source.cvUrl,
+        // Already read once — carry it, rather than re-read the same CV.
+        gender: source.gender,
+        cvProfile: source.cvProfile ?? Prisma.JsonNull,
+        cvProfileAt: source.cvProfileAt,
+        cvAddress: source.cvAddress,
         notes: `Sourced from Talent Bank`,
       },
     });
+    if (!copy.gender && copy.cvFileId) this.queueCvRead(copy.id, requisitionId);
 
     return serializeCandidate(copy, this.files);
   }
