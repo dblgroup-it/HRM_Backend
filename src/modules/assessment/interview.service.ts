@@ -49,6 +49,7 @@ import { sameUnit } from '../../common/util/normalize-unit';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
+import { calendarInvitees } from './calendar-invitees';
 import {
   CRITERIA as EVALUATION_CRITERIA,
   scoreCriteria,
@@ -821,7 +822,10 @@ export class InterviewService {
       userId,
     );
     if (round.calendarEventId) {
-      await this.calendar.cancelEvent(round.calendarEventId);
+      await this.calendar.cancelEvent(
+        round.calendarEventId,
+        await this.calendarNotifies(),
+      );
     }
     await this.prisma.interviewRound.delete({ where: { id: roundId } });
     this.notifications.broadcastChange('candidate', round.requisitionId, {
@@ -1302,8 +1306,9 @@ export class InterviewService {
     designation: string,
     inviteCandidate: boolean,
   ): Promise<RoundFull | null> {
-    const input = this.eventInput(round, designation, inviteCandidate);
-    if (!input || !this.calendar.isConfigured()) return null;
+    if (!this.calendar.isConfigured()) return null;
+    const input = await this.eventInput(round, designation, inviteCandidate);
+    if (!input) return null;
     const ev = await this.calendar.createEvent(input);
     if (!ev?.eventId) return null;
     return this.prisma.interviewRound.update({
@@ -1325,14 +1330,17 @@ export class InterviewService {
     if (!this.calendar.isConfigured()) return null;
     if (round.calendarEventId) {
       if (round.status === 'CANCELLED') {
-        await this.calendar.cancelEvent(round.calendarEventId);
+        await this.calendar.cancelEvent(
+          round.calendarEventId,
+          await this.calendarNotifies(),
+        );
         return this.prisma.interviewRound.update({
           where: { id: round.id },
           data: { calendarEventId: null, meetLink: null },
           include: roundInclude,
         });
       }
-      const input = this.eventInput(round, designation, true);
+      const input = await this.eventInput(round, designation, true);
       if (input) await this.calendar.updateEvent(round.calendarEventId, input);
       return null;
     }
@@ -1340,18 +1348,26 @@ export class InterviewService {
     return this.syncCalendarCreate(round, designation, true);
   }
 
-  private eventInput(
+  /** Calendar mail follows the Settings email master switch. */
+  private async calendarNotifies(): Promise<boolean> {
+    return (await this.settings.getNotificationConfig()).emailEnabled;
+  }
+
+  private async eventInput(
     round: RoundFull,
     designation: string,
     inviteCandidate: boolean,
-  ): CalendarEventInput | null {
+  ): Promise<CalendarEventInput | null> {
     if (!round.scheduledAt) return null;
-    const attendees = round.panelists
-      .map((p) => p.user.email ?? '')
-      .filter(Boolean);
-    if (inviteCandidate && round.candidate.email) {
-      attendees.push(round.candidate.email);
-    }
+    const { attendees, notify } = calendarInvitees({
+      emailEnabled: await this.calendarNotifies(),
+      panelists: round.panelists.map((p) => ({
+        email: p.user.email,
+        emailNotifications: p.user.emailNotifications,
+      })),
+      candidateEmail: round.candidate.email,
+      inviteCandidate,
+    });
     return {
       summary: `Interview — ${round.candidate.name} · ${designation}`,
       description: `${cap(round.kind.toLowerCase())} interview for the ${designation} position (DBL HRM).`,
@@ -1359,6 +1375,7 @@ export class InterviewService {
       attendees,
       location: round.location,
       withMeet: round.mode === 'ONLINE',
+      notify,
     };
   }
 

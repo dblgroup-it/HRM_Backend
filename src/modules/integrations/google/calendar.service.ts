@@ -19,6 +19,11 @@ export interface CalendarEventInput {
   location?: string | null;
   /** Attach an auto-generated Google Meet link (online interviews). */
   withMeet: boolean;
+  /**
+   * False when email is switched off: Google sends no invite / update mail
+   * and the event carries no reminders. Defaults to true.
+   */
+  notify?: boolean;
 }
 
 export interface CalendarEventResult {
@@ -57,7 +62,7 @@ export class CalendarService {
     try {
       const res = await this.api().events.insert({
         calendarId: 'primary',
-        sendUpdates: 'all',
+        sendUpdates: input.notify === false ? 'none' : 'all',
         conferenceDataVersion: input.withMeet ? 1 : 0,
         requestBody: this.body(input),
       });
@@ -84,7 +89,7 @@ export class CalendarService {
       const res = await this.api().events.patch({
         calendarId: 'primary',
         eventId,
-        sendUpdates: 'all',
+        sendUpdates: input.notify === false ? 'none' : 'all',
         conferenceDataVersion: input.withMeet ? 1 : 0,
         requestBody: this.body(input, /* forUpdate */ true),
       });
@@ -102,14 +107,17 @@ export class CalendarService {
     }
   }
 
-  /** Cancels the event and emails attendees the cancellation. Best-effort. */
-  async cancelEvent(eventId: string): Promise<void> {
+  /**
+   * Cancels the event and, unless `notify` is false, emails attendees the
+   * cancellation. Best-effort.
+   */
+  async cancelEvent(eventId: string, notify = true): Promise<void> {
     if (!this.isConfigured() || !eventId) return;
     try {
       await this.api().events.delete({
         calendarId: 'primary',
         eventId,
-        sendUpdates: 'all',
+        sendUpdates: notify ? 'all' : 'none',
       });
     } catch (err) {
       this.logger.warn(
@@ -137,7 +145,10 @@ export class CalendarService {
       start: { dateTime: start.toISOString(), timeZone: TIMEZONE },
       end: { dateTime: end.toISOString(), timeZone: TIMEZONE },
       attendees,
-      reminders: { useDefault: true },
+      reminders:
+        input.notify === false
+          ? { useDefault: false, overrides: [] }
+          : { useDefault: true },
       // Only request a fresh Meet room on create — patching with a new
       // createRequest would replace the existing room.
       ...(input.withMeet && !forUpdate
