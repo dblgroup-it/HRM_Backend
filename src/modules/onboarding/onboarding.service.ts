@@ -16,6 +16,7 @@ import type { Response } from 'express';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PdfService } from '../../common/pdf/pdf.service';
+import { SingleFlight } from '../../common/util/single-flight';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   PermissionsService,
@@ -705,7 +706,24 @@ export class OnboardingService {
    * The rendered letter is stored as it went out — the candidate holds a copy,
    * so it must not change later because a template or a salary did.
    */
-  async sendOffer(candidateId: string, userId: string, dto: OfferLetterDto) {
+  /**
+   * Letters being sent right now, per candidate. A second press while the
+   * first is still rendering or mailing joins it rather than sending the
+   * candidate a second letter.
+   */
+  private readonly letterSends = new SingleFlight();
+
+  sendOffer(candidateId: string, userId: string, dto: OfferLetterDto) {
+    return this.letterSends.run(`offer:${candidateId}`, () =>
+      this.doSendOffer(candidateId, userId, dto),
+    );
+  }
+
+  private async doSendOffer(
+    candidateId: string,
+    userId: string,
+    dto: OfferLetterDto,
+  ) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
     if (!cand.email) {
@@ -765,8 +783,11 @@ export class OnboardingService {
     // The letter the candidate received is filed with their documents, not just
     // emailed: a copy in the outbox of one mailbox is not a record anyone else
     // can find, and this is the document the hire rests on.
+    // Filed in the background: the candidate already has the letter, and a
+    // slow Drive must not hold up (or, by timing out, appear to undo) a send
+    // that has happened. fileWithJoiningDocs never throws.
     if (pdf) {
-      await this.fileWithJoiningDocs(cand.requisition, cand.name, {
+      void this.fileWithJoiningDocs(cand.requisition, cand.name, {
         name: `Offer Letter — ${cand.name}.pdf`,
         mimeType: 'application/pdf',
         buffer: pdf,
@@ -841,7 +862,17 @@ export class OnboardingService {
     };
   }
 
-  async sendAppointmentLetter(
+  sendAppointmentLetter(
+    candidateId: string,
+    userId: string,
+    dto: AppointmentLetterDto,
+  ) {
+    return this.letterSends.run(`appointment:${candidateId}`, () =>
+      this.doSendAppointmentLetter(candidateId, userId, dto),
+    );
+  }
+
+  private async doSendAppointmentLetter(
     candidateId: string,
     userId: string,
     dto: AppointmentLetterDto,
@@ -913,8 +944,9 @@ export class OnboardingService {
         : undefined,
     });
 
+    // In the background, as for the offer letter.
     if (appointmentPdf) {
-      await this.fileWithJoiningDocs(cand.requisition, cand.name, {
+      void this.fileWithJoiningDocs(cand.requisition, cand.name, {
         name: `Appointment Letter — ${cand.name}.pdf`,
         mimeType: 'application/pdf',
         buffer: appointmentPdf,

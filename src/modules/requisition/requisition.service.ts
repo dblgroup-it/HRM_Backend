@@ -18,6 +18,7 @@ import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sameUnit } from '../../common/util/normalize-unit';
+import { SingleFlight } from '../../common/util/single-flight';
 import { isCodeCollision, nextRequisitionCode } from './requisition-code';
 import { OrganogramService } from '../organogram/organogram.service';
 import { PermissionsService } from '../rbac/permissions.service';
@@ -1863,6 +1864,29 @@ export class RequisitionService {
     if (!file) throw new BadRequestException('No file provided');
     const req = await this.load(id, actor.id);
     await this.requireAttachmentAccess(req, actor.id, 'adding a file');
+
+    // The same file again — usually a retry after the browser timed out on
+    // an upload the server went on to finish. Keep the one already there.
+    const same = (a: { name: string; size?: number }) =>
+      a.name === file.originalname && a.size === file.size;
+    if (readAttachments(req).some(same)) return this.ser(req);
+
+    // A retry arriving while the first upload is still going joins it.
+    return this.attachmentUploads.run(
+      `${id}:${file.originalname}:${file.size}`,
+      () => this.storeAttachment(id, req, file, actor),
+    );
+  }
+
+  /** Requisition attachments being uploaded right now, by file. */
+  private readonly attachmentUploads = new SingleFlight();
+
+  private async storeAttachment(
+    id: string,
+    req: RequisitionFull,
+    file: { originalname: string; mimetype: string; buffer: Buffer; size: number },
+    actor: { id: string; name: string },
+  ) {
     const ws = await this.recruitment.ensureWorkspace(req);
     if (!ws) {
       throw new BadRequestException(
@@ -1881,8 +1905,16 @@ export class RequisitionService {
     // The file stays private to the recruitment Google account. Anyone who may
     // see the requisition streams the attachment through this API instead of
     // opening a permanent public Drive link.
+    //
+    // Re-read the list now: the upload took a while, and another file may
+    // have been added meanwhile — writing back the list read before the
+    // upload would drop it.
+    const fresh = await this.prisma.requisition.findUniqueOrThrow({
+      where: { id },
+      select: { attachments: true },
+    });
     const attachments = [
-      ...readAttachments(req),
+      ...readAttachments(fresh),
       {
         name: file.originalname,
         fileId: uploaded.id,
@@ -2621,7 +2653,7 @@ interface RequisitionAttachment {
   uploadedAt: string;
 }
 
-function readAttachments(req: RequisitionFull): RequisitionAttachment[] {
+function readAttachments(req: { attachments: unknown }): RequisitionAttachment[] {
   return Array.isArray(req.attachments)
     ? (req.attachments as unknown as RequisitionAttachment[])
     : [];
