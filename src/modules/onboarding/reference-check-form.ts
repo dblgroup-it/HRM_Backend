@@ -23,7 +23,7 @@ export const QUALITY_SCALE = [
 export type Rating = (typeof RATING_SCALE)[number];
 export type QualityRating = (typeof QUALITY_SCALE)[number];
 
-const RATING_LABEL: Record<string, string> = {
+export const RATING_LABEL: Record<string, string> = {
   excellent: 'Excellent',
   good: 'Good',
   average: 'Average',

@@ -69,6 +69,14 @@ export class UpdateRequisitionDto {
   @MaxLength(150)
   designation?: string;
 
+  /** The other levels this post may be filled at (see the create DTO). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(150, { each: true })
+  alternateDesignations?: string[];
+
   @IsOptional()
   @IsString()
   @MinLength(2)

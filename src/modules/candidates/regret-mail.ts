@@ -23,7 +23,7 @@ export const REGRET_MAIL_BODY = [
   'We wish you every success in your career and future endeavors.',
   '',
   'Best Regards,',
-  'Corporate HR',
+  'HR Department',
   'DBL Group',
 ].join('\n');
 

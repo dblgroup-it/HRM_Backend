@@ -30,6 +30,7 @@ import type { Response } from 'express';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { designationLabel } from '../requisition/requisition-inputs';
 import {
   CandidatesService,
   renderEmailHtml,
@@ -131,9 +132,16 @@ const FACILITIES_SELECT = {
   packageUpdatedByName: true,
 } satisfies Prisma.CandidateSelect;
 
+/** The post as people read it: every level it is open at, "A / B". */
+const postTitle = (r: {
+  designation: string;
+  alternateDesignations?: string[] | null;
+}) => designationLabel(r.designation, r.alternateDesignations);
+
 const PANEL_REQ_SELECT = {
   code: true,
   designation: true,
+  alternateDesignations: true,
   department: true,
   unitFactory: true,
 } satisfies Prisma.RequisitionSelect;
@@ -298,7 +306,7 @@ export class InterviewService {
     // Best-effort Google Calendar event (+ Meet link for online interviews).
     const synced = await this.syncCalendarCreate(
       round,
-      cand.requisition.designation,
+      postTitle(cand.requisition),
       dto.notifyCandidate === true,
     );
     if (synced) round = synced;
@@ -408,7 +416,7 @@ export class InterviewService {
       await this.notifications.notify(userId, {
         type: 'interview_assigned',
         title: `${ordered.length} interviews to conduct`,
-        message: `${req.designation} — ${kindLabel} interviews: ${names}.`,
+        message: `${postTitle(req)} — ${kindLabel} interviews: ${names}.`,
         link: '/my-interviews',
         email: panelNotice(
           kind,
@@ -504,7 +512,7 @@ export class InterviewService {
       await this.notifications.notify(userId, {
         type: 'interview_assigned',
         title: 'Added to an interview panel',
-        message: `${round.candidate.name} · ${round.requisition.designation} — ${round.kind.toLowerCase()} interview on ${when}.`,
+        message: `${round.candidate.name} · ${postTitle(round.requisition)} — ${round.kind.toLowerCase()} interview on ${when}.`,
         link: path,
         email: panelNotice(round.kind, round.requisition, [{ round, path }]),
       });
@@ -528,6 +536,7 @@ export class InterviewService {
           select: {
             unitFactory: true,
             designation: true,
+            alternateDesignations: true,
             recruiterId: true,
             coverRecruiterId: true,
             coverUntil: true,
@@ -668,7 +677,7 @@ export class InterviewService {
     if (fresh) {
       const synced = await this.syncCalendarUpdate(
         fresh,
-        round.requisition.designation,
+        postTitle(round.requisition),
       );
       if (synced) fresh = synced;
     }
@@ -743,7 +752,7 @@ export class InterviewService {
       include: roundInclude,
     });
     if (!fresh) return { id: roundId };
-    const synced = await this.syncCalendarUpdate(fresh, round.requisition.designation);
+    const synced = await this.syncCalendarUpdate(fresh, postTitle(round.requisition));
     if (synced) fresh = synced;
 
     const moved = { from: round.scheduledAt, reason };
@@ -757,7 +766,7 @@ export class InterviewService {
         await this.notifications.notify(p.userId, {
           type: 'interview_rescheduled',
           title: 'Interview rescheduled',
-          message: `${fresh.candidate.name} · ${round.requisition.designation} — ${fresh.kind.toLowerCase()} interview moved to ${formatSlotShort(fresh.scheduledAt)}.`,
+          message: `${fresh.candidate.name} · ${postTitle(round.requisition)} — ${fresh.kind.toLowerCase()} interview moved to ${formatSlotShort(fresh.scheduledAt)}.`,
           link: path,
           email: panelNotice(
             fresh.kind,
@@ -776,10 +785,10 @@ export class InterviewService {
       try {
         await this.mail.send({
           to: fresh.candidate.email,
-          subject: `Interview Rescheduled — ${round.requisition.designation} | DBL Group`,
+          subject: `Interview Rescheduled — ${postTitle(round.requisition)} | DBL Group`,
           text: candidateRescheduleText({
             name: fresh.candidate.name,
-            designation: round.requisition.designation,
+            designation: postTitle(round.requisition),
             kind: fresh.kind,
             from: round.scheduledAt,
             to: fresh.scheduledAt,
@@ -859,6 +868,7 @@ export class InterviewService {
             id: true,
             code: true,
             designation: true,
+            alternateDesignations: true,
             unitFactory: true,
           },
         },
@@ -921,7 +931,7 @@ export class InterviewService {
         requisition: {
           id: r.requisition.id,
           code: r.requisition.code,
-          designation: r.requisition.designation,
+          designation: postTitle(r.requisition),
           unit: r.requisition.unitFactory,
         },
         criteria: EVALUATION_CRITERIA,
@@ -1060,6 +1070,7 @@ export class InterviewService {
             requisition: {
               select: {
                 designation: true,
+                alternateDesignations: true,
                 unitFactory: true,
               },
             },
@@ -1144,7 +1155,7 @@ export class InterviewService {
         mode: et.round.mode.toLowerCase(),
         scheduledAt: et.round.scheduledAt?.toISOString() ?? null,
         location: et.round.location ?? '',
-        designation: et.round.requisition.designation,
+        designation: postTitle(et.round.requisition),
         unit: et.round.requisition.unitFactory,
       },
       criteria: EVALUATION_CRITERIA,
@@ -1384,7 +1395,7 @@ export class InterviewService {
     req: PanelEmailInput['requisition'],
     dto: ScheduleInterviewDto,
   ) {
-    const { designation } = req;
+    const designation = postTitle(req);
     const kindLabel = round.kind.toLowerCase();
 
     if (dto.notifyPanel !== false) {
@@ -1485,6 +1496,7 @@ export class InterviewService {
             id: true,
             code: true,
             designation: true,
+            alternateDesignations: true,
             unitFactory: true,
             recruiterId: true,
             coverRecruiterId: true,
@@ -1976,7 +1988,7 @@ export class InterviewService {
           await this.notifications.notify(id, {
             type: 'first_interview_approval',
             title: 'Finalist awaiting your approval',
-            message: `${actor.name} put ${cand.name} through the first interview for ${cand.requisition.designation}.`,
+            message: `${actor.name} put ${cand.name} through the first interview for ${postTitle(cand.requisition)}.`,
             link: '/first-interview-approvals',
           });
         } catch {
@@ -2145,7 +2157,7 @@ export class InterviewService {
         if (blocker) throw new BadRequestException(blocker);
         const sent = await this.mail.send({
           to: cand.email!.trim(),
-          subject: regretMailSubject(cand.requisition.designation),
+          subject: regretMailSubject(postTitle(cand.requisition)),
           text: REGRET_MAIL_BODY,
           html: renderEmailHtml(REGRET_MAIL_BODY),
         });
@@ -2553,6 +2565,7 @@ export class InterviewService {
             id: true,
             code: true,
             designation: true,
+            alternateDesignations: true,
             unitFactory: true,
             department: true,
           },
@@ -2655,7 +2668,7 @@ export class InterviewService {
       note: r.note,
       createdAt: r.createdAt.toISOString(),
       delegatedBy: r.delegatedBy,
-      requisition: r.requisition,
+      requisition: { ...r.requisition, designation: postTitle(r.requisition) },
       // Everyone else this candidate was handed to, so two interviewers don't
       // unknowingly arrange competing sessions.
       alsoAssignedTo: r.candidate.interviewDelegations

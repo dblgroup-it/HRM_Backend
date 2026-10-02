@@ -10,6 +10,8 @@
  * Pure: no services, so the content is pinned by a spec.
  */
 
+import { designationLabel } from '../requisition/requisition-inputs';
+
 /** Interviews happen in Bangladesh; the server's own zone is irrelevant. */
 const TIMEZONE = 'Asia/Dhaka';
 
@@ -31,6 +33,8 @@ export interface PanelEmailInput {
   requisition: {
     code: string;
     designation: string;
+    /** Other levels the post is open at — printed as "A / B". */
+    alternateDesignations?: string[] | null;
     department: string;
     unitFactory: string;
   };
@@ -105,7 +109,14 @@ function venue(slot: PanelEmailSlot): string {
 }
 
 export function buildPanelEmail(input: PanelEmailInput): PanelEmail {
-  const { requisition: req, slots } = input;
+  const req = {
+    ...input.requisition,
+    designation: designationLabel(
+      input.requisition.designation,
+      input.requisition.alternateDesignations,
+    ),
+  };
+  const { slots } = input;
   const kind = KIND_LABEL[input.kind] ?? input.kind.toLowerCase();
   const n = slots.length;
   const senderName = input.senderName?.trim() || 'Corporate HR';

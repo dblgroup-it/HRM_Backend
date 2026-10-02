@@ -29,6 +29,7 @@ import {
   type LetterInput,
 } from './letters';
 import { buildOfferEmail, offerEmailHtml, offerEmailText } from './offer-email';
+import { groupLocation } from '../../common/util/group-location';
 import { applyCandidateAcceptance } from './accepted-offer';
 import {
   hrVerifyBlocker,
@@ -388,6 +389,12 @@ export class OnboardingService {
         alternateDesignations: cand.requisition.alternateDesignations ?? [],
         /** The level settled for this person; null until chosen. */
         fixedDesignation: ob?.fixedDesignation ?? null,
+        /**
+         * The address the letters would print if HR typed none — the NID,
+         * then the CV. Sent so the letter forms open filled in rather than
+         * blank while the preview beside them already shows it.
+         */
+        address: this.resolveAddress(null, null, cand, ob?.nidAddress),
         code: cand.requisition.code,
         unit: cand.requisition.unitFactory,
         department: cand.requisition.department,
@@ -1154,7 +1161,10 @@ export class OnboardingService {
       joiningDate: dto.joiningDate
         ? new Date(dto.joiningDate)
         : ob.offerJoiningDate,
-      jobLocation: dto.jobLocation ?? ob.offerJobLocation,
+      // Named under the group on everything that goes out:
+      // "DBL Group, Mymun Complex".
+      jobLocation:
+        groupLocation(dto.jobLocation ?? ob.offerJobLocation) || null,
       probationMonths: dto.probationMonths ?? ob.offerProbationMonths ?? 6,
       noticeDays: dto.noticeDays ?? ob.offerNoticeDays ?? 15,
       benefits: dto.benefits ?? ob.offerBenefits ?? [],

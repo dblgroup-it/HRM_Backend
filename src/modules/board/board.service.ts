@@ -446,11 +446,35 @@ export class BoardService {
         hrApprovedBy: { select: { id: true, name: true } },
         corporateHr: { select: { id: true, name: true } },
         chro: { select: { id: true, name: true } },
+        // Once on a sheet, the CHRO and board answer on the sheet, not on
+        // this row — so their votes are read from there.
+        batch: {
+          select: {
+            votes: {
+              include: {
+                user: { select: { id: true, name: true, email: true } },
+              },
+              orderBy: { respondedAt: { sort: 'asc', nulls: 'last' } },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
     if (!approval) return null;
-    return serializeApproval(approval, this.files);
+    const { batch, ...row } = approval;
+    return serializeApproval(
+      {
+        ...row,
+        votes: [
+          ...row.votes,
+          ...(batch?.votes ?? []).filter(
+            (v) => !row.votes.some((own) => own.id === v.id),
+          ),
+        ],
+      },
+      this.files,
+    );
   }
 
   async hrApprove(

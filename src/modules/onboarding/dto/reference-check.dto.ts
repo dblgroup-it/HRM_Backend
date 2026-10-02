@@ -92,3 +92,27 @@ export class ReferenceCheckDto {
   @MaxLength(4000)
   overallComments?: string;
 }
+
+/**
+ * What the form holds so far, sent to have the overall comment drafted.
+ * Nothing is saved; every field is optional because the draft is asked for
+ * mid-call, before the referee's details are necessarily all in.
+ */
+export class DraftReferenceCommentDto {
+  @IsOptional()
+  @IsObject()
+  ratings?: Record<string, string>;
+
+  @IsOptional() @IsString() @MaxLength(150) refereeName?: string;
+  @IsOptional() @IsString() @MaxLength(150) refereeDesignation?: string;
+  @IsOptional() @IsString() @MaxLength(200) refereeOrganization?: string;
+  @IsOptional() @IsString() @MaxLength(500) relationship?: string;
+  @IsOptional() @IsString() @MaxLength(500) knownDuration?: string;
+  @IsOptional() @IsString() @MaxLength(4000) strengths?: string;
+  @IsOptional() @IsString() @MaxLength(4000) weaknesses?: string;
+  @IsOptional() @IsString() @MaxLength(4000) handover?: string;
+  @IsOptional() @IsString() @MaxLength(4000) rehireEligible?: string;
+  @IsOptional() @IsString() @MaxLength(4000) concerns?: string;
+  /** Whatever is already in the box — refined, not thrown away. */
+  @IsOptional() @IsString() @MaxLength(4000) overallComments?: string;
+}

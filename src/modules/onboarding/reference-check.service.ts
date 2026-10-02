@@ -3,10 +3,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 
 import { PdfService } from '../../common/pdf/pdf.service';
+import { AiGraderService } from '../integrations/ai/ai-grader.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DriveService } from '../integrations/google/drive.service';
 import { contentDisposition } from '../../common/files/secure-file.service';
@@ -20,11 +22,15 @@ import {
 } from './letterhead';
 import {
   QUALITY_SCALE,
+  RATING_LABEL,
   RATING_QUESTIONS,
   RATING_SCALE,
   buildReferenceCheckForm,
 } from './reference-check-form';
-import type { ReferenceCheckDto } from './dto/reference-check.dto';
+import type {
+  DraftReferenceCommentDto,
+  ReferenceCheckDto,
+} from './dto/reference-check.dto';
 
 /**
  * Pre-employment reference checks.
@@ -45,7 +51,77 @@ export class ReferenceCheckService {
     private readonly pdf: PdfService,
     private readonly notifications: NotificationsService,
     private readonly drive: DriveService,
+    private readonly ai: AiGraderService,
   ) {}
+
+  /**
+   * Draft question 7, "Overall comments", from what the referee has said so
+   * far — the nine ratings above all, plus any answers already typed.
+   *
+   * Nothing is saved: the text comes back to the form, and the recruiter
+   * reads and edits it as their own. It must say only what the ratings and
+   * answers say — a reference is evidence, and an invented compliment on it
+   * is worse than a blank.
+   */
+  async draftComment(
+    candidateId: string,
+    userId: string,
+    dto: DraftReferenceCommentDto,
+  ): Promise<{ comment: string }> {
+    const cand = await this.requireCandidate(candidateId, userId);
+    if (!this.ai.isConfigured()) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    const ratings = RATING_QUESTIONS.map((q) => {
+      const v = dto.ratings?.[q.key];
+      return v ? `- ${q.text}: ${RATING_LABEL[v] ?? v}` : null;
+    }).filter(Boolean);
+    if (ratings.length === 0) {
+      throw new BadRequestException(
+        'Rate the candidate in section 3 first — the comment is drafted from those answers.',
+      );
+    }
+    const said = (label: string, v?: string) =>
+      v?.trim() ? `${label}: ${v.trim()}` : null;
+    const answers = [
+      said('Relationship to the candidate', dto.relationship),
+      said('Known for', dto.knownDuration),
+      said('Strengths', dto.strengths),
+      said('Weaknesses', dto.weaknesses),
+      said('Handed over duties before leaving', dto.handover),
+      said('Eligible for rehire', dto.rehireEligible),
+      said('Disciplinary / legal concerns', dto.concerns),
+    ].filter(Boolean);
+    const referee = [dto.refereeName, dto.refereeDesignation, dto.refereeOrganization]
+      .map((v) => v?.trim())
+      .filter(Boolean)
+      .join(', ');
+
+    const prompt = `You are an HR officer at DBL Group (Bangladesh) completing a pre-employment reference check form after a phone call with a referee. Write the "Overall comments" box.
+
+Candidate: ${cand.name}
+Position applied for: ${cand.requisition.designation}
+${referee ? `Referee: ${referee}\n` : ''}
+The referee's ratings:
+${ratings.join('\n')}
+${answers.length ? `\nThe referee's other answers:\n${answers.join('\n')}\n` : ''}${
+      dto.overallComments?.trim()
+        ? `\nAlready written (improve it, keep its facts):\n${dto.overallComments.trim()}\n`
+        : ''
+    }
+Write 2 to 4 plain, professional sentences in the third person ("The referee rated…", "He/She was described as…" — use the candidate's name rather than guessing a pronoun). Summarise the overall picture the ratings give, name the strongest and weakest areas, and state plainly any concern or rehire answer if one was given. Say nothing the ratings and answers do not support — no invented facts. Reply with the comment text only: no heading, no quotes, no bullet points.`;
+
+    const raw = await this.ai.complete(prompt, 400);
+    const comment = raw
+      .trim()
+      .replace(/^["'“]+|["'”]+$/g, '')
+      .replace(/^overall comments?:\s*/i, '')
+      .trim();
+    if (!comment) {
+      throw new ServiceUnavailableException('The AI returned nothing — try again.');
+    }
+    return { comment: comment.slice(0, 4000) };
+  }
 
   async list(candidateId: string, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);

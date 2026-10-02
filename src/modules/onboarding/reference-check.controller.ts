@@ -15,7 +15,10 @@ import {
   AuthUser,
 } from '../../common/decorators/current-user.decorator';
 import { ReferenceCheckService } from './reference-check.service';
-import { ReferenceCheckDto } from './dto/reference-check.dto';
+import {
+  DraftReferenceCommentDto,
+  ReferenceCheckDto,
+} from './dto/reference-check.dto';
 
 /** Pre-employment reference checks — recorded by the recruiter, per referee. */
 @Controller('candidates/:id/reference-checks')
@@ -34,6 +37,16 @@ export class ReferenceCheckController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.refChecks.save(id, user.id, dto);
+  }
+
+  /** AI drafts "Overall comments" from the ratings and answers so far. */
+  @Post('draft-comment')
+  draftComment(
+    @Param('id') id: string,
+    @Body() dto: DraftReferenceCommentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.refChecks.draftComment(id, user.id, dto);
   }
 
   @Patch(':rcId')

@@ -1226,7 +1226,17 @@ export class RequisitionService {
      * remembers. Only real changes are recorded: sending a field back
      * unchanged is not an edit and should not read as one in the log.
      */
-    const changes = describeRequisitionEdit(req, dto, nextGrade);
+    // Alternates are normalised against the primary the requisition will have
+    // after this edit, so a level promoted to primary drops out of the list.
+    const nextAlternates =
+      dto.alternateDesignations !== undefined || dto.designation !== undefined
+        ? normaliseAlternateDesignations(
+            (dto.designation ?? req.designation).trim(),
+            dto.alternateDesignations ?? req.alternateDesignations,
+          )
+        : undefined;
+
+    const changes = describeRequisitionEdit(req, dto, nextGrade, nextAlternates);
 
     const updated = await this.prisma.$transaction(async (tx) => {
       if (changes.length > 0) {
@@ -1257,6 +1267,9 @@ export class RequisitionService {
         data: {
           ...(dto.designation !== undefined
             ? { designation: dto.designation.trim() }
+            : {}),
+          ...(nextAlternates !== undefined
+            ? { alternateDesignations: nextAlternates }
             : {}),
           ...(dto.department !== undefined
             ? { department: dto.department.trim() }
@@ -1539,6 +1552,14 @@ export class RequisitionService {
     actorId: string,
     action: string,
   ): Promise<void> {
+    // The files are filed with the job analysis. Once it has gone to the
+    // approval chain they are part of what the approvers signed, so nobody
+    // adds or removes one afterwards.
+    if (req.status !== 'PENDING_JOB_ANALYSIS') {
+      throw new ForbiddenException(
+        `${req.code} has gone for approval — its attachments are closed (${action}).`,
+      );
+    }
     try {
       await this.requireEditAccess(req, actorId);
     } catch (err) {
@@ -1716,8 +1737,9 @@ export class RequisitionService {
    * from the requisition's details, falling back to a deterministic template
    * field-by-field if AI is off or returns nothing.
    */
-  private async buildRoleProfile(req: {
+  private async buildRoleProfile(row: {
     designation: string;
+    alternateDesignations?: string[] | null;
     department: string;
     unitFactory: string;
     placeOfPosting: string;
@@ -1728,6 +1750,12 @@ export class RequisitionService {
     requiredPosts: number;
     employmentNature: EmploymentNature;
   }) {
+    // Every level the post may be filled at — "Assistant Officer / Officer" —
+    // so the profile (and the social post drawn from it) names them all.
+    const req = {
+      ...row,
+      designation: designationLabel(row.designation, row.alternateDesignations),
+    };
     const base = synthesizeRoleProfile(req);
     if (!this.ai.isConfigured()) {
       return { ...base, generatedBy: 'template' as const };
@@ -2489,6 +2517,7 @@ function serialize(req: RequisitionFull, files?: FileGrantService) {
 export function describeRequisitionEdit(
   before: {
     designation?: string;
+    alternateDesignations?: string[] | null;
     department?: string;
     section?: string | null;
     subSection?: string | null;
@@ -2509,6 +2538,7 @@ export function describeRequisitionEdit(
   },
   dto: UpdateRequisitionDto,
   nextGrade: string | null | undefined,
+  nextAlternates?: string[],
 ): string[] {
   const out: string[] = [];
   const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : '—');
@@ -2526,6 +2556,11 @@ export function describeRequisitionEdit(
 
   const trimmed = (v: string | undefined) => (v === undefined ? v : v.trim());
   scalar('Designation', before.designation ?? null, trimmed(dto.designation));
+  if (nextAlternates !== undefined) {
+    const was = (before.alternateDesignations ?? []).join(' / ');
+    const next = nextAlternates.join(' / ');
+    if (was !== next) out.push(`Also open at: ${was || '—'} → ${next || '—'}`);
+  }
   scalar('Department', before.department ?? null, trimmed(dto.department));
   scalar('Section', before.section ?? null, trimmed(dto.section));
   scalar('Sub-section', before.subSection ?? null, trimmed(dto.subSection));

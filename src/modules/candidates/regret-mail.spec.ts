@@ -40,7 +40,7 @@ describe('the letter', () => {
   it('is DBL’s wording, opening and closing as agreed', () => {
     expect(REGRET_MAIL_BODY.startsWith('Dear Applicant,')).toBe(true);
     expect(REGRET_MAIL_BODY).toContain('we regret to inform you');
-    expect(REGRET_MAIL_BODY.endsWith('Corporate HR\nDBL Group')).toBe(true);
+    expect(REGRET_MAIL_BODY.endsWith('HR Department\nDBL Group')).toBe(true);
   });
 
   it('names the post in the subject when there is one', () => {
