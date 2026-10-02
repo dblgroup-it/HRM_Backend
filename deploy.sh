@@ -204,6 +204,24 @@ frontend_api_version() {
     | head -1 | cut -d"'" -f2 || true
 }
 
+# The dev server's dated copies (<prefix>YYYYMMDD), each migrated in turn.
+migrate_dev_copies() {
+  local url prefix base query db n=0
+  url="$(env_setting DATABASE_URL)"
+  [ -n "$url" ] || die "DATABASE_URL missing from the dev .env."
+  prefix="$(env_setting SANDBOX_DB_PREFIX)"; prefix="${prefix:-dbl_hrm_dev_}"
+  base="${url%%\?*}"; base="${base%/*}"          # postgresql://user:pass@host:port
+  query=""; [[ "$url" == *\?* ]] && query="?${url#*\?}"
+  for db in $(psql "${base}/postgres" -qAt -c \
+      "SELECT datname FROM pg_database WHERE datname ~ '^${prefix}[0-9]{8}$' ORDER BY datname"); do
+    note "$db"
+    DATABASE_URL="${base}/${db}${query}" npm run --silent prisma:deploy \
+      || die "migrations failed on the copy $db."
+    n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] || die "no dev copies to migrate — run deploy/ubuntu/dev-clone-db.sh first."
+}
+
 # ── Backend ─────────────────────────────────────────────────────────────────
 
 deploy_backend() {
@@ -237,6 +255,12 @@ deploy_backend() {
     # Migrations are not undone: they only ever add, and the previous code
     # runs on the newer schema. The pre-deploy dump is there if one must be.
     say "Backend — migrations left as they are (rollback)"
+  elif [ "$(env_setting SANDBOX_MODE)" = "true" ]; then
+    # The dev server: its .env names Postgres's maintenance database and the
+    # app opens a dated copy at boot, so migrate every copy — then switching
+    # to any day still matches this code.
+    say "Backend — applying migrations to every dev copy"
+    migrate_dev_copies
   else
     say "Backend — applying migrations"
     npm run prisma:deploy
