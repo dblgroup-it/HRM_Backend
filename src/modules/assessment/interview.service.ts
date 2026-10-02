@@ -2667,6 +2667,14 @@ export class InterviewService {
       id: r.id,
       note: r.note,
       createdAt: r.createdAt.toISOString(),
+      /**
+       * When this delegate's part ended (verdict in, Head approved where
+       * there is one). The board files the row under Done from this, not
+       * from the stage: the recruiter booking the second round moves a
+       * finalist back to Interview, and the stage alone then put the
+       * candidate back on the factory's list as if it had been sent again.
+       */
+      completedAt: r.completedAt?.toISOString() ?? null,
       delegatedBy: r.delegatedBy,
       requisition: { ...r.requisition, designation: postTitle(r.requisition) },
       // Everyone else this candidate was handed to, so two interviewers don't
