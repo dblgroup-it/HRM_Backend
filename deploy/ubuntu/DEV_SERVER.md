@@ -122,9 +122,12 @@ git -C ~/HRM_Backend fetch && git -C ~/HRM_Frontend fetch     # no password prom
 
 ## Day to day
 
-- **Test a change:** it is pushed to the `dev` branch, then on the server
-  `cd ~/dev/HRM_Backend && ./deploy.sh` (dev deploys itself — no backup, it
-  is a copy). Test at :4500.
+- **Test a change:** it is pushed to the `dev` branch, and the dev site
+  updates itself within about two minutes (`dev-autodeploy.sh` in the
+  crontab asks GitHub every 2 minutes; Dev tools shows the last update and
+  whether it worked). A commit that fails to deploy is not retried until the
+  next push; the dev site keeps running the previous version. By hand, any
+  time: `cd ~/dev/HRM_Backend && ./deploy.sh`. Test at :4500.
 - **Pick the day's data:** Configuration → Dev tools → *Data copy*. "Always
   the newest" follows each night's copy; picking a day pins it. Only the
   last 7 days are kept — when a pinned day passes 7 days old it is removed

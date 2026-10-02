@@ -118,6 +118,15 @@ else
   note "added"
 fi
 
+say "Auto-update from the dev branch every 2 minutes"
+LINE2="*/2 * * * * PATH=/usr/local/bin:/usr/bin:/bin $DEV_BE/deploy/ubuntu/dev-autodeploy.sh"
+if crontab -l 2>/dev/null | grep -qF "dev-autodeploy.sh"; then
+  note "already in the crontab"
+else
+  ( crontab -l 2>/dev/null; echo "$LINE2" ) | crontab -
+  note "added"
+fi
+
 say "Done — open https://$DOMAIN:4500"
 note "Both apps:  pm2 ls     (hrm-backend = live, hrm-backend-dev = dev)"
 note "Dev log:    pm2 logs hrm-backend-dev"
