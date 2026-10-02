@@ -93,6 +93,7 @@ import {
   type CmoDecision,
   type ProposedMedical,
 } from './medical-approval';
+import { SandboxService } from '../sandbox/sandbox.service';
 
 /**
  * The role whose holders may be named as the signatory on a letter, and the
@@ -256,6 +257,7 @@ export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
     private readonly notifications: NotificationsService,
@@ -1698,7 +1700,17 @@ export class OnboardingService {
     let email = dto.email?.trim() || null;
     let assetId = dto.assetId?.trim() || null;
 
-    const webhookUrl = this.config.get<string>('it.webhookUrl');
+    let webhookUrl = this.config.get<string>('it.webhookUrl');
+    if (
+      webhookUrl &&
+      (await this.sandbox.intercept('webhook', {
+        target: webhookUrl,
+        subject: `IT handoff: ${cand.name}`,
+        body: JSON.stringify({ employee_id: cand.id, name: cand.name }),
+      }))
+    ) {
+      webhookUrl = undefined;
+    }
     if (webhookUrl) {
       try {
         const payload = {

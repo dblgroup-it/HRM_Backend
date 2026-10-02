@@ -10,7 +10,9 @@
 module.exports = {
   apps: [
     {
-      name: 'hrm-backend',
+      // The dev server's checkout runs as hrm-backend-dev (PM2_APP_NAME in
+      // its .env, exported by deploy.sh), beside the live app.
+      name: process.env.PM2_APP_NAME || 'hrm-backend',
       script: './dist/main.js',
 
       // DO NOT raise `instances` / switch to exec_mode: 'cluster' without
@@ -26,7 +28,7 @@ module.exports = {
       // Restart a worker that leaks past 1.5 GB (safety net). Sized for the
       // prod box (4 cores, 5.7 GB RAM): leaves room for PostgreSQL and the
       // Chromium that each PDF letter starts.
-      max_memory_restart: '1500M',
+      max_memory_restart: process.env.PM2_MAX_MEMORY || '1500M',
 
       // Never restart more than 10× in 60 s (prevents crash loop)
       max_restarts: 10,

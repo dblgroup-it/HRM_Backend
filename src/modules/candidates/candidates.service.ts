@@ -59,6 +59,7 @@ import {
   PublicApplyDto,
   UpdateCandidateDto,
 } from './dto/candidate.dto';
+import { SandboxService } from '../sandbox/sandbox.service';
 
 /** The subset of a Multer file we use (typed locally to avoid extra deps). */
 export interface UploadedCv {
@@ -107,6 +108,7 @@ export class CandidatesService {
   private readonly logger = new Logger(CandidatesService.name);
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
     private readonly notifications: NotificationsService,
@@ -2683,6 +2685,7 @@ export class CandidatesService {
   /** Daily backstop — mirrors the ZingHR cron + manual-sync pattern. */
   @Cron('15 22 * * *')
   async talentBankMatchDailySync(): Promise<void> {
+    if (this.sandbox.skipJob('Talent Bank daily match')) return;
     if (!this.ai.isConfigured()) return;
     this.logger.log('Talent Bank daily match sync starting');
     await this.syncTalentBankMatchesForOpenRequisitions();

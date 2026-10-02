@@ -8,6 +8,7 @@ import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
 import { SettingsService } from '../../settings/settings.service';
+import { SandboxService } from '../../sandbox/sandbox.service';
 
 /** One file travelling with the message — an offer letter PDF, say. */
 export interface MailAttachment {
@@ -34,9 +35,13 @@ export class MailService {
   constructor(
     private readonly config: ConfigService,
     private readonly appSettings: SettingsService,
+    private readonly sandbox: SandboxService,
   ) {}
 
   isConfigured(): boolean {
+    // The dev server "sends" everything into its outbox, credentials or not,
+    // so flows that check this before mailing behave as they do live.
+    if (this.sandbox.enabled) return true;
     return Boolean(
       this.config.get<string>('mail.user') &&
       this.config.get<string>('mail.appPassword'),
@@ -64,6 +69,21 @@ export class MailService {
   }
 
   async send(input: SendMailInput): Promise<{ messageId: string }> {
+    // Dev server: recorded, never sent — and counted as sent, so the flow
+    // under test carries on exactly as it would live.
+    if (
+      await this.sandbox.intercept('email', {
+        target: input.to,
+        subject: input.subject,
+        body: input.text ?? input.html ?? '',
+        meta: {
+          html: input.html ?? null,
+          attachments: (input.attachments ?? []).map((a) => a.filename),
+        },
+      })
+    ) {
+      return { messageId: 'sandbox' };
+    }
     const { emailEnabled } = await this.appSettings.getNotificationConfig();
     if (!emailEnabled) {
       this.logger.debug(

@@ -3,6 +3,7 @@ import { google, gmail_v1 } from 'googleapis';
 
 import { PrismaService } from '../../../prisma/prisma.service';
 import { GoogleAuthService } from './google-auth.service';
+import { SandboxService } from '../../sandbox/sandbox.service';
 
 /** Attachment types we accept as CVs (mirrors the upload allowlist). */
 const CV_MIME_TYPES = new Set([
@@ -40,6 +41,7 @@ export class GmailService {
   private readonly logger = new Logger(GmailService.name);
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly auth: GoogleAuthService,
     private readonly prisma: PrismaService,
   ) {}
@@ -57,6 +59,9 @@ export class GmailService {
 
   /** Recent inbox messages (read OR unread) carrying at least one CV-type attachment, skipping already-processed ones. */
   async listUnreadCvs(max = 15): Promise<InboxCv[]> {
+    // Dev server: never read the live recruitment inbox — importing would
+    // also mark those CVs processed, and the live site would skip them.
+    if (this.sandbox.enabled) return [];
     if (!this.isConfigured()) return [];
     const gmail = this.api();
     // No is:unread — we track processed IDs ourselves so opening an email
@@ -87,6 +92,7 @@ export class GmailService {
    * Also marks read in Gmail so the inbox looks clean.
    */
   async markProcessed(messageId: string): Promise<void> {
+    if (this.sandbox.enabled) return;
     await this.saveProcessedId(messageId);
     try {
       await this.api().users.messages.modify({

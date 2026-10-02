@@ -26,6 +26,22 @@
 # answers the version that build calls — so `./deploy.sh frontend` cannot put
 # an app in front of a backend that does not speak its API version.
 #
+# Read from the backend .env when not set in the environment (so the dev
+# server's checkout deploys itself with this same script):
+#
+#   PM2_APP_NAME   the PM2 app to restart        (default hrm-backend; dev: hrm-backend-dev)
+#   DEPLOY_BRANCH  the branch to pull            (default main; dev: dev)
+#   DEPLOY_SKIP_BACKUP=1  never dump before migrating (the dev server — its
+#                  database is a throwaway copy)
+#
+# Used by deploy/ubuntu/promote-to-prod.sh, not by hand:
+#
+#   DEPLOY_BACKEND_REF / DEPLOY_FRONTEND_REF   deploy exactly this commit
+#                  (fast-forward only) instead of pulling the branch
+#   ROLLBACK=1     put the checkouts back at those commits (reset, not
+#                  fast-forward), skip the backup and the migrations, rebuild
+#                  and restart — the way back after a failed deploy
+#
 # Set them once in the environment, or write the web root to the file:
 #   echo /var/www/hrm > ../HRM_Frontend/.deploy-target
 
@@ -34,6 +50,18 @@ set -euo pipefail
 cd "$(dirname "$0")"
 BACKEND_DIR="$(pwd)"
 FRONTEND_DIR="${FRONTEND_DIR:-$BACKEND_DIR/../HRM_Frontend}"
+
+# A setting from the backend .env, unless the environment already has it.
+env_setting() {
+  grep -m1 "^$1=" "$BACKEND_DIR/.env" 2>/dev/null | tr -d '\r' | cut -d'=' -f2- \
+    | sed -e 's/^"//' -e 's/"$//' || true
+}
+export PM2_APP_NAME="${PM2_APP_NAME:-$(env_setting PM2_APP_NAME)}"
+PM2_APP_NAME="${PM2_APP_NAME:-hrm-backend}"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-$(env_setting DEPLOY_BRANCH)}"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+[ "$(env_setting DEPLOY_SKIP_BACKUP)" = "1" ] && SKIP_BACKUP=1
+ROLLBACK="${ROLLBACK:-0}"
 
 what="${1:-all}"
 case "$what" in
@@ -47,19 +75,31 @@ die()  { printf '\n\033[1;31mdeploy failed:\033[0m %s\n' "$1" >&2; exit 1; }
 
 # Pull one checkout, refusing anything that needs a human. Prints what moved.
 pull_repo() {
-  local name="$1"
+  local name="$1" ref="${2:-}"
   # A dirty tree on a server means somebody edited production by hand. Pulling
   # over it either fails halfway or silently discards their fix.
   if [ -n "$(git status --porcelain)" ]; then
     git status --short
     die "$name has uncommitted changes. Commit, stash or discard them first."
   fi
-  git fetch origin main
   local before after
   before="$(git rev-parse HEAD)"
-  # --ff-only: never create a merge commit on a server.
-  git merge --ff-only origin/main \
-    || die "$name cannot fast-forward — this checkout has diverged from origin/main."
+  if [ -n "$ref" ]; then
+    # A named commit (promotion, or the way back after one). Its objects were
+    # fetched by the caller, so this works without reaching GitHub.
+    git cat-file -e "$ref^{commit}" 2>/dev/null || die "$name does not have commit $ref."
+    if [ "$ROLLBACK" = "1" ]; then
+      git reset --hard "$ref" >/dev/null
+    else
+      git merge --ff-only "$ref" \
+        || die "$name cannot fast-forward to $ref — the live checkout has commits the dev build does not."
+    fi
+  else
+    git fetch origin "$DEPLOY_BRANCH"
+    # --ff-only: never create a merge commit on a server.
+    git merge --ff-only "origin/$DEPLOY_BRANCH" \
+      || die "$name cannot fast-forward — this checkout has diverged from origin/$DEPLOY_BRANCH."
+  fi
   after="$(git rev-parse HEAD)"
   if [ "$before" = "$after" ]; then
     note "already at $(git rev-parse --short HEAD) — rebuilding anyway"
@@ -174,7 +214,7 @@ deploy_backend() {
   note "pm2: $PM2"
 
   say "Backend — pulling"
-  pull_repo backend
+  pull_repo backend "${DEPLOY_BACKEND_REF:-}"
 
   say "Backend — installing (locked)"
   npm ci
@@ -183,7 +223,9 @@ deploy_backend() {
   say "Backend — generating the Prisma client"
   npm run prisma:generate
 
-  if [ "${SKIP_BACKUP:-0}" = "1" ]; then
+  if [ "$ROLLBACK" = "1" ]; then
+    say "Backend — backup skipped (rollback)"
+  elif [ "${SKIP_BACKUP:-0}" = "1" ]; then
     say "Backend — backup skipped (SKIP_BACKUP=1)"
   else
     say "Backend — backing up the database"
@@ -191,8 +233,14 @@ deploy_backend() {
   fi
 
   # Before the new code starts, so the columns exist when it reads them.
-  say "Backend — applying migrations"
-  npm run prisma:deploy
+  if [ "$ROLLBACK" = "1" ]; then
+    # Migrations are not undone: they only ever add, and the previous code
+    # runs on the newer schema. The pre-deploy dump is there if one must be.
+    say "Backend — migrations left as they are (rollback)"
+  else
+    say "Backend — applying migrations"
+    npm run prisma:deploy
+  fi
 
   say "Backend — building"
   npm run build
@@ -217,7 +265,7 @@ deploy_backend() {
   # the first person to sign in.
   say "Backend — checking the API answers"
   wait_for_api /api/health \
-    || die "the API did not come up on port $(api_port). Look at: $PM2 logs hrm-backend --err --lines 50"
+    || die "the API did not come up on port $(api_port). Look at: $PM2 logs $PM2_APP_NAME --err --lines 50"
   wait_for_api /api/v1/health 10 \
     || die "the API is up but /api/v1 does not answer — the frontend could not reach it."
 }
@@ -239,7 +287,7 @@ deploy_frontend() {
   fi
 
   say "Frontend — pulling"
-  pull_repo frontend
+  pull_repo frontend "${DEPLOY_FRONTEND_REF:-}"
 
   say "Frontend — installing (locked)"
   npm ci
@@ -299,4 +347,4 @@ if [ "$what" != "backend" ] && [ -d "$FRONTEND_DIR/.git" ]; then
   note "frontend  $(git -C "$FRONTEND_DIR" rev-parse --short HEAD)"
 fi
 [ -n "$LAST_BACKUP" ] && printf '\nDatabase backup taken before migrating:\n  %s\n' "$LAST_BACKUP"
-printf '\nTail the API log with:  pm2 logs hrm-backend\n\n'
+printf '\nTail the API log with:  pm2 logs %s\n\n' "$PM2_APP_NAME"

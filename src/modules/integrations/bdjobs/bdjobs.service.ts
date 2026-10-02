@@ -38,6 +38,7 @@ import {
 } from './bdjobs-settings.service';
 import { CandidatesService } from '../../candidates/candidates.service';
 import { normalizeGender } from '../../candidates/gender';
+import { SandboxService } from '../../sandbox/sandbox.service';
 
 const BDJOBS_API = 'https://api.bdjobs.com/EmployerApi/api';
 
@@ -46,6 +47,7 @@ export class BdJobsService {
   private readonly logger = new Logger(BdJobsService.name);
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly permissions: PermissionsService,
@@ -120,6 +122,9 @@ export class BdJobsService {
     };
     if (!s.authToken || !s.decodeId || !s.companyId) {
       return { ok: false, message: 'Credentials are incomplete.' };
+    }
+    if (this.sandbox.enabled) {
+      return { ok: false, message: 'Dev server — nothing is sent to BDJobs.' };
     }
     const ts = String(Math.floor(Date.now() / 1000));
     try {
@@ -310,6 +315,18 @@ export class BdJobsService {
 
     const { baseUrl, companyId } = settings;
     const payload = this.buildPayload(req, formData, settings);
+    if (
+      await this.sandbox.intercept('bdjobs', {
+        target: `${baseUrl}/api/Job/CAS/jobpostings`,
+        subject: `Post job: ${req.code}`,
+        body: JSON.stringify(payload, null, 2),
+      })
+    ) {
+      return {
+        ...draft,
+        note: 'Dev server — not sent to BDJobs (recorded in the sandbox outbox).',
+      };
+    }
     let body: {
       status?: string;
       code?: number;

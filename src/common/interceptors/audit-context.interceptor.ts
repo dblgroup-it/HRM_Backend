@@ -90,7 +90,8 @@ export class AuditContextInterceptor implements NestInterceptor {
       // the service layer records who when it can resolve the token.
       userName: user?.name ?? (user ? 'Unknown user' : 'Public link'),
       actorType: user?.id ? 'user' : 'public',
-      requestId: randomUUID(),
+      // Shared with the API log (set by its request hook in main.ts).
+      requestId: (req as { requestId?: string }).requestId ?? randomUUID(),
       ip:
         (req.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
         req.ip ||

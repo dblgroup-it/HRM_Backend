@@ -1946,3 +1946,56 @@ model CandidatePhoto {
 
   @@map("candidate_photos")
 }
+
+/// API errors and slow calls, from the server and from users' browsers.
+///
+/// Errors only (any 4xx/5xx), plus calls slower than the threshold — not
+/// every request, so it stays small enough to search on the live site. Kept
+/// 30 days (`ApiLogService.purgeExpired`).
+model ApiLog {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now()) @map("created_at")
+  /// api | browser
+  source     String   @default("api") @db.VarChar(10)
+  /// error | slow
+  kind       String   @default("error") @db.VarChar(10)
+  method     String?  @db.VarChar(10)
+  path       String?  @db.VarChar(500)
+  status     Int?
+  durationMs Int?     @map("duration_ms")
+  userId     String?  @map("user_id")
+  /// Snapshot, so the row survives a renamed or deleted account.
+  userName   String?  @map("user_name") @db.VarChar(150)
+  ip         String?  @db.VarChar(64)
+  userAgent  String?  @map("user_agent") @db.VarChar(300)
+  requestId  String?  @map("request_id") @db.VarChar(40)
+  message    String?
+  /// Server stack for a 5xx; the browser's stack for a page error.
+  stack      String?
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([source, createdAt(sort: Desc)])
+  @@map("api_logs")
+}
+
+/// What a sandbox (dev) server would have sent, kept instead of sending it.
+///
+/// The dev server runs on a copy of the live data — real candidates, real
+/// staff — so emails, calendar invites, Drive changes and webhooks are
+/// intercepted (`SANDBOX_MODE=true`) and recorded here for inspection. Never
+/// written on the live server.
+model SandboxOutbox {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now()) @map("created_at")
+  /// email | calendar | drive | webhook | bdjobs
+  kind      String   @db.VarChar(20)
+  /// Who it would have gone to (an address, or a description).
+  target    String?  @db.VarChar(500)
+  subject   String?  @db.VarChar(500)
+  body      String?
+  meta      Json?
+
+  @@index([createdAt(sort: Desc)])
+  @@map("sandbox_outbox")
+}

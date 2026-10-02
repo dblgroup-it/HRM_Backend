@@ -14,6 +14,7 @@ import {
 } from '../../../common/context/request-context';
 import { normalizeUnitName } from '../../../common/util/normalize-unit';
 import { ZING_ATTR, ZingHrEmployee, ZingHrResponse } from './zinghr.types';
+import { SandboxService } from '../../sandbox/sandbox.service';
 
 const SYNC_PATH = '/2015/route/EmployeeDetails/GetEmployeeMasterDetails';
 const ALLOWED_STATUS = new Set(['Existing', 'NewJoinee']);
@@ -27,6 +28,7 @@ export class ZingHrService implements OnModuleInit {
   private running = false;
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly scheduler: SchedulerRegistry,
@@ -61,6 +63,9 @@ export class ZingHrService implements OnModuleInit {
       this.logger.warn('ZingHR scheduled sync is disabled');
       return;
     }
+    // Dev server: its copy is refreshed from the live database nightly;
+    // a sync of its own is only ever run by hand.
+    if (this.sandbox.skipJob('ZingHR daily sync')) return;
     const job = new CronJob(expression, () => {
       void this.startSync();
     });

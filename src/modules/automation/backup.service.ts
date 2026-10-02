@@ -16,6 +16,7 @@ import { GoogleAuthService } from '../integrations/google/google-auth.service';
 import { AutomationPauseService } from './automation-pause.service';
 import { AutomationLogService } from './automation-log.service';
 import { explainPgDumpFailure, resolvePgDump } from './pg-dump-path';
+import { SandboxService } from '../sandbox/sandbox.service';
 
 const execFileAsync = promisify(execFile);
 const KEEP_BACKUPS = 30;
@@ -39,6 +40,7 @@ export class BackupService {
   private readonly logger = new Logger(BackupService.name);
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly drive: DriveService,
     private readonly auth: GoogleAuthService,
     private readonly pauses: AutomationPauseService,
@@ -47,6 +49,7 @@ export class BackupService {
 
   @Cron('30 2 * * *')
   async nightly(): Promise<void> {
+    if (this.sandbox.skipJob('nightly Drive backup')) return;
     if (!this.auth.isConfigured()) return;
     if (await this.pauses.isPaused('backup')) return;
     try {

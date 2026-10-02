@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { google, calendar_v3 } from 'googleapis';
 import { randomUUID } from 'node:crypto';
 
+import { SandboxService } from '../../sandbox/sandbox.service';
 import { GoogleAuthService } from './google-auth.service';
 
 /** All interview times are entered and displayed in Bangladesh time. */
@@ -42,7 +43,27 @@ export interface CalendarEventResult {
 export class CalendarService {
   private readonly logger = new Logger(CalendarService.name);
 
-  constructor(private readonly auth: GoogleAuthService) {}
+  constructor(
+    private readonly auth: GoogleAuthService,
+    private readonly sandbox: SandboxService,
+  ) {}
+
+  /** Dev server: what would have been sent, recorded instead. */
+  private async sandboxed(
+    action: string,
+    input?: CalendarEventInput,
+    eventId?: string,
+  ): Promise<boolean> {
+    return this.sandbox.intercept('calendar', {
+      target: input ? [...new Set(input.attendees)].join(', ') : eventId,
+      subject: `${action}${input ? `: ${input.summary}` : ''}`,
+      body: input?.description ?? null,
+      meta: {
+        eventId: eventId ?? null,
+        start: input?.start?.toISOString() ?? null,
+      },
+    });
+  }
 
   isConfigured(): boolean {
     return this.auth.isConfigured();
@@ -58,6 +79,7 @@ export class CalendarService {
   async createEvent(
     input: CalendarEventInput,
   ): Promise<CalendarEventResult | null> {
+    if (await this.sandboxed('Create event', input)) return null;
     if (!this.isConfigured()) return null;
     try {
       const res = await this.api().events.insert({
@@ -84,6 +106,7 @@ export class CalendarService {
     eventId: string,
     input: CalendarEventInput,
   ): Promise<CalendarEventResult | null> {
+    if (await this.sandboxed('Update event', input, eventId)) return null;
     if (!this.isConfigured()) return null;
     try {
       const res = await this.api().events.patch({
@@ -112,7 +135,9 @@ export class CalendarService {
    * cancellation. Best-effort.
    */
   async cancelEvent(eventId: string, notify = true): Promise<void> {
-    if (!this.isConfigured() || !eventId) return;
+    if (!eventId) return;
+    if (await this.sandboxed('Cancel event', undefined, eventId)) return;
+    if (!this.isConfigured()) return;
     try {
       await this.api().events.delete({
         calendarId: 'primary',

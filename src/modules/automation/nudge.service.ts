@@ -7,6 +7,7 @@ import { NotificationsService } from '../realtime/notifications.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { AutomationPauseService } from './automation-pause.service';
 import { AutomationLogService } from './automation-log.service';
+import { SandboxService } from '../sandbox/sandbox.service';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -27,6 +28,7 @@ export class NudgeService {
   private readonly logger = new Logger(NudgeService.name);
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly permissions: PermissionsService,
@@ -37,6 +39,7 @@ export class NudgeService {
 
   @Cron('30 9 * * *') // every morning, after people sit down
   async daily(): Promise<void> {
+    if (this.sandbox.skipJob('morning nudges')) return;
     if (await this.pauses.isPaused('nudges')) return;
     try {
       const report = await this.run();

@@ -33,6 +33,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
             exception.message);
     }
 
+    // For the API log (main.ts reads it when the response finishes): the
+    // real message and, for a crash, the stack — the user only ever sees
+    // "Internal server error".
+    response.locals.apiError = {
+      message:
+        exception instanceof Error
+          ? exception.message
+          : Array.isArray(message)
+            ? message.join('; ')
+            : String(message),
+      stack:
+        status >= HttpStatus.INTERNAL_SERVER_ERROR && exception instanceof Error
+          ? exception.stack
+          : undefined,
+    };
+
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error(
         `${request.method} ${request.url}`,

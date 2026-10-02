@@ -1,3 +1,5 @@
+import { SandboxModule } from './modules/sandbox/sandbox.module';
+import { ApiLogModule } from './modules/api-log/api-log.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -65,6 +67,8 @@ import { PdfModule } from './common/pdf/pdf.module';
     // exhaust the server.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 1200 }]),
     PrismaModule,
+    SandboxModule,
+    ApiLogModule,
     MemoryCacheModule,
     // Streams private Drive documents to authorized callers — replaces the
     // "anyone with the link" grants that made CVs, joining documents and

@@ -9,7 +9,20 @@ import {
 import helmet from 'helmet';
 import { json, type NextFunction, type Request, type Response } from 'express';
 
+import { PrismaClient } from '@prisma/client';
+
+import { randomUUID } from 'node:crypto';
+
 import { AppModule } from './app.module';
+import { safePath, shouldLog } from './modules/api-log/api-log-rules';
+import { ApiLogService } from './modules/api-log/api-log.service';
+import {
+  chooseDatabase,
+  databaseOf,
+  isCopyName,
+  readPicked,
+  withDatabase,
+} from './modules/sandbox/sandbox-db';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
@@ -65,8 +78,57 @@ function validateEnv(): void {
   }
 }
 
+/**
+ * Dev server only: point DATABASE_URL at the day's copy that was picked (or
+ * the newest), before anything connects. And refuse to start on anything
+ * that is not a copy — a sandbox must never open the live database, whatever
+ * its .env says.
+ */
+async function selectSandboxDatabase(): Promise<void> {
+  if (process.env.SANDBOX_MODE !== 'true') return;
+  const prefix = process.env.SANDBOX_DB_PREFIX ?? 'dbl_hrm_dev_';
+  const base = process.env.DATABASE_URL ?? '';
+  const picked = readPicked(process.env.SANDBOX_DB_FILE ?? '.dev-db');
+
+  let available: string[] = [];
+  const probe = new PrismaClient({ datasources: { db: { url: base } } });
+  try {
+    const rows = await probe.$queryRaw<{ datname: string }[]>`
+      select datname from pg_database where datname like ${prefix + '%'}`;
+    available = rows.map((r) => r.datname);
+  } finally {
+    await probe.$disconnect();
+  }
+
+  let chosen = chooseDatabase({ picked, prefix, available });
+  if (chosen && !available.includes(chosen)) {
+    Logger.warn(
+      `Picked copy ${chosen} no longer exists — using the newest`,
+      'Sandbox',
+    );
+    chosen = chooseDatabase({ picked: 'latest', prefix, available });
+  }
+  if (!chosen) {
+    if (!isCopyName(databaseOf(base), prefix)) {
+      Logger.error(
+        `SANDBOX_MODE is on but there is no copy of the live database (${prefix}YYYYMMDD) to open. ` +
+          'Run deploy/ubuntu/dev-clone-db.sh first. Refusing to start on a non-copy database.',
+        'Sandbox',
+      );
+      process.exit(1);
+    }
+    chosen = databaseOf(base);
+  }
+  process.env.DATABASE_URL = withDatabase(base, chosen);
+  Logger.warn(
+    `SANDBOX MODE — on copy ${chosen}. Nothing is sent out.`,
+    'Sandbox',
+  );
+}
+
 async function bootstrap(): Promise<void> {
   validateEnv();
+  await selectSandboxDatabase();
   const app = await NestFactory.create(AppModule, { bufferLogs: false });
 
   // Trust exactly one proxy hop, so `req.ip` is the real client rather than
@@ -99,6 +161,51 @@ async function bootstrap(): Promise<void> {
   const corsOrigin = config.get<string>('corsOrigin', '*');
 
   app.setGlobalPrefix(apiPrefix);
+
+  // API log: time every request, and when it finishes keep the failed and
+  // the slow ones (see api-log-rules.ts). Registered first so it sees every
+  // request, including ones a guard or a missing route turns away.
+  const apiLog = app.get(ApiLogService);
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const started = Date.now();
+    const id =
+      String(req.headers['x-request-id'] ?? '').slice(0, 40) || randomUUID();
+    (req as Request & { requestId?: string }).requestId = id;
+    res.setHeader('X-Request-Id', id);
+    res.on('finish', () => {
+      const durationMs = Date.now() - started;
+      const path = safePath(req.originalUrl ?? req.url);
+      const kind = shouldLog(path, res.statusCode, durationMs);
+      if (!kind) return;
+      const user = (req as Request & { user?: { id?: string; name?: string } })
+        .user;
+      const err = res.locals.apiError as
+        | { message?: string; stack?: string }
+        | undefined;
+      apiLog.record({
+        source: 'api',
+        kind,
+        method: req.method,
+        path,
+        status: res.statusCode,
+        durationMs,
+        userId: user?.id ?? null,
+        userName: user?.name ?? null,
+        // Behind nginx: the visitor, not the proxy.
+        ip:
+          String(req.headers['x-forwarded-for'] ?? '')
+            .split(',')[0]
+            .trim() ||
+          req.ip ||
+          null,
+        userAgent: req.headers['user-agent'] ?? null,
+        requestId: id,
+        message: err?.message ?? null,
+        stack: err?.stack ?? null,
+      });
+    });
+    next();
+  });
   // API v1. Every route answers at /api/v1/… — what this frontend calls —
   // and, unchanged, at /api/… for what already points there and cannot be
   // re-sent: links in emails already delivered (files, evaluations, board

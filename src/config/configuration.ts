@@ -5,6 +5,19 @@ export interface AppConfig {
   corsOrigin: string;
   /** Single public-facing frontend URL used to build links in emails/notifications. */
   frontendUrl: string;
+  /**
+   * The dev/test server (`SANDBOX_MODE=true`): runs on a copy of the live
+   * data, so nothing may leave it — mail, calendar invites, Drive changes,
+   * webhooks and BDJobs are intercepted into `sandbox_outbox`, and the
+   * scheduled jobs that reach outside are off. Never set on the live server.
+   */
+  sandbox: {
+    enabled: boolean;
+    /** Database-name prefix of the daily copies the switcher may pick. */
+    dbPrefix: string;
+    /** File holding the copy currently selected (read at boot). */
+    dbFile: string;
+  };
   jwt: {
     secret: string;
     expiresIn: string;
@@ -58,6 +71,11 @@ export default (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: parseInt(process.env.PORT ?? '8000', 10),
   apiPrefix: process.env.API_PREFIX ?? 'api',
+  sandbox: {
+    enabled: process.env.SANDBOX_MODE === 'true',
+    dbPrefix: process.env.SANDBOX_DB_PREFIX ?? 'dbl_hrm_dev_',
+    dbFile: process.env.SANDBOX_DB_FILE ?? '.dev-db',
+  },
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
   frontendUrl: (
     process.env.FRONTEND_URL ??

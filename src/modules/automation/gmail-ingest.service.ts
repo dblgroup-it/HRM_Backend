@@ -13,6 +13,7 @@ import { NotificationsService } from '../realtime/notifications.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { AutomationPauseService } from './automation-pause.service';
 import { AutomationLogService } from './automation-log.service';
+import { SandboxService } from '../sandbox/sandbox.service';
 
 /** Matches "REQ-2026-007" (also REQ 2026 7 / req_2026_07 variants). */
 const CODE_RE = /\bREQ[\s_-]?(\d{4})[\s_-]?(\d{1,4})\b/i;
@@ -35,6 +36,7 @@ export class GmailIngestService {
   private running = false;
 
   constructor(
+    private readonly sandbox: SandboxService,
     private readonly prisma: PrismaService,
     private readonly gmail: GmailService,
     private readonly candidates: CandidatesService,
@@ -47,6 +49,7 @@ export class GmailIngestService {
 
   @Cron('*/15 * * * *')
   async poll(): Promise<void> {
+    if (this.sandbox.skipJob('Gmail CV import')) return;
     if (!this.gmail.isConfigured()) return;
     if (await this.pauses.isPaused('ingest')) return;
     try {

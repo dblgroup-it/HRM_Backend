@@ -4,10 +4,19 @@ import { google, type drive_v3 } from 'googleapis';
 import { Readable } from 'node:stream';
 import type { CandidateStage } from '@prisma/client';
 
+import { SandboxService } from '../../sandbox/sandbox.service';
 import { GoogleAuthService } from './google-auth.service';
 import type { DriveTreeInput, RequisitionDriveMap } from './google.types';
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
+
+/**
+ * The dev server's own corner of the recruitment Drive. Everything it writes
+ * lands under this folder, tagged with SANDBOX_TAG, and it never moves,
+ * shares, trashes or adds to a folder of the live site.
+ */
+const SANDBOX_ROOT_NAME = 'DBL HRM — DEV SANDBOX (safe to delete)';
+const SANDBOX_TAG = 'hrmSandbox';
 
 /** Drive folder names allow most characters; just keep them tidy and safe. */
 function clean(name: string): string {
@@ -30,7 +39,68 @@ export class DriveService {
   constructor(
     private readonly auth: GoogleAuthService,
     private readonly config: ConfigService,
+    private readonly sandbox: SandboxService,
   ) {}
+
+  private sandboxRootId: string | null = null;
+
+  /** Dev server: the sandbox folder (created once, at the top of My Drive). */
+  private async sandboxRoot(): Promise<string> {
+    if (this.sandboxRootId) return this.sandboxRootId;
+    const found = await this.api().files.list({
+      q: `mimeType='${FOLDER_MIME}' and appProperties has { key='${SANDBOX_TAG}' and value='root' } and trashed=false`,
+      fields: 'files(id)',
+      pageSize: 1,
+      spaces: 'drive',
+    });
+    let id = found.data.files?.[0]?.id ?? null;
+    if (!id) {
+      const res = await this.api().files.create({
+        requestBody: {
+          name: SANDBOX_ROOT_NAME,
+          mimeType: FOLDER_MIME,
+          appProperties: { [SANDBOX_TAG]: 'root' },
+        },
+        fields: 'id',
+      });
+      id = res.data.id as string;
+    }
+    this.sandboxRootId = id;
+    return id;
+  }
+
+  /**
+   * Dev server: may this folder be written into? Only the sandbox root and
+   * folders the sandbox made. A live folder id (from the copied database) is
+   * redirected to the sandbox root instead.
+   */
+  private async sandboxParent(parentId?: string): Promise<string> {
+    const root = await this.sandboxRoot();
+    if (!parentId || parentId === root) return root;
+    try {
+      const meta = await this.api().files.get({
+        fileId: parentId,
+        fields: 'appProperties',
+      });
+      if (meta.data.appProperties?.[SANDBOX_TAG]) return parentId;
+    } catch {
+      /* unknown or unreadable: treat as live */
+    }
+    return root;
+  }
+
+  /** Dev server: a change to a live file, recorded and skipped. */
+  private async sandboxSkip(
+    action: string,
+    fileId: string,
+    extra?: Record<string, unknown>,
+  ) {
+    return this.sandbox.intercept('drive', {
+      target: fileId,
+      subject: action,
+      meta: extra,
+    });
+  }
 
   isConfigured(): boolean {
     return this.auth.isConfigured();
@@ -66,6 +136,7 @@ export class DriveService {
   /** Find-or-create a folder by name under a parent (or My Drive root). */
   async ensureFolder(name: string, parentId?: string): Promise<string> {
     const tidy = clean(name);
+    if (this.sandbox.enabled) parentId = await this.sandboxParent(parentId);
     const existing = await this.findFolder(tidy, parentId);
     if (existing?.id) return existing.id;
     const res = await this.api().files.create({
@@ -73,6 +144,9 @@ export class DriveService {
         name: tidy,
         mimeType: FOLDER_MIME,
         parents: parentId ? [parentId] : undefined,
+        ...(this.sandbox.enabled
+          ? { appProperties: { [SANDBOX_TAG]: '1' } }
+          : {}),
       },
       fields: 'id',
     });
@@ -81,6 +155,8 @@ export class DriveService {
 
   /** The top-level "DBL HRM Recruitment" folder (or a configured existing one). */
   async ensureRootFolder(): Promise<string> {
+    // Dev server: its own tree, never the live recruitment root.
+    if (this.sandbox.enabled) return this.sandboxRoot();
     const fixedId = this.config.get<string>('google.rootFolderId');
     if (fixedId) return fixedId;
     const name =
@@ -107,6 +183,8 @@ export class DriveService {
     role: 'reader' | 'writer',
     reason: 'cv-dropbox-folder',
   ) {
+    if (await this.sandboxSkip(`Share anyone-with-link (${role})`, fileId))
+      return;
     this.logger.log(
       `Publishing Drive object ${fileId} as anyone-with-link (${role}) — reason: ${reason}`,
     );
@@ -122,6 +200,7 @@ export class DriveService {
    * external people can't view or delete each other's CVs.
    */
   async revokeAnyoneAccess(fileId: string): Promise<void> {
+    if (await this.sandboxSkip('Revoke public access', fileId)) return;
     const res = await this.api().permissions.list({
       fileId,
       fields: 'permissions(id,type)',
@@ -252,6 +331,14 @@ export class DriveService {
     parentId: string,
     file: { name: string; mimeType: string; buffer: Buffer },
   ): Promise<{ id: string; url: string }> {
+    if (this.sandbox.enabled) {
+      parentId = await this.sandboxParent(parentId);
+      await this.sandbox.intercept('drive', {
+        target: parentId,
+        subject: `Upload into sandbox folder: ${file.name}`,
+        meta: { bytes: file.buffer.length, mimeType: file.mimeType },
+      });
+    }
     const res = await this.api().files.create({
       requestBody: { name: clean(file.name), parents: [parentId] },
       media: { mimeType: file.mimeType, body: Readable.from(file.buffer) },
@@ -293,6 +380,7 @@ export class DriveService {
 
   /** Send a file to Drive trash (recoverable). Only works on files we own. */
   async trashFile(fileId: string): Promise<void> {
+    if (await this.sandboxSkip('Trash file', fileId)) return;
     await this.api().files.update({
       fileId,
       requestBody: { trashed: true },
@@ -301,6 +389,7 @@ export class DriveService {
 
   /** Detach a file from every folder it lives in (removes it from our workspace). */
   async removeFromParents(fileId: string): Promise<void> {
+    if (await this.sandboxSkip('Remove from folders', fileId)) return;
     const meta = await this.api().files.get({ fileId, fields: 'parents' });
     const parents = meta.data.parents ?? [];
     if (parents.length === 0) return;
@@ -327,6 +416,7 @@ export class DriveService {
 
   /** Move a file into a new folder (used when a candidate changes stage). */
   async moveFile(fileId: string, toParentId: string): Promise<void> {
+    if (await this.sandboxSkip('Move file', fileId, { toParentId })) return;
     const meta = await this.api().files.get({ fileId, fields: 'parents' });
     const removeParents = (meta.data.parents ?? []).join(',');
     await this.api().files.update({
