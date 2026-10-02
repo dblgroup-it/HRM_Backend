@@ -8,7 +8,7 @@ anything reaches the live site.
 | Address | https://talenthub.dbl-group.com | https://talenthub.dbl-group.com:4500 |
 | Code | `main` branch, `~/HRM_Backend`, `~/HRM_Frontend` | `dev` branch, `~/dev/HRM_Backend`, `~/dev/HRM_Frontend` |
 | PM2 app | `hrm-backend` (port 4000) | `hrm-backend-dev` (port 4600) |
-| Database | `dbl_hrm` | a dated copy, `dbl_hrm_dev_YYYYMMDD`, made nightly at 02:45 |
+| Database | `dbl_hrm` | a dated copy, `dbl_hrm_dev_YYYYMMDD`, made nightly at 02:45; the last 7 days kept |
 | Web root | `/var/www/dbl-hrm` | `/var/www/dbl-hrm-dev` |
 
 **Nothing leaves the dev server.** It runs with `SANDBOX_MODE=true`: emails,
@@ -126,8 +126,10 @@ git -C ~/HRM_Backend fetch && git -C ~/HRM_Frontend fetch     # no password prom
   `cd ~/dev/HRM_Backend && ./deploy.sh` (dev deploys itself — no backup, it
   is a copy). Test at :4500.
 - **Pick the day's data:** Configuration → Dev tools → *Data copy*. "Always
-  the newest" follows each night's copy; picking a day pins it (a pinned copy
-  is never deleted). The dev app restarts in a few seconds.
+  the newest" follows each night's copy; picking a day pins it. Only the
+  last 7 days are kept — when a pinned day passes 7 days old it is removed
+  and the dev site goes back to the newest. The dev app restarts in a few
+  seconds.
 - **Put it live:** Dev tools → *Deploy to production* (the admin@dbl-group.com
   login only). It lists every commit that will go live; type `DEPLOY`. It
   backs up the live database, deploys, checks health — and if anything fails,
@@ -137,9 +139,9 @@ git -C ~/HRM_Backend fetch && git -C ~/HRM_Frontend fetch     # no password prom
 - **What happened:** Configuration → API Logs (errors and slow calls, live and
   dev), and `~/dev/promote/logs/` for every deploy from the button.
 
-Copies kept: the newest 7, plus the pinned one (`KEEP_COPIES` in the crontab
-line to change it). Each is about the size of the live database — check with
-`df -h` now and then.
+Copies kept: the last 7 days by date, nothing older (put `KEEP_DAYS=N` in
+front of the command in the crontab line to change it). Each is about the size
+of the live database — check with `df -h` now and then.
 
 ## Starting again
 

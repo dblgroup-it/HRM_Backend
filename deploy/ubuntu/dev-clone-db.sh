@@ -15,21 +15,22 @@
 #      database user, via a temporary name so a half-made copy is never seen
 #   3. applies the dev branch's migrations to the copy, so the dev code and
 #      its database match
-#   4. keeps the newest KEEP_COPIES copies (default 7) plus whichever one the
-#      dev site is pinned to, and drops the rest
+#   4. keeps the copies of the last KEEP_DAYS days (default 7) and drops the
+#      rest — a pinned copy included, which sends the dev site back to the
+#      newest
 #   5. restarts the dev app when it follows "latest", so it moves onto today's
 #
 # Settings (environment, optional):
 #   PROD_DIR     live backend checkout   (default ~/HRM_Backend)
 #   DEV_DIR      dev backend checkout    (default ~/dev/HRM_Backend)
-#   KEEP_COPIES  how many dated copies to keep (default 7)
+#   KEEP_DAYS    days of copies to keep (default 7)
 #   DEV_APP      PM2 name of the dev app (default hrm-backend-dev)
 
 set -euo pipefail
 
 PROD_DIR="${PROD_DIR:-$HOME/HRM_Backend}"
 DEV_DIR="${DEV_DIR:-$HOME/dev/HRM_Backend}"
-KEEP_COPIES="${KEEP_COPIES:-7}"
+KEEP_DAYS="${KEEP_DAYS:-${KEEP_COPIES:-7}}"
 DEV_APP="${DEV_APP:-hrm-backend-dev}"
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
@@ -85,7 +86,7 @@ else
   data_dir="/var/lib/postgresql"; [ -d "$data_dir" ] || data_dir="/"
   free_bytes="$(df -Pk "$data_dir" | awk 'NR==2 { print $4 * 1024 }')"
   if [ "$free_bytes" -lt $((live_bytes * 2)) ]; then
-    die "not enough disk: live database $((live_bytes/1024/1024)) MB, free $((free_bytes/1024/1024)) MB. Lower KEEP_COPIES or free space."
+    die "not enough disk: live database $((live_bytes/1024/1024)) MB, free $((free_bytes/1024/1024)) MB. Lower KEEP_DAYS or free space."
   fi
 
   say "Copying $LIVE_DB ($((live_bytes/1024/1024)) MB) → $NAME"
@@ -106,15 +107,26 @@ else
   say "Made $NAME"
 fi
 
-# ── Keep the newest KEEP_COPIES, and the pinned one ─────────────────────────
+# ── Keep the last KEEP_DAYS days, nothing older ─────────────────────────────
+# By date (Dhaka), today included: with 7, on the 9th the 3rd onward stays.
+# The newest copy is always kept, so a dev site whose nightly job stopped
+# still has something to open. A pinned copy gets no exemption: once it is
+# older than that it goes, and the dev site goes back to the newest.
 PINNED=""
 [ -f "$PICK_FILE" ] && PINNED="$(tr -d '[:space:]' < "$PICK_FILE")"
-i=0
-for db in $(psql_dev -c "SELECT datname FROM pg_database WHERE datname ~ '^${PREFIX}[0-9]{8}$' ORDER BY datname DESC"); do
-  i=$((i + 1))
-  if [ "$i" -le "$KEEP_COPIES" ] || [ "$db" = "$PINNED" ]; then continue; fi
-  say "Removing old copy $db"
+CUTOFF="$(TZ=Asia/Dhaka date -d "$((KEEP_DAYS - 1)) days ago" +%Y%m%d 2>/dev/null \
+  || TZ=Asia/Dhaka date -v-"$((KEEP_DAYS - 1))"d +%Y%m%d)"
+NEWEST="$(psql_dev -c "SELECT datname FROM pg_database WHERE datname ~ '^${PREFIX}[0-9]{8}$' ORDER BY datname DESC LIMIT 1")"
+for db in $(psql_dev -c "SELECT datname FROM pg_database WHERE datname ~ '^${PREFIX}[0-9]{8}$' ORDER BY datname"); do
+  day="${db#"$PREFIX"}"
+  if [ "$day" -ge "$CUTOFF" ] || [ "$db" = "$NEWEST" ]; then continue; fi
+  say "Removing copy $db (older than $KEEP_DAYS days)"
   drop_db "$db"
+  if [ "$db" = "$PINNED" ]; then
+    echo latest > "$PICK_FILE"
+    PINNED="latest"
+    say "It was the pinned copy — the dev site now follows the newest"
+  fi
 done
 
 # ── Move the dev app onto today's copy if it follows "latest" ───────────────
