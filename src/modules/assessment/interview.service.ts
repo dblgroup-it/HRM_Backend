@@ -2598,16 +2598,12 @@ export class InterviewService {
     const byCandidate = new Map(fixations.map((f) => [f.candidateId, f]));
     // Which units route finalists through a Factory HR Head — asked once per
     // unit, so the card can say where "Mark finalist" will send them.
-    const headUnits = new Map<string, boolean>();
+    // Named, not just counted: the card says whose desk a finalist is on.
+    const headUnits = new Map<string, string[]>();
     for (const unit of new Set(rows.map((r) => r.requisition.unitFactory))) {
       headUnits.set(
         unit,
-        (
-          await this.permissions.roleHolderUserIds(
-            FACTORY_HR_HEAD_ROLE_KEY,
-            unit,
-          )
-        ).length > 0,
+        await this.permissions.roleHolderNames(FACTORY_HR_HEAD_ROLE_KEY, unit),
       );
     }
 
@@ -2726,7 +2722,10 @@ export class InterviewService {
       })),
       tests: testsFor(r.candidate.id),
       /** A finalist goes to the unit's Factory HR Head before the recruiter. */
-      requiresHeadApproval: headUnits.get(r.requisition.unitFactory) ?? false,
+      requiresHeadApproval:
+        (headUnits.get(r.requisition.unitFactory) ?? []).length > 0,
+      /** Who signs it off — the unit's Factory HR Head(s), by name. */
+      headApproverNames: headUnits.get(r.requisition.unitFactory) ?? [],
       headApproval: r.candidate.firstInterviewApproval
         ? {
             status: r.candidate.firstInterviewApproval.status.toLowerCase(),

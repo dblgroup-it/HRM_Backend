@@ -12,11 +12,13 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
+import { UserRole } from '@prisma/client';
 
 import {
   CurrentUser,
   AuthUser,
 } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { ATTACHMENT_UPLOAD } from '../../common/upload/file-upload';
 import { RequisitionService } from './requisition.service';
 import { RequisitionBoardService } from './requisition-board.service';
@@ -24,6 +26,7 @@ import { CreateRequisitionDto } from './dto/create-requisition.dto';
 import {
   ApprovalActionDto,
   AssignRecruiterDto,
+  DeleteRequisitionDto,
   SetCvSourcesDto,
   DraftJobAnalysisDto,
   DraftRequisitionDto,
@@ -42,6 +45,24 @@ export class RequisitionController {
     private readonly requisitionService: RequisitionService,
     private readonly boardService: RequisitionBoardService,
   ) {}
+
+  /**
+   * Delete a requisition and everything under it, for good. The ADMIN
+   * account only — not super users, not HR: it erases signed approvals,
+   * candidates, interviews, evaluations, onboarding and their notifications.
+   */
+  @Roles(UserRole.ADMIN)
+  @Delete(':id')
+  remove(
+    @Param('id') id: string,
+    @Body() dto: DeleteRequisitionDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.requisitionService.hardDelete(id, dto.confirmCode, {
+      id: user.id,
+      name: user.name,
+    });
+  }
 
   @Get()
   findAll(@Query() query: QueryRequisitionsDto, @CurrentUser() user: AuthUser) {

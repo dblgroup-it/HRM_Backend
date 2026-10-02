@@ -334,3 +334,15 @@ export class DraftRequisitionDto {
   @MaxLength(1000)
   prompt!: string;
 }
+
+/**
+ * Permanently deleting a requisition. The code must be typed back — a
+ * deletion that takes every candidate, interview and letter with it should
+ * not be one mis-click away.
+ */
+export class DeleteRequisitionDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(40)
+  confirmCode!: string;
+}

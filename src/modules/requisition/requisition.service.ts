@@ -1965,6 +1965,92 @@ export class RequisitionService {
     return serialized;
   }
 
+  /**
+   * Erase a requisition and all of its data: approval chain, activity,
+   * candidates, interviews and evaluations, delegations, salary fixations,
+   * board approvals, onboarding, reference checks — all by the schema's
+   * cascades — plus what the schema cannot reach: notifications that point
+   * at the requisition or its candidates, and approval sheets left empty.
+   *
+   * Files on Google Drive are not touched: the folder stays with the
+   * recruitment account, so a mistaken delete leaves the CVs recoverable.
+   * The deletion itself is recorded by the audit log (it is an HTTP DELETE),
+   * which is the only trace left of it.
+   */
+  async hardDelete(
+    id: string,
+    confirmCode: string,
+    actor: { id: string; name: string },
+  ) {
+    const req = await this.prisma.requisition.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        code: true,
+        designation: true,
+        candidates: {
+          select: {
+            id: true,
+            boardApprovals: { select: { batchId: true } },
+          },
+        },
+      },
+    });
+    if (!req) throw new NotFoundException('Requisition not found');
+    if (confirmCode.trim().toUpperCase() !== req.code.toUpperCase()) {
+      throw new BadRequestException(
+        `Type the requisition code (${req.code}) to confirm the deletion.`,
+      );
+    }
+
+    const candidateIds = req.candidates.map((c) => c.id);
+    const batchIds = [
+      ...new Set(
+        req.candidates.flatMap((c) =>
+          c.boardApprovals.map((b) => b.batchId).filter((b): b is string => !!b),
+        ),
+      ),
+    ];
+    const links = [
+      ...candidateIds.map((cid) => `/onboarding/manage/${cid}`),
+    ];
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const notifications = await tx.notification.deleteMany({
+        where: {
+          OR: [
+            { link: `/requisitions/${id}` },
+            { link: { startsWith: `/requisitions/${id}?` } },
+            { link: { startsWith: `/requisitions/${id}/` } },
+            ...(links.length ? [{ link: { in: links } }] : []),
+          ],
+        },
+      });
+      await tx.requisition.delete({ where: { id } });
+      // A sheet that only carried this requisition's candidates is now an
+      // empty shell; one shared with other vacancies keeps their rows.
+      const sheets = batchIds.length
+        ? await tx.boardApprovalBatch.deleteMany({
+            where: { id: { in: batchIds }, approvals: { none: {} } },
+          })
+        : { count: 0 };
+      return { notifications: notifications.count, sheets: sheets.count };
+    });
+
+    this.logger.warn(
+      `${actor.name} permanently deleted ${req.code} (${req.designation}) — ${candidateIds.length} candidate(s), ${result.notifications} notification(s), ${result.sheets} empty sheet(s).`,
+    );
+    this.notifications.broadcastChange('requisition', id, {
+      action: 'deleted',
+    });
+    return {
+      code: req.code,
+      candidates: candidateIds.length,
+      notifications: result.notifications,
+      sheets: result.sheets,
+    };
+  }
+
   async removeAttachment(
     id: string,
     fileId: string,

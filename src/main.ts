@@ -1,6 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import {
+  Logger,
+  ValidationPipe,
+  VERSION_NEUTRAL,
+  VersioningType,
+} from '@nestjs/common';
 import helmet from 'helmet';
 import { json, type NextFunction, type Request, type Response } from 'express';
 
@@ -94,6 +99,16 @@ async function bootstrap(): Promise<void> {
   const corsOrigin = config.get<string>('corsOrigin', '*');
 
   app.setGlobalPrefix(apiPrefix);
+  // API v1. Every route answers at /api/v1/… — what this frontend calls —
+  // and, unchanged, at /api/… for what already points there and cannot be
+  // re-sent: links in emails already delivered (files, evaluations, board
+  // votes, offers), the BDJobs webhook BDJobs posts to, and the Google OAuth
+  // callback registered in Google's console. A v2 controller declares
+  // `@Version('2')` and lives at /api/v2/… beside it.
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: ['1', VERSION_NEUTRAL],
+  });
   // The BDJobs webhook may carry the applicant's photo inline as a data: URI
   // (up to 2 MB of image, ~2.7 MB as base64), well past the default 100 KB
   // JSON limit. Raised for that one route only: registered before Nest's own
@@ -105,7 +120,10 @@ async function bootstrap(): Promise<void> {
   // in left every other route without a parsed body (sign-in included).
   const bdjobsJson = json({ limit: '4mb' });
   app.use(
-    `/${apiPrefix}/integrations/bdjobs/candidates`,
+    [
+      `/${apiPrefix}/integrations/bdjobs/candidates`,
+      `/${apiPrefix}/v1/integrations/bdjobs/candidates`,
+    ],
     (req: Request, res: Response, next: NextFunction) =>
       bdjobsJson(req, res, (err?: unknown) => {
         if (!err) return next();

@@ -21,6 +21,11 @@
 #                  database and checks the dump is complete before migrating.
 #   SKIP_BACKUP=1  skip that dump — only if you have just taken one yourself.
 #
+# After a backend restart the API must answer on /api/health and
+# /api/v1/health, and the frontend is only published once the running API
+# answers the version that build calls — so `./deploy.sh frontend` cannot put
+# an app in front of a backend that does not speak its API version.
+#
 # Set them once in the environment, or write the web root to the file:
 #   echo /var/www/hrm > ../HRM_Frontend/.deploy-target
 
@@ -129,6 +134,36 @@ backup_database() {
 
 LAST_BACKUP=""
 
+# ── API health ──────────────────────────────────────────────────────────────
+
+# The port the API listens on, from the backend's own .env (as PM2 starts it).
+api_port() {
+  local p
+  p="$(grep -E '^PORT=' "$BACKEND_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"'[:space:]' || true)"
+  echo "${p:-4000}"
+}
+
+# Wait until the running API answers 200 on a path. The app needs a few
+# seconds to boot after a restart, so this polls rather than asking once.
+wait_for_api() {
+  local path="$1" tries="${2:-60}" code=""
+  command -v curl >/dev/null 2>&1 || { note "curl not installed — skipped the $path check"; return 0; }
+  for _ in $(seq 1 "$tries"); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$(api_port)$path" || true)"
+    [ "$code" = "200" ] && { note "$path → 200"; return 0; }
+    sleep 1
+  done
+  note "$path → ${code:-no answer}"
+  return 1
+}
+
+# The API version this frontend build calls (API_VERSION in its constants).
+# A v2 build is then checked against /api/v2, not assumed.
+frontend_api_version() {
+  grep -oE "API_VERSION = '[^']+'" "$FRONTEND_DIR/src/shared/constants/index.ts" 2>/dev/null \
+    | head -1 | cut -d"'" -f2 || true
+}
+
 # ── Backend ─────────────────────────────────────────────────────────────────
 
 deploy_backend() {
@@ -175,6 +210,16 @@ deploy_backend() {
   mkdir -p logs
   "$PM2" startOrReload ecosystem.config.js --update-env
   "$PM2" save
+
+  # Both paths must answer: /api/v1 is what the app calls, the unversioned
+  # /api is what emailed links, the BDJobs webhook and the Google callback
+  # already point at. A restart that came up broken is caught here, not by
+  # the first person to sign in.
+  say "Backend — checking the API answers"
+  wait_for_api /api/health \
+    || die "the API did not come up on port $(api_port). Look at: $PM2 logs hrm-backend --err --lines 50"
+  wait_for_api /api/v1/health 10 \
+    || die "the API is up but /api/v1 does not answer — the frontend could not reach it."
 }
 
 # ── Frontend ────────────────────────────────────────────────────────────────
@@ -217,6 +262,17 @@ deploy_frontend() {
   fi
 
   [ -d "$target" ] || die "WEB_ROOT '$target' does not exist."
+
+  # Never publish an app the running API cannot answer. This is what makes
+  # `./deploy.sh frontend` safe on its own: a build calling /api/v1 put in
+  # front of an older backend would fail on every screen.
+  local ver
+  ver="$(frontend_api_version)"
+  if [ -n "$ver" ]; then
+    say "Frontend — checking the API serves /api/$ver"
+    wait_for_api "/api/$ver/health" 10 \
+      || die "the running API does not answer /api/$ver, which this build calls. Deploy the backend first: ./deploy.sh backend"
+  fi
 
   # --delete so a chunk dropped from the build is dropped from the server too;
   # a stale one left behind only breaks for the browser still asking for it.
