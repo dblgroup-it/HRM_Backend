@@ -37,6 +37,8 @@ export class PromoteService {
       path.join(process.cwd(), '..', 'HRM_Frontend'),
     state:
       process.env.PROMOTE_STATE_DIR || path.join(this.home, 'dev', 'promote'),
+    autodeploy:
+      process.env.AUTODEPLOY_DIR || path.join(this.home, 'dev', 'autodeploy'),
   };
 
   constructor(private readonly sandbox: SandboxService) {}
@@ -138,11 +140,21 @@ export class PromoteService {
         /* rotated away */
       }
     }
+    // The dev site's own updates (deploy/ubuntu/dev-autodeploy.sh, every 2 min).
+    let autodeploy: Record<string, unknown> | null = null;
+    try {
+      autodeploy = JSON.parse(
+        fs.readFileSync(path.join(this.paths.autodeploy, 'state.json'), 'utf8'),
+      );
+    } catch {
+      /* not set up yet */
+    }
     return {
       running: this.running(),
       plan: { backend, frontend },
       last,
       logTail,
+      autodeploy,
     };
   }
 
