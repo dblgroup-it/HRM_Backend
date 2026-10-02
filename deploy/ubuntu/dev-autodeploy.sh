@@ -58,8 +58,14 @@ EOF
 }
 
 write_state running "Updating the dev site"
+# Low priority: the live site shares this machine, and must get the CPU and
+# the disk first while the dev site builds. (ionice is in util-linux on
+# Ubuntu; skipped quietly where it is missing.)
+LOW="nice -n 15"
+command -v ionice >/dev/null 2>&1 && LOW="$LOW ionice -c3"
+
 # A clean environment, like any deploy: nothing from cron's or anyone's shell.
-if env -i HOME="$HOME" USER="${USER:-}" PATH="$PATH" LANG="${LANG:-C.UTF-8}" TERM=dumb \
+if $LOW env -i HOME="$HOME" USER="${USER:-}" PATH="$PATH" LANG="${LANG:-C.UTF-8}" TERM=dumb \
      bash -c "cd '$DEV_DIR' && ./deploy.sh" >"$LOG" 2>&1; then
   rm -f "$FAILED"
   write_state success "The dev site runs the newest dev branch."
