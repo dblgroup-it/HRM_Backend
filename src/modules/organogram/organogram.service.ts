@@ -109,7 +109,9 @@ export class OrganogramService {
     designation: string,
     userId: string,
   ): Promise<SeatLookupResult> {
-    const canAccess = await this.permissions.canAccessUnitName(userId, unit);
+    // Seat counts and grades are organisational facts, open to the unit's
+    // people and to every group-wide role (a recruiter, the medical officer).
+    const canAccess = await this.permissions.canSeeUnitOrgStats(userId, unit);
     if (!canAccess) {
       throw new ForbiddenException('You do not have access to this unit');
     }

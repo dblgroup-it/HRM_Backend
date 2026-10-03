@@ -326,6 +326,26 @@ export class PermissionsService {
     );
   }
 
+  /**
+   * May this user see a unit's ORGANISATIONAL facts — sanctioned seats, filled
+   * counts, the grades people in a post hold? The dashboard's rule
+   * (`getOrgStatsScope`): unit role holders for their units, and every GLOBAL
+   * role for all of them.
+   *
+   * Broader than `canAccessUnitName`, which decides who may raise and manage
+   * in a unit. Using that here refused a Corporate Recruiter — global, so no
+   * unit of their own — the seat and grade line of the very requisition they
+   * recruit for, on every open of the page.
+   */
+  async canSeeUnitOrgStats(userId: string, unitName: string): Promise<boolean> {
+    const scope = await this.getOrgStatsScope(userId);
+    const target = normalizeUnitName(unitName);
+    return (
+      scope.all ||
+      scope.unitNames.some((name) => normalizeUnitName(name) === target)
+    );
+  }
+
   async isSuperUser(userId: string): Promise<boolean> {
     const perms = await this.getUserPermissions(userId);
     return perms.isSuperUser;

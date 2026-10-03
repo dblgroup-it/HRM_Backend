@@ -35,6 +35,33 @@ describe('PermissionsService — access boundaries', () => {
     unitIds: ['u-' + unitName],
   });
 
+  describe('organisational facts (seat lookup)', () => {
+    const globalRole = (key: string): UserPermissions => ({
+      isSuperUser: false,
+      roles: [
+        { key, name: key, scope: 'GLOBAL', unitId: null, unitName: null },
+      ],
+      unitIds: [],
+    });
+
+    it('lets a Corporate Recruiter see any unit', async () => {
+      const svc = build(globalRole('corporate_recruiter'));
+      await expect(
+        svc.canSeeUnitOrgStats('u1', 'Jinnat Textile Mills Ltd.'),
+      ).resolves.toBe(true);
+      // …while raising and managing in a unit stays closed to them.
+      await expect(
+        svc.canAccessUnitName('u1', 'Jinnat Textile Mills Ltd.'),
+      ).resolves.toBe(false);
+    });
+
+    it('keeps a unit role holder to their own unit', async () => {
+      const svc = build(unitRole('unit_approver', 'Unit A'));
+      await expect(svc.canSeeUnitOrgStats('u1', 'Unit A')).resolves.toBe(true);
+      await expect(svc.canSeeUnitOrgStats('u1', 'Unit B')).resolves.toBe(false);
+    });
+  });
+
   it('does not let a unit-scoped role holder act in another unit', async () => {
     const svc = build(unitRole('corporate_hr', 'Unit A'));
     await expect(
