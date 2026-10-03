@@ -46,6 +46,7 @@ sudo mkdir -p /var/www/dbl-hrm-dev && sudo chown dbl-hrm:dbl-hrm /var/www/dbl-hr
 sudo ufw allow 4500/tcp
 
 # The nginx site for :4500 (same certificate as the live site).
+sudo install -m 644 /home/dbl-hrm/HRM_Backend/deploy/ubuntu/dbl-hrm-block-probes.conf /etc/nginx/snippets/
 sudo sed -e 's#__DOMAIN__#talenthub.dbl-group.com#g' -e 's#__WEB_ROOT__#/var/www/dbl-hrm-dev#g' \
   /home/dbl-hrm/HRM_Backend/deploy/ubuntu/dbl-hrm-dev.nginx.conf | sudo tee /etc/nginx/sites-available/dbl-hrm-dev >/dev/null
 sudo ln -sf /etc/nginx/sites-available/dbl-hrm-dev /etc/nginx/sites-enabled/dbl-hrm-dev

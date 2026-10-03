@@ -203,6 +203,7 @@ if [ ! -f "$CRT" ] || [ ! -f "$KEY" ]; then
 fi
 chmod 600 "$KEY"
 install -m 644 "$HERE/dbl-hrm-security-headers.conf" /etc/nginx/snippets/dbl-hrm-security-headers.conf
+install -m 644 "$HERE/dbl-hrm-block-probes.conf" /etc/nginx/snippets/dbl-hrm-block-probes.conf
 sed -e "s|__DOMAIN__|$DOMAIN|g" -e "s|__WEB_ROOT__|$WEB_ROOT|g" \
     "$HERE/dbl-hrm.nginx.conf" > /etc/nginx/sites-available/dbl-hrm
 ln -sf /etc/nginx/sites-available/dbl-hrm /etc/nginx/sites-enabled/dbl-hrm
