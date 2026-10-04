@@ -10,19 +10,16 @@
  * - **A panelist who turned email off on their profile** is left off the
  *   invite. An attendee's reminders come from their own calendar, so leaving
  *   them off is the only way to stop those too.
- * - **"Notify on calendar" off** (the organizer's choice for this round) →
- *   the same as the master switch: the event stays on the recruitment
- *   calendar, with its Meet link, and nobody is invited.
  *
- * The candidate is not a user and has no preference: they are invited only
- * when the organizer chose to email them ("Email candidate").
+ * The candidate is not a user and has no preference: they are on the invite
+ * only when the organizer left "Notify on calendar" ticked for the round.
+ * That choice is the candidate's alone — the panel is invited either way.
  */
 export interface CalendarInviteeInput {
   emailEnabled: boolean;
-  /** "Notify on calendar" on this round. */
-  calendarNotify: boolean;
   panelists: { email: string | null; emailNotifications: boolean }[];
   candidateEmail: string | null;
+  /** "Notify on calendar" on this round — the candidate's invite only. */
   inviteCandidate: boolean;
 }
 
@@ -35,9 +32,7 @@ export interface CalendarInvitees {
 export function calendarInvitees(
   input: CalendarInviteeInput,
 ): CalendarInvitees {
-  if (!input.emailEnabled || !input.calendarNotify) {
-    return { attendees: [], notify: false };
-  }
+  if (!input.emailEnabled) return { attendees: [], notify: false };
   const attendees = input.panelists
     .filter((p) => p.emailNotifications && p.email)
     .map((p) => p.email as string);
@@ -45,4 +40,20 @@ export function calendarInvitees(
     attendees.push(input.candidateEmail);
   }
   return { attendees, notify: true };
+}
+
+/**
+ * Whether a reschedule lets Google send its calendar update.
+ *
+ * "Notify on calendar" unticked means the candidate hears nothing from Google
+ * about the move. Google writes to every guest or to none, so when the
+ * candidate is on the invite the move goes out silently (the panel still gets
+ * this system's own notice); when they are not, the panel's calendar update
+ * goes as usual — there is no candidate on it to reach.
+ */
+export function rescheduleSendsCalendarUpdate(input: {
+  candidateInvited: boolean;
+  notifyCalendar?: boolean;
+}): boolean {
+  return input.notifyCalendar !== false || !input.candidateInvited;
 }

@@ -44,7 +44,10 @@ import { sameUnit } from '../../common/util/normalize-unit';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
-import { calendarInvitees } from './calendar-invitees';
+import {
+  calendarInvitees,
+  rescheduleSendsCalendarUpdate,
+} from './calendar-invitees';
 import {
   CRITERIA as EVALUATION_CRITERIA,
   scoreCriteria,
@@ -268,8 +271,10 @@ export class InterviewService {
         scheduledAt: toDate(dto.scheduledAt),
         location: dto.location?.trim() || null,
         createdById: actor.id,
-        calendarNotify: dto.notifyCalendar !== false,
-        calendarInviteCandidate: dto.notifyCandidate === true,
+        // "Notify on calendar" is the candidate's calendar invite. A client
+        // that does not send it gets the old rule: invited when emailed.
+        calendarInviteCandidate:
+          dto.notifyCalendar ?? dto.notifyCandidate === true,
         panelists: {
           create: [...new Set(dto.panelistUserIds)].map((uid) => ({
             userId: uid,
@@ -734,9 +739,10 @@ export class InterviewService {
         previousScheduledAt: round.scheduledAt,
         rescheduleCount: { increment: 1 },
         rescheduleReason: reason,
-        // Ticked on a round arranged without calendar invites: invite them now.
-        ...(dto.notifyCalendar === true && !round.calendarNotify
-          ? { calendarNotify: true }
+        // Ticked for a candidate who was not on the calendar invite: invite
+        // them now.
+        ...(dto.notifyCalendar === true && !round.calendarInviteCandidate
+          ? { calendarInviteCandidate: true }
           : {}),
         rescheduledAt: new Date(),
         rescheduledByName: actor.name.slice(0, 150),
@@ -756,7 +762,10 @@ export class InterviewService {
     const synced = await this.syncCalendarUpdate(
       fresh,
       postTitle(round.requisition),
-      dto.notifyCalendar !== false,
+      rescheduleSendsCalendarUpdate({
+        candidateInvited: round.calendarInviteCandidate,
+        notifyCalendar: dto.notifyCalendar,
+      }),
     );
     if (synced) fresh = synced;
 
@@ -838,7 +847,7 @@ export class InterviewService {
     if (round.calendarEventId) {
       await this.calendar.cancelEvent(
         round.calendarEventId,
-        await this.calendarNotifies(round),
+        await this.calendarNotifies(),
       );
     }
     await this.prisma.interviewRound.delete({ where: { id: roundId } });
@@ -1341,8 +1350,8 @@ export class InterviewService {
    * Patch / cancel / late-create the Calendar event after a round changes.
    *
    * @param sendUpdates false to move the event without Google writing to
-   *   anyone about it — "Notify on calendar" unticked on a reschedule. Who is
-   *   on the invite does not change.
+   *   anyone about it — a reschedule with "Notify on calendar" unticked for
+   *   a candidate who is on the invite. Who is on the invite does not change.
    */
   private async syncCalendarUpdate(
     round: RoundFull,
@@ -1354,7 +1363,7 @@ export class InterviewService {
       if (round.status === 'CANCELLED') {
         await this.calendar.cancelEvent(
           round.calendarEventId,
-          sendUpdates && (await this.calendarNotifies(round)),
+          sendUpdates && (await this.calendarNotifies()),
         );
         return this.prisma.interviewRound.update({
           where: { id: round.id },
@@ -1370,17 +1379,9 @@ export class InterviewService {
     return this.syncCalendarCreate(round, designation);
   }
 
-  /**
-   * Whether Google may write to anyone about this round's event: the
-   * Settings email master switch, and the round's own "Notify on calendar".
-   */
-  private async calendarNotifies(round: {
-    calendarNotify: boolean;
-  }): Promise<boolean> {
-    return (
-      round.calendarNotify &&
-      (await this.settings.getNotificationConfig()).emailEnabled
-    );
+  /** Calendar mail follows the Settings email master switch. */
+  private async calendarNotifies(): Promise<boolean> {
+    return (await this.settings.getNotificationConfig()).emailEnabled;
   }
 
   private async eventInput(
@@ -1390,8 +1391,7 @@ export class InterviewService {
   ): Promise<CalendarEventInput | null> {
     if (!round.scheduledAt) return null;
     const { attendees, notify } = calendarInvitees({
-      emailEnabled: (await this.settings.getNotificationConfig()).emailEnabled,
-      calendarNotify: round.calendarNotify,
+      emailEnabled: await this.calendarNotifies(),
       panelists: round.panelists.map((p) => ({
         email: p.user.email,
         emailNotifications: p.user.emailNotifications,
@@ -2861,8 +2861,8 @@ function serializeRound(r: RoundFull) {
     status: r.status.toLowerCase(),
     meetLink: r.meetLink ?? null,
     calendarSynced: Boolean(r.calendarEventId),
-    /** "Notify on calendar": the panel (and candidate) are on the invite. */
-    calendarNotify: r.calendarNotify,
+    /** "Notify on calendar": the candidate is on the calendar invite. */
+    calendarInviteCandidate: r.calendarInviteCandidate,
     /** Set once it has been moved: from when, why, by whom, how often. */
     rescheduled: r.rescheduleCount
       ? {

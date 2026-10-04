@@ -991,16 +991,11 @@ model InterviewRound {
   /// Google Calendar sync: event id + the auto-generated Meet link (online).
   calendarEventId  String?             @map("calendar_event_id") @db.VarChar(200)
   meetLink         String?             @map("meet_link")
-  /// "Notify on calendar" when the round was arranged: whether the panel (and
-  /// the candidate, below) are invited to the event, so Google sends them the
-  /// invitation, its updates and its reminders. Off, the event stays on the
-  /// recruitment calendar only — an online round still gets its Meet link.
-  /// Every later change to the round follows it.
-  calendarNotify   Boolean             @default(true) @map("calendar_notify")
-  /// Whether the candidate is on the invite — "Email candidate" when the
-  /// round was arranged. Kept so a later edit does not invite a candidate
-  /// the organizer chose not to write to. True on rounds made before it was
-  /// recorded, which is how they behaved.
+  /// "Notify on calendar" when the round was arranged: whether the CANDIDATE
+  /// is on the Google Calendar invite, and so gets Google's invitation,
+  /// updates, reminders and cancellation. The panel's invite does not depend
+  /// on it. Every later change to the round follows it. True on rounds made
+  /// before it was recorded, which is how they behaved on any later edit.
   calendarInviteCandidate Boolean      @default(true) @map("calendar_invite_candidate")
   /// Reschedules of this round: how many, the time it was booked for before
   /// the latest one, why, and who moved it. The candidate and the panel are

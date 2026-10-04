@@ -1,25 +1,20 @@
 import { InterviewService } from './interview.service';
 
 /**
- * "Notify on calendar", end to end through the service's calendar sync, with
- * Google and the database faked.
+ * "Notify on calendar" — the candidate's Google Calendar invite — end to end
+ * through the service's calendar sync, with Google and the database faked.
  *
- * What it pins: on, the panel (and the candidate when emailed) are invited
- * and Google writes to them; off, the event is still made — it carries an
- * online round's Meet link — but invites nobody and sends nothing; a
- * reschedule with the box unticked moves the event without writing to anyone
- * yet keeps who is on it and their reminders; and a cancellation follows the
- * round's choice.
+ * What it pins: on, the candidate is on the invite with the panel; off, the
+ * candidate is left off it and every later change keeps them off, so Google
+ * never writes to them; the panel is invited either way; a silent move keeps
+ * guests and reminders; and the Settings master switch still stops it all.
  */
 
-type Flags = {
-  calendarNotify: boolean;
+const round = (f: {
   calendarInviteCandidate: boolean;
   calendarEventId?: string | null;
   status?: string;
-};
-
-const round = (f: Flags) => ({
+}) => ({
   id: 'r1',
   kind: 'FIRST',
   mode: 'ONLINE',
@@ -27,7 +22,6 @@ const round = (f: Flags) => ({
   scheduledAt: new Date('2026-10-10T04:00:00Z'),
   location: null,
   calendarEventId: f.calendarEventId ?? null,
-  calendarNotify: f.calendarNotify,
   calendarInviteCandidate: f.calendarInviteCandidate,
   candidate: { name: 'Rahim', email: 'rahim@example.com' },
   panelists: [
@@ -41,6 +35,9 @@ const round = (f: Flags) => ({
     },
   ],
 });
+
+const PANEL = ['a@dbl-group.com', 'b@dbl-group.com'];
+const CANDIDATE = 'rahim@example.com';
 
 function build(emailEnabled = true) {
   const calendar = {
@@ -100,141 +97,85 @@ const created = (c: ReturnType<typeof build>['calendar']) =>
 const updated = (c: ReturnType<typeof build>['calendar']) =>
   (c.updateEvent.mock.calls[0] as unknown as [string, EventInput])[1];
 
-describe('Notify on calendar', () => {
-  it('on: invites the panel and the emailed candidate, and Google writes to them', async () => {
+describe('Notify on calendar (the candidate’s invite)', () => {
+  it('on: the candidate is invited along with the panel', async () => {
     const t = build();
     await t.sync.syncCalendarCreate(
-      round({ calendarNotify: true, calendarInviteCandidate: true }),
+      round({ calendarInviteCandidate: true }),
       'Officer',
     );
     expect(created(t.calendar)).toMatchObject({
-      attendees: ['a@dbl-group.com', 'b@dbl-group.com', 'rahim@example.com'],
+      attendees: [...PANEL, CANDIDATE],
       notify: true,
       reminders: true,
     });
   });
 
-  it('on, candidate not emailed: the candidate stays off the invite', async () => {
+  it('off: the candidate is left off; the panel is invited as always', async () => {
     const t = build();
     await t.sync.syncCalendarCreate(
-      round({ calendarNotify: true, calendarInviteCandidate: false }),
-      'Officer',
-    );
-    expect(created(t.calendar).attendees).toEqual([
-      'a@dbl-group.com',
-      'b@dbl-group.com',
-    ]);
-  });
-
-  it('off: the event is still made, with its Meet link, but invites nobody', async () => {
-    const t = build();
-    await t.sync.syncCalendarCreate(
-      round({ calendarNotify: false, calendarInviteCandidate: true }),
+      round({ calendarInviteCandidate: false }),
       'Officer',
     );
     expect(created(t.calendar)).toMatchObject({
-      attendees: [],
-      notify: false,
-      reminders: false,
+      attendees: PANEL,
+      notify: true,
       withMeet: true,
     });
   });
 
-  it('a later change follows the round’s choice — no candidate it was not asked to invite', async () => {
-    const t = build();
-    await t.sync.syncCalendarUpdate(
-      round({
-        calendarNotify: true,
-        calendarInviteCandidate: false,
-        calendarEventId: 'ev1',
-      }),
-      'Officer',
-    );
-    expect(updated(t.calendar)).toMatchObject({
-      attendees: ['a@dbl-group.com', 'b@dbl-group.com'],
-      notify: true,
+  describe('off: later changes never bring the candidate in', () => {
+    it('an edit updates the panel and leaves the candidate out', async () => {
+      const t = build();
+      await t.sync.syncCalendarUpdate(
+        round({ calendarInviteCandidate: false, calendarEventId: 'ev1' }),
+        'Officer',
+      );
+      expect(updated(t.calendar).attendees).toEqual(PANEL);
+    });
+
+    it('an event made late (no event yet) leaves the candidate out too', async () => {
+      const t = build();
+      await t.sync.syncCalendarUpdate(
+        round({ calendarInviteCandidate: false }),
+        'Officer',
+      );
+      expect(created(t.calendar).attendees).toEqual(PANEL);
+    });
+
+    it('a cancellation cannot reach the candidate — they were never on it', async () => {
+      const t = build();
+      await t.sync.syncCalendarUpdate(
+        round({
+          calendarInviteCandidate: false,
+          calendarEventId: 'ev1',
+          status: 'CANCELLED',
+        }),
+        'Officer',
+      );
+      // The panel is told, as before.
+      expect(t.calendar.cancelEvent).toHaveBeenCalledWith('ev1', true);
     });
   });
 
-  it('a reschedule with the box unticked moves the event silently, keeping guests and reminders', async () => {
+  it('a silent move keeps everyone on it and their reminders, and writes to nobody', async () => {
     const t = build();
     await t.sync.syncCalendarUpdate(
-      round({
-        calendarNotify: true,
-        calendarInviteCandidate: true,
-        calendarEventId: 'ev1',
-      }),
+      round({ calendarInviteCandidate: true, calendarEventId: 'ev1' }),
       'Officer',
       false,
     );
     expect(updated(t.calendar)).toMatchObject({
-      attendees: ['a@dbl-group.com', 'b@dbl-group.com', 'rahim@example.com'],
+      attendees: [...PANEL, CANDIDATE],
       notify: false,
       reminders: true,
-    });
-  });
-
-  it('a cancellation is silent when the round was arranged without invites', async () => {
-    const t = build();
-    await t.sync.syncCalendarUpdate(
-      round({
-        calendarNotify: false,
-        calendarInviteCandidate: true,
-        calendarEventId: 'ev1',
-        status: 'CANCELLED',
-      }),
-      'Officer',
-    );
-    expect(t.calendar.cancelEvent).toHaveBeenCalledWith('ev1', false);
-  });
-
-  it('a cancellation is announced when the round had invites', async () => {
-    const t = build();
-    await t.sync.syncCalendarUpdate(
-      round({
-        calendarNotify: true,
-        calendarInviteCandidate: true,
-        calendarEventId: 'ev1',
-        status: 'CANCELLED',
-      }),
-      'Officer',
-    );
-    expect(t.calendar.cancelEvent).toHaveBeenCalledWith('ev1', true);
-  });
-
-  describe('unticked: nothing reaches anyone, whatever happens to the round later', () => {
-    const off = { calendarNotify: false, calendarInviteCandidate: true };
-
-    it('an edit or a move invites nobody and sends nothing', async () => {
-      for (const sendUpdates of [true, false]) {
-        const t = build();
-        await t.sync.syncCalendarUpdate(
-          round({ ...off, calendarEventId: 'ev1' }),
-          'Officer',
-          sendUpdates,
-        );
-        expect(updated(t.calendar)).toMatchObject({
-          attendees: [],
-          notify: false,
-          reminders: false,
-        });
-      }
-    });
-
-    it('an event made late (no event yet) invites nobody either', async () => {
-      const t = build();
-      await t.sync.syncCalendarUpdate(round(off), 'Officer');
-      expect(created(t.calendar)).toMatchObject({
-        attendees: [],
-        notify: false,
-      });
     });
   });
 
   it('the Settings master switch still overrides everything', async () => {
     const t = build(false);
     await t.sync.syncCalendarCreate(
-      round({ calendarNotify: true, calendarInviteCandidate: true }),
+      round({ calendarInviteCandidate: true }),
       'Officer',
     );
     expect(created(t.calendar)).toMatchObject({ attendees: [], notify: false });
