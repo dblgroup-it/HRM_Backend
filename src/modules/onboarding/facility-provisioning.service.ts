@@ -25,6 +25,7 @@ import {
   type FacilityDecision,
 } from '../requisition/requisition.service';
 import { NotifyFacilityDto } from './dto/facility-provisioning.dto';
+import { AUTOMATED_EMAIL_NOTICE } from '../integrations/mail/automated-notice';
 
 /** Which pool of employees to suggest for a facility's recipient picker. */
 const RECIPIENT_KIND: Record<string, 'admin' | 'it'> = {
@@ -226,7 +227,7 @@ export class FacilityProvisioningService {
             (${cand.requisition.unitFactory}${cand.requisition.department ? ` — ${cand.requisition.department}` : ''})
             and will need <b>${FACILITY_LABEL[key]}</b> arranged before joining.<br><br>
             Once it's arranged, please confirm using the button below. If there is
-            a problem, reply to this email or speak to HR.`,
+            a problem, please speak to HR.`,
             {
               label: `Confirm ${FACILITY_LABEL[key]} arranged`,
               url: confirmUrl,
@@ -444,7 +445,7 @@ export class FacilityProvisioningService {
           <tr><td style="padding:28px 28px 16px;font-size:14px;line-height:1.7;color:#334155">${bodyHtml}</td></tr>
           ${button}
           ${fallback}
-          <tr><td style="padding:18px 28px;background:#f8fafc;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0">This message was sent by DBL Group HR. Please do not share this link.</td></tr>
+          <tr><td style="padding:18px 28px;background:#f8fafc;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0">${AUTOMATED_EMAIL_NOTICE}${cta ? ' Please do not share this link.' : ''}</td></tr>
         </table>
       </td></tr></table>
     </body></html>`;

@@ -60,6 +60,10 @@ import {
   UpdateCandidateDto,
 } from './dto/candidate.dto';
 import { SandboxService } from '../sandbox/sandbox.service';
+import { renderPlainMessage } from '../integrations/mail/branded-email';
+import { designationLabel } from '../requisition/requisition-inputs';
+import { CandidateMailService } from './candidate-mail.service';
+import { applicationId, applicationNoFromSearch } from './reference-ids';
 
 /** The subset of a Multer file we use (typed locally to avoid extra deps). */
 export interface UploadedCv {
@@ -67,6 +71,13 @@ export interface UploadedCv {
   mimetype: string;
   buffer: Buffer;
   size: number;
+}
+
+/** An employee referring a candidate, snapshotted as they are at the time. */
+interface Referrer {
+  code: string;
+  name: string;
+  designation: string | null;
 }
 
 type CandidateRow = Prisma.CandidateGetPayload<object> & {
@@ -119,6 +130,7 @@ export class CandidatesService {
     private readonly recruitment: RecruitmentService,
     private readonly files: FileGrantService,
     private readonly secureFiles: SecureFileService,
+    private readonly candidateMail: CandidateMailService,
   ) {}
 
   // --- workspace -----------------------------------------------------------
@@ -166,10 +178,13 @@ export class CandidatesService {
     if (query.minScore != null) where.matchScore = { gte: query.minScore };
     if (query.search?.trim()) {
       const term = query.search.trim();
+      // A candidate quoting their Application ID (APP-2026-00031) is found by it.
+      const applicationNo = applicationNoFromSearch(term);
       where.OR = [
         { name: { contains: term, mode: 'insensitive' } },
         { email: { contains: term, mode: 'insensitive' } },
         { phone: { contains: term, mode: 'insensitive' } },
+        ...(applicationNo ? [{ applicationNo }] : []),
       ];
     }
 
@@ -362,10 +377,13 @@ export class CandidatesService {
     if (query.minScore != null) where.matchScore = { gte: query.minScore };
     if (query.search?.trim()) {
       const term = query.search.trim();
+      // A candidate quoting their Application ID (APP-2026-00031) is found by it.
+      const applicationNo = applicationNoFromSearch(term);
       where.OR = [
         { name: { contains: term, mode: 'insensitive' } },
         { email: { contains: term, mode: 'insensitive' } },
         { phone: { contains: term, mode: 'insensitive' } },
+        ...(applicationNo ? [{ applicationNo }] : []),
       ];
     }
 
@@ -1100,17 +1118,22 @@ export class CandidatesService {
     // A referrer who is not in the directory would fail every file the same
     // way — say it once, before anything goes to Drive.
     const referredByCode = dto.referredByCode?.trim() || undefined;
-    if (
-      referredByCode &&
-      !(await this.prisma.employee.findFirst({
-        where: { employeeCode: referredByCode },
-        select: { id: true },
-      }))
-    ) {
-      throw new BadRequestException(
-        `No employee with ID ${referredByCode} in the directory`,
-      );
-    }
+    const referrer = referredByCode
+      ? await this.findReferrer(referredByCode)
+      : null;
+    // The whole batch is one referral: the referrer is thanked once, with
+    // everyone in it listed.
+    const referral = referrer
+      ? await this.prisma.candidateReferral.create({
+          data: {
+            requisitionId: reqId,
+            referrerCode: referrer.code,
+            referrerName: referrer.name,
+            createdById: userId,
+          },
+          select: { id: true },
+        })
+      : null;
     const names = bulkCandidateNames(
       dto.names,
       files.map((f) => f.originalname),
@@ -1130,7 +1153,7 @@ export class CandidatesService {
             },
             userId,
             file,
-            false,
+            { announce: false, referralId: referral?.id },
           ),
         );
       } catch (err) {
@@ -1141,7 +1164,10 @@ export class CandidatesService {
           err instanceof NotFoundException ||
           err instanceof ServiceUnavailableException
         ) {
-          if (!created.length) throw err;
+          if (!created.length) {
+            if (referral) await this.dropReferral(referral.id);
+            throw err;
+          }
         }
         failed.push({
           fileName: file.originalname,
@@ -1157,16 +1183,28 @@ export class CandidatesService {
         await this.notifyFactoryIntake(intake.req, userId, intake.role, created.length);
       }
     }
+    if (referral) {
+      if (created.length) this.queueReferralNotice(referral.id);
+      // Nothing went in, so there is no referral to tell anybody about.
+      else await this.dropReferral(referral.id);
+    }
     return { created, failed };
   }
 
+  /**
+   * @param opts.announce false while a bulk upload is adding its files — it
+   *   announces the batch once, at the end.
+   * @param opts.referralId the bulk upload's referral, which every file in it
+   *   joins. A single referred CV is a referral of its own.
+   */
   async create(
     reqId: string,
     dto: CreateCandidateDto,
     userId: string,
     file?: UploadedCv,
-    announce = true,
+    opts: { announce?: boolean; referralId?: string } = {},
   ) {
+    const announce = opts.announce ?? true;
     // An employee referral IS the source — nobody should have to pick one
     // as well.
     const cvSource = dto.referredByCode?.trim()
@@ -1176,11 +1214,7 @@ export class CandidatesService {
 
     // An employee referral arrives with the referrer and the CV together —
     // "referred by X" with nothing to read is not a referral anyone can act on.
-    let referrer: {
-      code: string;
-      name: string;
-      designation: string | null;
-    } | null = null;
+    let referrer: Referrer | null = null;
     const referredByCode = dto.referredByCode?.trim();
     if (referredByCode) {
       if (!file) {
@@ -1188,24 +1222,7 @@ export class CandidatesService {
           'Attach the CV — an employee referral is added with the candidate’s CV',
         );
       }
-      const emp = await this.prisma.employee.findFirst({
-        where: { employeeCode: referredByCode },
-        select: {
-          employeeCode: true,
-          designation: true,
-          user: { select: { name: true } },
-        },
-      });
-      if (!emp) {
-        throw new BadRequestException(
-          `No employee with ID ${referredByCode} in the directory`,
-        );
-      }
-      referrer = {
-        code: emp.employeeCode,
-        name: emp.user.name,
-        designation: emp.designation,
-      };
+      referrer = await this.findReferrer(referredByCode);
     }
 
     let cvFileId: string | null = null;
@@ -1227,6 +1244,23 @@ export class CandidatesService {
     }
 
     const flagEntry = await this.checkRegistry(dto.email, dto.phone);
+    // Made last, once the CV is safely on Drive, so a failed upload leaves no
+    // empty referral behind.
+    const ownReferral =
+      referrer && !opts.referralId
+        ? await this.prisma.candidateReferral.create({
+            data: {
+              requisitionId: reqId,
+              referrerCode: referrer.code,
+              referrerName: referrer.name,
+              createdById: userId,
+            },
+            select: { id: true },
+          })
+        : null;
+    const referralId = referrer
+      ? (opts.referralId ?? ownReferral?.id ?? null)
+      : null;
     const created = await this.prisma.candidate.create({
       data: {
         requisitionId: reqId,
@@ -1244,6 +1278,7 @@ export class CandidatesService {
           referredByCode: referrer.code,
           referredByName: referrer.name,
           referredByDesignation: referrer.designation,
+          referralId,
         }),
         ...(flagEntry && {
           isRedFlagged: true,
@@ -1266,7 +1301,88 @@ export class CandidatesService {
       // "Applied 2×" (by email or mobile) both need what is on the CV.
       this.queueCvRead(created.id, reqId);
     }
+    if (ownReferral) this.queueReferralNotice(ownReferral.id);
     return serializeCandidate(created, this.files);
+  }
+
+  /** The referring employee, as a referral records them. */
+  private async findReferrer(code: string): Promise<Referrer> {
+    const emp = await this.prisma.employee.findFirst({
+      where: { employeeCode: code },
+      select: {
+        employeeCode: true,
+        designation: true,
+        user: { select: { name: true } },
+      },
+    });
+    if (!emp) {
+      throw new BadRequestException(
+        `No employee with ID ${code} in the directory`,
+      );
+    }
+    return {
+      code: emp.employeeCode,
+      name: emp.user.name,
+      designation: emp.designation,
+    };
+  }
+
+  private async dropReferral(id: string): Promise<void> {
+    await this.prisma.candidateReferral
+      .delete({ where: { id } })
+      .catch(() => undefined);
+  }
+
+  /**
+   * Write to a referral's candidates and referrer — behind the CV reads
+   * already queued, since a referred CV usually arrives with a name only and
+   * the email address comes off the CV.
+   */
+  private queueReferralNotice(referralId: string): void {
+    this.cvReadQueue = this.cvReadQueue
+      .then(() => this.candidateMail.notifyReferral(referralId))
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `Referral ${referralId} notice failed: ${(err as Error).message}`,
+        );
+      });
+  }
+
+  /**
+   * Referral letters the queue never got to — the server restarted while
+   * the CVs were being read. Anything still unsent after a quarter of an
+   * hour is read (where still unread) and sent. After two days it is left
+   * alone: "thank you for your referral" that late is worse than nothing.
+   *
+   * Not skipped on the dev server: everything it sends goes through
+   * MailService, which keeps it in the outbox there.
+   */
+  @Cron('*/10 * * * *')
+  async sendOverdueReferralNotices(): Promise<void> {
+    const now = Date.now();
+    const overdue = await this.prisma.candidateReferral.findMany({
+      where: {
+        notifiedAt: null,
+        createdAt: {
+          lt: new Date(now - 15 * 60_000),
+          gt: new Date(now - 2 * 24 * 60 * 60_000),
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 20,
+      select: {
+        id: true,
+        requisitionId: true,
+        candidates: {
+          where: { deletedAt: null, email: null, cvFileId: { not: null } },
+          select: { id: true },
+        },
+      },
+    });
+    for (const r of overdue) {
+      for (const c of r.candidates) this.queueCvRead(c.id, r.requisitionId);
+      this.queueReferralNotice(r.id);
+    }
   }
 
   /**
@@ -1689,12 +1805,8 @@ export class CandidatesService {
       );
     }
 
-    await this.mail.send({
-      to: cand.email,
-      subject: dto.subject,
-      text: dto.message,
-      html: renderEmailHtml(dto.message),
-    });
+    const { text, html } = renderPlainMessage(dto.subject, dto.message);
+    await this.mail.send({ to: cand.email, subject: dto.subject, text, html });
 
     // Keep a light trail of contact in the candidate's notes.
     const stamp = new Date().toISOString().slice(0, 10);
@@ -2323,6 +2435,8 @@ export class CandidatesService {
     });
     return candidates.map((c) => ({
       requisitionId: c.requisitionId,
+      /** The number in their confirmation email. */
+      applicationId: applicationId(c.applicationNo, c.createdAt),
       code: c.requisition.code,
       designation: c.requisition.designation,
       unitFactory: c.requisition.unitFactory,
@@ -2411,7 +2525,14 @@ export class CandidatesService {
     this.autoScreen(created.id);
     // Gender and "Applied N×" need what is on the CV, as for any upload.
     this.queueCvRead(created.id, reqId);
-    return { ok: true };
+    // Not awaited: the applicant should not wait on the mail server, and a
+    // confirmation that cannot go must not undo an application that has.
+    void this.candidateMail.sendApplicationReceived(created.id);
+    return {
+      ok: true,
+      applicationId: applicationId(created.applicationNo, created.createdAt),
+      position: designationLabel(req.designation, req.alternateDesignations),
+    };
   }
 
   // --- access control ------------------------------------------------------
@@ -3008,26 +3129,6 @@ function cvFileName(candidate: string, original: string): string {
   return `${candidate} — CV${ext}`;
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/** Wrap a plain-text message in a simple branded HTML email. */
-export function renderEmailHtml(message: string): string {
-  const body = escapeHtml(message).replace(/\n/g, '<br>');
-  return `<!doctype html><html><body style="margin:0;background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
-        <tr><td style="background:#1877c0;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">DBL Group — Recruitment</td></tr>
-        <tr><td style="padding:28px;font-size:14px;line-height:1.7;color:#334155">${body}</td></tr>
-        <tr><td style="padding:18px 28px;background:#f8fafc;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0">
-          This message was sent by DBL Group Recruitment. Please do not share it.
-        </td></tr>
-      </table>
-    </td></tr></table>
-  </body></html>`;
-}
-
 /** Best-effort candidate name from an uploaded CV's filename. */
 function deriveName(filename: string): string {
   const dot = filename.lastIndexOf('.');
@@ -3072,6 +3173,8 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
   return {
     id: c.id,
     requisitionId: c.requisitionId,
+    /** APP-2026-00031 — what the candidate quotes; the search finds it. */
+    applicationId: applicationId(c.applicationNo, c.createdAt),
     name: c.name,
     email: c.email ?? '',
     phone: c.phone ?? '',

@@ -21,6 +21,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { MailService } from '../integrations/mail/mail.service';
+import { AUTOMATED_EMAIL_NOTICE } from '../integrations/mail/automated-notice';
 import { DriveService } from '../integrations/google/drive.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
 
@@ -2285,7 +2286,7 @@ export class BoardService {
     </td></tr>
 
     <tr><td style="background:#f6f9fc;border-top:1px solid #e4ecf5;padding:16px 32px;text-align:center">
-      <p style="margin:0;font-size:11px;color:#8795a8">This is an automated message from DBL HRM. Please do not reply.</p>
+      <p style="margin:0;font-size:11px;color:#8795a8">${AUTOMATED_EMAIL_NOTICE}</p>
     </td></tr>
   </table>
   </td></tr></table>
@@ -2572,7 +2573,7 @@ export class BoardService {
       <strong style="color:#6b7c93">CONFIDENTIAL</strong> — This notice is intended solely for the named recipient.
       The approval link is personal, valid for 30 days, and must not be forwarded or shared.
     </p>
-    <p style="margin:8px 0 0;font-size:11px;color:#a0aec0">DBL Group · HR Department · Automated Notice</p>
+    <p style="margin:8px 0 0;font-size:11px;color:#a0aec0">${AUTOMATED_EMAIL_NOTICE}</p>
   </td></tr>
 
   <!-- Bottom accent bar -->

@@ -1,37 +1,91 @@
+import {
+  renderBrandedEmail,
+  type RenderedEmail,
+} from '../integrations/mail/branded-email';
+import { dear, fullStop, SIGN_OFF } from './recruitment-emails';
+
 /**
  * The regret letter to a rejected candidate.
  *
  * Opt-in: rejecting somebody never mails them by itself. Factory HR (for the
  * candidates handed to them) and the recruiter choose to send it, one
- * candidate or many at once. The wording is DBL's own and is fixed — it is
- * the same letter whoever sends it, so it is not edited per send.
+ * candidate or many at once. The wording is DBL's own and is fixed — the same
+ * letter whoever sends it, addressed to each candidate by name and naming the
+ * post they applied for.
+ *
+ * The frontend shows a preview copy (`HRM_Frontend/src/modules/candidates/
+ * regretMail.ts`); keep the two in step.
  *
  * Decorator-free so the spec can import it.
  */
 
-export const REGRET_MAIL_BODY = [
-  'Dear Applicant,',
-  '',
-  'Greetings from DBL Group.',
-  '',
-  'Thank you for your interest in DBL Group and for taking the time to participate in our selection process. We appreciate the opportunity to learn more about your experience and expertise.',
-  '',
-  'After careful consideration of the requirements of the position and the candidates assessed, we regret to inform you that we have decided to proceed with another candidate whose profile more closely matches the current requirements of the role.',
-  '',
-  'We appreciate your interest in DBL Group and will retain your CV in our database for consideration for future opportunities that may be relevant to your profile.',
-  '',
-  'We wish you every success in your career and future endeavors.',
-  '',
-  'Best Regards,',
-  'HR Department',
-  'DBL Group',
-].join('\n');
+export interface RegretMailInput {
+  candidateName: string;
+  /** The post's title, as `designationLabel` writes it. */
+  position: string;
+  careersUrl: string;
+}
 
-export function regretMailSubject(designation: string | null | undefined): string {
+export function regretMailSubject(
+  designation: string | null | undefined,
+): string {
   const role = designation?.trim();
   return role
     ? `Application Update — ${role} | DBL Group`
     : 'Application Update | DBL Group';
+}
+
+export function regretMail(input: RegretMailInput): RenderedEmail {
+  const position = input.position.trim();
+  return renderBrandedEmail({
+    subject: regretMailSubject(position),
+    preheader:
+      'Thank you for your interest in DBL Group and for the time and effort you invested in our recruitment process.',
+    blocks: [
+      { kind: 'paragraph', content: dear(input.candidateName, 'Candidate') },
+      {
+        kind: 'paragraph',
+        content: position
+          ? [
+              'Thank you for your interest in DBL Group and for the time and effort you invested in our recruitment process for the position of ',
+              { strong: position },
+              fullStop(position),
+            ]
+          : 'Thank you for your interest in DBL Group and for the time and effort you invested in our recruitment process.',
+      },
+      {
+        kind: 'paragraph',
+        content:
+          'After careful consideration of your application and the requirements of the role, we have decided not to proceed with your candidature for this position.',
+      },
+      {
+        kind: 'paragraph',
+        content:
+          'We truly appreciate the opportunity to learn more about your experience, skills, and career aspirations. While we are unable to move forward with your application at this time, we encourage you to explore future opportunities with DBL Group that may be a strong match for your profile.',
+      },
+      {
+        kind: 'link',
+        label: 'Explore Current Opportunities:',
+        href: input.careersUrl,
+      },
+      {
+        kind: 'paragraph',
+        content:
+          'Where appropriate, your profile may also be considered for future opportunities aligned with your qualifications and experience.',
+      },
+      {
+        kind: 'paragraph',
+        content:
+          'At DBL Group, we are committed to a fair, transparent, inclusive, and merit-based recruitment process, ensuring every candidate is assessed objectively against the requirements of the role.',
+      },
+      {
+        kind: 'paragraph',
+        content:
+          'Thank you again for considering DBL Group as part of your career journey. We wish you continued success and growth in your professional endeavors.',
+      },
+      SIGN_OFF,
+    ],
+  });
 }
 
 export interface RegretEligibilityInput {

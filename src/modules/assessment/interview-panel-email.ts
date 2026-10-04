@@ -11,6 +11,7 @@
  */
 
 import { designationLabel } from '../requisition/requisition-inputs';
+import { AUTOMATED_EMAIL_NOTICE } from '../integrations/mail/automated-notice';
 
 /** Interviews happen in Bangladesh; the server's own zone is irrelevant. */
 const TIMEZONE = 'Asia/Dhaka';
@@ -257,6 +258,7 @@ ${movedBox}
     <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6">
       You receive these because email notifications are on. Turn them off in Settings → Notifications.
     </p>
+    <p style="margin:6px 0 0;font-size:11px;color:#94a3b8;line-height:1.6">${AUTOMATED_EMAIL_NOTICE}</p>
   </td></tr>
 
 </table>

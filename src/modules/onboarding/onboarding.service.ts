@@ -94,6 +94,7 @@ import {
   type ProposedMedical,
 } from './medical-approval';
 import { SandboxService } from '../sandbox/sandbox.service';
+import { AUTOMATED_EMAIL_NOTICE } from '../integrations/mail/automated-notice';
 
 /**
  * The role whose holders may be named as the signatory on a letter, and the
@@ -4143,7 +4144,7 @@ export class OnboardingService {
           <tr><td style="background:#1877c0;padding:18px 28px;color:#fff;font-size:18px;font-weight:bold">DBL Group — Recruitment</td></tr>
           <tr><td style="padding:28px 28px 16px;font-size:14px;line-height:1.7;color:#334155">${bodyHtml}</td></tr>
           ${button}
-          <tr><td style="padding:18px 28px;background:#f8fafc;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0">This message was sent by DBL Group Recruitment. Please do not share this link.</td></tr>
+          <tr><td style="padding:18px 28px;background:#f8fafc;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0">${AUTOMATED_EMAIL_NOTICE}${cta ? ' The link is personal to you; please do not share it.' : ''}</td></tr>
         </table>
       </td></tr></table>
     </body></html>`;

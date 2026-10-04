@@ -9,12 +9,15 @@ import type { Transporter } from 'nodemailer';
 
 import { SettingsService } from '../../settings/settings.service';
 import { SandboxService } from '../../sandbox/sandbox.service';
+import { finaliseOutgoing, previewHtml } from './automated-notice';
 
 /** One file travelling with the message — an offer letter PDF, say. */
 export interface MailAttachment {
   filename: string;
   content: Buffer;
   contentType?: string;
+  /** Content id of an image shown inside the message (the logo). */
+  cid?: string;
 }
 
 export interface SendMailInput {
@@ -68,7 +71,11 @@ export class MailService {
     return this.transporter;
   }
 
-  async send(input: SendMailInput): Promise<{ messageId: string }> {
+  async send(message: SendMailInput): Promise<{ messageId: string }> {
+    // Every message leaves with the automated-email notice at its foot, and
+    // with the logo when its HTML shows it — added here so no sender can
+    // forget either.
+    const input = finaliseOutgoing(message);
     // Dev server: recorded, never sent — and counted as sent, so the flow
     // under test carries on exactly as it would live.
     if (
@@ -77,8 +84,12 @@ export class MailService {
         subject: input.subject,
         body: input.text ?? input.html ?? '',
         meta: {
-          html: input.html ?? null,
-          attachments: (input.attachments ?? []).map((a) => a.filename),
+          // The outbox shows the HTML in a browser frame, where the inline
+          // logo's cid: reference would be a broken image.
+          html: input.html ? previewHtml(input.html) : null,
+          attachments: (input.attachments ?? [])
+            .filter((a) => !a.cid)
+            .map((a) => a.filename),
         },
       })
     ) {

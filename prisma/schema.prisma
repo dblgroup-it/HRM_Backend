@@ -646,6 +646,7 @@ model Requisition {
   boardVotes            RequisitionBoardVote[]
   activities            RequisitionActivity[]
   candidates            Candidate[]
+  referrals             CandidateReferral[]
   committeeMembers      CommitteeMember[]
   interviewRounds       InterviewRound[]
   interviewDelegations  InterviewDelegation[]
@@ -787,6 +788,15 @@ model Candidate {
   referredByCode        String?                @map("referred_by_code") @db.VarChar(20)
   referredByName        String?                @map("referred_by_name") @db.VarChar(150)
   referredByDesignation String?                @map("referred_by_designation") @db.VarChar(150)
+  /// The referral this candidate was sent in with — the one submission the
+  /// referrer is written to about. Null on candidates referred before
+  /// referrals were recorded, and on everyone not referred.
+  referralId            String?                @map("referral_id")
+  referral              CandidateReferral?     @relation(fields: [referralId], references: [id], onDelete: SetNull)
+  /// The application number, quoted to the candidate as APP-<year>-<n>
+  /// (`candidates/reference-ids.ts`). Every candidate row is one application,
+  /// however it arrived, so the database numbers each one as it is inserted.
+  applicationNo         Int                    @unique @default(autoincrement()) @map("application_no")
   /// Where the recruiter found this CV — a key from
   /// src/modules/requisition/cv-sources.ts (linkedin, bdjobs, head_hunting…).
   /// Distinct from `source`, which is how the record got into the system
@@ -826,7 +836,36 @@ model Candidate {
   @@index([rejectionStage])
   @@index([createdAt])
   @@index([deletedAt])
+  @@index([referralId])
   @@map("candidates")
+}
+
+/// An employee referral: a DBL employee putting one candidate or several
+/// forward for a requisition, sent in together. Quoted to the referrer as
+/// REF-<year>-<n> (`candidates/reference-ids.ts`).
+///
+/// The referrer is a snapshot, like Candidate.referredBy*: their leaving must
+/// not rewrite who referred whom.
+model CandidateReferral {
+  id            String      @id @default(cuid())
+  referenceNo   Int         @unique @default(autoincrement()) @map("reference_no")
+  requisitionId String      @map("requisition_id")
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  referrerCode  String      @map("referrer_code") @db.VarChar(20)
+  referrerName  String      @map("referrer_name") @db.VarChar(150)
+  /// Who sent it in — the recruiter, or the unit's Factory HR.
+  createdById   String?     @map("created_by_id")
+  /// When the referrer and the referred candidates were written to. That
+  /// waits for the CVs to be read, since most referred CVs arrive with a name
+  /// only and the email address comes off the CV. Set once, before anything is
+  /// sent, so nobody is written to twice.
+  notifiedAt    DateTime?   @map("notified_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  candidates    Candidate[]
+
+  @@index([requisitionId])
+  @@index([notifiedAt, createdAt])
+  @@map("candidate_referrals")
 }
 
 /// AI-computed suggestion: a Talent Bank candidate matched against one open

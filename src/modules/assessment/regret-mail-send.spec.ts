@@ -1,6 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 
 import { InterviewService } from './interview.service';
+import { CandidateMailService } from '../candidates/candidate-mail.service';
 
 /**
  * The regret letter's send path, with the mailer and the database faked.
@@ -74,15 +75,22 @@ function build(opts: {
         : Promise.reject(new ForbiddenException('Only the recruiter')),
     ),
   };
-  const sent: { to: string; subject: string; text?: string }[] = [];
+  type Sent = { to: string; subject: string; text?: string; html?: string };
+  const sent: Sent[] = [];
   const mail = {
     isConfigured: () => true,
-    send: jest.fn((m: { to: string; subject: string; text?: string }) => {
+    send: jest.fn((m: Sent) => {
       sent.push(m);
       return Promise.resolve({ messageId: opts.messageId ?? 'm-1' });
     }),
   };
   const notifications = { broadcastChange: jest.fn() };
+  // The real letter, with only the site address faked.
+  const candidateMail = new CandidateMailService(
+    {} as never,
+    {} as never,
+    { get: () => 'https://talenthub.dbl-group.com' } as never,
+  );
   const svc = new InterviewService(
     prisma as never,
     permissions as never,
@@ -93,6 +101,7 @@ function build(opts: {
     {} as never,
     {} as never,
     {} as never,
+    candidateMail,
   );
   return { svc, sent, updates, notifications };
 }
@@ -109,7 +118,13 @@ describe('sendRegretMail', () => {
     expect(t.sent[0].subject).toBe(
       'Application Update — Sewing Operator | DBL Group',
     );
-    expect(t.sent[0].text).toMatch(/^Dear Applicant,/);
+    // Addressed to the candidate by name, naming the post they applied for.
+    expect(t.sent[0].text).toMatch(/^Dear Rahim,/);
+    expect(t.sent[0].text).toContain(
+      'recruitment process for the position of Sewing Operator.',
+    );
+    expect(t.sent[0].text).toContain('https://talenthub.dbl-group.com/careers');
+    expect(t.sent[0].html).toContain('cid:dbl-group-logo');
     expect(t.updates[0].data).toMatchObject({ regretSentById: 'u1' });
     expect(t.updates[0].data.regretSentAt).toBeInstanceOf(Date);
     expect(t.notifications.broadcastChange).toHaveBeenCalledTimes(1);

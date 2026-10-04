@@ -1,4 +1,5 @@
 import { formatInterviewSlot } from './interview-panel-email';
+import { AUTOMATED_EMAIL_NOTICE } from '../integrations/mail/automated-notice';
 
 export interface CandidateInterviewEmailInput {
   candidateName: string;
@@ -116,6 +117,9 @@ export function buildCandidateInterviewEmail(
     </p>
     <p style="margin:0 0 22px;font-size:14px;line-height:1.7;color:#334155">Thank you for your interest in DBL Group.</p>
     <p style="margin:0;font-size:14px;line-height:1.6;color:#334155">Sincerely,<br><strong>Corporate HR</strong><br>DBL Group</p>
+  </td></tr>
+  <tr><td style="background:#f8fafc;padding:16px 28px;border-top:1px solid #e9eef4">
+    <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.6">${AUTOMATED_EMAIL_NOTICE}</p>
   </td></tr>
 </table>
 </td></tr>

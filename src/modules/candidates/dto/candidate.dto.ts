@@ -246,11 +246,28 @@ export class PublicApplyDto {
   @Matches(BD_MOBILE, { message: BD_MOBILE_MESSAGE })
   phone?: string;
 
+  /**
+   * Typed by the public, so "40,000", "40 000" and "Tk 40000" all mean
+   * 40000, and a box with no figure in it ("Negotiable") is no answer. A bare
+   * number conversion turned "40,000" into NaN and refused the application.
+   * Read from the raw body: implicit conversion has already run by the time a
+   * @Transform sees `value`.
+   */
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
+  @Transform(({ obj, key }) =>
+    salaryFigure((obj as Record<string, unknown>)[key]),
+  )
+  @IsNumber({}, { message: 'Expected salary should be a figure, e.g. 40000' })
   @Min(0)
   salaryExpectation?: number;
+}
+
+/** "Tk 40,000.50" → 40000.5; nothing numeric in it → undefined. */
+export function salaryFigure(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'number') return raw;
+  const figure = String(raw).replace(/[^\d.]/g, '');
+  return figure && /\d/.test(figure) ? Number(figure) : undefined;
 }
 
 /**

@@ -31,15 +31,9 @@ import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { designationLabel } from '../requisition/requisition-inputs';
-import {
-  CandidatesService,
-  renderEmailHtml,
-} from '../candidates/candidates.service';
-import {
-  REGRET_MAIL_BODY,
-  regretMailBlocker,
-  regretMailSubject,
-} from '../candidates/regret-mail';
+import { CandidatesService } from '../candidates/candidates.service';
+import { CandidateMailService } from '../candidates/candidate-mail.service';
+import { regretMailBlocker } from '../candidates/regret-mail';
 import { buildCandidateBrief } from './candidate-brief';
 import { rejectBlocker } from './reject-guard';
 import {
@@ -187,6 +181,7 @@ export class InterviewService {
     private readonly files: FileGrantService,
     private readonly secureFiles: SecureFileService,
     private readonly candidates: CandidatesService,
+    private readonly candidateMail: CandidateMailService,
   ) {}
 
   async listForRequisition(reqId: string, userId: string) {
@@ -2157,9 +2152,7 @@ export class InterviewService {
         if (blocker) throw new BadRequestException(blocker);
         const sent = await this.mail.send({
           to: cand.email!.trim(),
-          subject: regretMailSubject(postTitle(cand.requisition)),
-          text: REGRET_MAIL_BODY,
-          html: renderEmailHtml(REGRET_MAIL_BODY),
+          ...this.candidateMail.regret(cand),
         });
         // The master switch swallows mail without an error. Recording that
         // as sent would tell HR the candidate was written to when nobody was.
@@ -2913,7 +2906,8 @@ function candidateRescheduleText(input: {
     ...(where ? [where] : []),
     ...(input.reason ? ['', `Reason: ${input.reason}`] : []),
     '',
-    'We apologise for any inconvenience. If the new time does not suit you, please reply to this email.',
+    // Not "reply to this email": every message now ends by asking people not to.
+    'We apologise for any inconvenience. If the new time does not suit you, please let your recruitment contact know as soon as possible.',
     '',
     'Best regards,',
     'DBL Group Recruitment',
