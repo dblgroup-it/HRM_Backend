@@ -271,7 +271,7 @@ export class InterviewService {
         scheduledAt: toDate(dto.scheduledAt),
         location: dto.location?.trim() || null,
         createdById: actor.id,
-        // "Notify on calendar" is the candidate's calendar invite. A client
+        // "Calendar notify to candidate" is the candidate's calendar invite. A client
         // that does not send it gets the old rule: invited when emailed.
         calendarInviteCandidate:
           dto.notifyCalendar ?? dto.notifyCandidate === true,
@@ -1350,7 +1350,7 @@ export class InterviewService {
    * Patch / cancel / late-create the Calendar event after a round changes.
    *
    * @param sendUpdates false to move the event without Google writing to
-   *   anyone about it — a reschedule with "Notify on calendar" unticked for
+   *   anyone about it — a reschedule with "Calendar notify to candidate" unticked for
    *   a candidate who is on the invite. Who is on the invite does not change.
    */
   private async syncCalendarUpdate(
@@ -2861,7 +2861,7 @@ function serializeRound(r: RoundFull) {
     status: r.status.toLowerCase(),
     meetLink: r.meetLink ?? null,
     calendarSynced: Boolean(r.calendarEventId),
-    /** "Notify on calendar": the candidate is on the calendar invite. */
+    /** "Calendar notify to candidate": the candidate is on the calendar invite. */
     calendarInviteCandidate: r.calendarInviteCandidate,
     /** Set once it has been moved: from when, why, by whom, how often. */
     rescheduled: r.rescheduleCount

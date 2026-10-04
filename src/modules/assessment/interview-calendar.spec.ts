@@ -1,7 +1,7 @@
 import { InterviewService } from './interview.service';
 
 /**
- * "Notify on calendar" — the candidate's Google Calendar invite — end to end
+ * "Calendar notify to candidate" — the candidate's Google Calendar invite — end to end
  * through the service's calendar sync, with Google and the database faked.
  *
  * What it pins: on, the candidate is on the invite with the panel; off, the
@@ -97,7 +97,7 @@ const created = (c: ReturnType<typeof build>['calendar']) =>
 const updated = (c: ReturnType<typeof build>['calendar']) =>
   (c.updateEvent.mock.calls[0] as unknown as [string, EventInput])[1];
 
-describe('Notify on calendar (the candidate’s invite)', () => {
+describe('Calendar notify to candidate', () => {
   it('on: the candidate is invited along with the panel', async () => {
     const t = build();
     await t.sync.syncCalendarCreate(

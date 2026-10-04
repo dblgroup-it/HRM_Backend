@@ -33,7 +33,7 @@ describe('calendarInvitees', () => {
     });
   });
 
-  it('"Notify on calendar" off keeps only the candidate off — the panel is still invited', () => {
+  it('"Calendar notify to candidate" off keeps only the candidate off — the panel is still invited', () => {
     expect(
       calendarInvitees({ ...base, inviteCandidate: false }).attendees,
     ).toEqual(['a@dbl-group.com']);

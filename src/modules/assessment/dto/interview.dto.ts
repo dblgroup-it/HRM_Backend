@@ -146,7 +146,7 @@ export class ScheduleInterviewDto {
   notifyPanel?: boolean;
 
   /**
-   * "Notify on calendar": put the candidate on the Google Calendar invite.
+   * "Calendar notify to candidate": put the candidate on the Google Calendar invite.
    * Off, Google sends the candidate nothing — no invitation, update,
    * reminder or cancellation. The panel is invited either way. Left out, the
    * candidate is invited when they are emailed (the rule before it existed).
@@ -224,7 +224,7 @@ export class RescheduleInterviewDto {
   notifyPanel?: boolean;
 
   /**
-   * "Notify on calendar" for the candidate. Unticked, Google sends the
+   * "Calendar notify to candidate" for the candidate. Unticked, Google sends the
    * candidate nothing about the move; ticked for a candidate who was not on
    * the calendar invite, they are invited now. Default on.
    */
@@ -278,7 +278,7 @@ export class BulkScheduleInterviewDto {
   notifyPanel?: boolean;
 
   /**
-   * "Notify on calendar": put the candidate on the Google Calendar invite.
+   * "Calendar notify to candidate": put the candidate on the Google Calendar invite.
    * Off, Google sends the candidate nothing — no invitation, update,
    * reminder or cancellation. The panel is invited either way. Left out, the
    * candidate is invited when they are emailed (the rule before it existed).

@@ -991,7 +991,7 @@ model InterviewRound {
   /// Google Calendar sync: event id + the auto-generated Meet link (online).
   calendarEventId  String?             @map("calendar_event_id") @db.VarChar(200)
   meetLink         String?             @map("meet_link")
-  /// "Notify on calendar" when the round was arranged: whether the CANDIDATE
+  /// "Calendar notify to candidate" when the round was arranged: whether the CANDIDATE
   /// is on the Google Calendar invite, and so gets Google's invitation,
   /// updates, reminders and cancellation. The panel's invite does not depend
   /// on it. Every later change to the round follows it. True on rounds made
