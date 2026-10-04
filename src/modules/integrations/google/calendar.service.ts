@@ -25,6 +25,12 @@ export interface CalendarEventInput {
    * and the event carries no reminders. Defaults to true.
    */
   notify?: boolean;
+  /**
+   * Whether the event keeps its reminders, when that differs from `notify` —
+   * an interview moved without telling anyone is still a real interview, and
+   * its reminders stand. Defaults to `notify`.
+   */
+  reminders?: boolean;
 }
 
 export interface CalendarEventResult {
@@ -171,9 +177,9 @@ export class CalendarService {
       end: { dateTime: end.toISOString(), timeZone: TIMEZONE },
       attendees,
       reminders:
-        input.notify === false
-          ? { useDefault: false, overrides: [] }
-          : { useDefault: true },
+        (input.reminders ?? input.notify !== false)
+          ? { useDefault: true }
+          : { useDefault: false, overrides: [] },
       // Only request a fresh Meet room on create — patching with a new
       // createRequest would replace the existing room.
       ...(input.withMeet && !forUpdate

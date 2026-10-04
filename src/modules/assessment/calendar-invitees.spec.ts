@@ -3,6 +3,7 @@ import { calendarInvitees } from './calendar-invitees';
 describe('calendarInvitees', () => {
   const base = {
     emailEnabled: true,
+    calendarNotify: true,
     panelists: [
       { email: 'a@dbl-group.com', emailNotifications: true },
       { email: 'b@dbl-group.com', emailNotifications: false },
@@ -25,6 +26,13 @@ describe('calendarInvitees', () => {
 
   it('invites nobody and sends nothing when the master switch is off', () => {
     expect(calendarInvitees({ ...base, emailEnabled: false })).toEqual({
+      attendees: [],
+      notify: false,
+    });
+  });
+
+  it('invites nobody and sends nothing when the organizer turned calendar off', () => {
+    expect(calendarInvitees({ ...base, calendarNotify: false })).toEqual({
       attendees: [],
       notify: false,
     });
