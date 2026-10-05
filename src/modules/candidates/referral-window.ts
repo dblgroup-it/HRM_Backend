@@ -10,6 +10,10 @@ import type { Prisma } from '@prisma/client';
  * same job and referrer, and the letters wait until it has been quiet for a
  * while: one letter to the referrer, listing everyone.
  *
+ * Only one-at-a-time sends wait. A batch (several CVs dropped together)
+ * arrives complete, so its letters go as soon as its CVs have been read
+ * (`CandidatesService.createMany`).
+ *
  * JOIN is shorter than QUIET on purpose. A referral the sweep could pick up is
  * one nobody can join any more, so the letter can never go out while a
  * candidate is being added to it.

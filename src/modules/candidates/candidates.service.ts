@@ -1176,10 +1176,14 @@ export class CandidatesService {
         await this.notifyFactoryIntake(intake.req, userId, intake.role, created.length);
       }
     }
-    // Nothing went in, so there is no referral to tell anybody about. Its
-    // letters otherwise go from the sweep, once it has been quiet a while.
-    if (referral?.isNew && !created.length) {
-      await this.dropReferral(referral.id);
+    if (referral) {
+      // A batch arrives all at once, so there is nothing to wait for: the
+      // letters go as soon as these CVs have been read for their addresses —
+      // the notice queues behind the reads. (CVs sent one at a time are the
+      // ones the sweep waits on, to put them in one letter.)
+      if (created.length) this.queueReferralNotice(referral.id);
+      // Nothing went in, so there is no referral to tell anybody about.
+      else if (referral.isNew) await this.dropReferral(referral.id);
     }
     return { created, failed };
   }
@@ -1365,7 +1369,8 @@ export class CandidatesService {
   /**
    * Send the letters of every referral that has gone quiet — nothing added
    * for five minutes (`referral-window.ts`) — so CVs sent in one at a time
-   * are one letter to the referrer, not one each. The CVs are read first,
+   * are one letter to the referrer, not one each. (A batch is sent as soon as
+   * its CVs are read; this also catches one a restart interrupted.) The CVs are read first,
    * where still unread, since that is where most addresses come from; the
    * letters queue behind the reads. After two days a referral is left alone:
    * "thank you for your referral" that late is worse than nothing.
