@@ -12,7 +12,8 @@ import { AuthUser } from '../decorators/current-user.decorator';
 
 /**
  * Endpoints a session may still reach while it holds a password it did not
- * choose. Matched against the path with the global `api` prefix stripped.
+ * choose. Matched against the path with the global `api` prefix — and the
+ * API version, `/v1` — stripped.
  *
  * Deliberately tiny: change the password, see who you are, sign out. Anything
  * that would read employee, candidate, salary or medical data is out, because
@@ -68,8 +69,16 @@ export class FirstLoginGuard implements CanActivate {
   }
 }
 
-/** `/api/auth/me` -> `/auth/me`; tolerant of a missing or different prefix. */
-function stripApiPrefix(path: string): string {
+/**
+ * `/api/auth/me` and `/api/v1/auth/me` -> `/auth/me`; tolerant of a missing
+ * or different prefix.
+ *
+ * The version has to go too. The app has called `/api/v1/…` since the API was
+ * versioned (2026-10-02); stripping `/api` alone left `/v1/auth/…`, which
+ * matched nothing above, so an account reset by an administrator was refused
+ * the very change-password call it had been sent to make.
+ */
+export function stripApiPrefix(path: string): string {
   const withoutQuery = path.split('?')[0];
-  return withoutQuery.replace(/^\/api(?=\/|$)/, '') || '/';
+  return withoutQuery.replace(/^\/api(?:\/v\d+)?(?=\/|$)/, '') || '/';
 }
