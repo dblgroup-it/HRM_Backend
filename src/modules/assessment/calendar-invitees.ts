@@ -12,14 +12,14 @@
  *   them off is the only way to stop those too.
  *
  * The candidate is not a user and has no preference: they are on the invite
- * only when the organizer left "Notify candidate (Google Calendar)" ticked for the round.
+ * only when the organizer left "Notify (Google Calendar)" ticked for the round.
  * That choice is the candidate's alone — the panel is invited either way.
  */
 export interface CalendarInviteeInput {
   emailEnabled: boolean;
   panelists: { email: string | null; emailNotifications: boolean }[];
   candidateEmail: string | null;
-  /** "Notify candidate (Google Calendar)" on this round — the candidate's invite only. */
+  /** "Notify (Google Calendar)" on this round — the candidate's invite only. */
   inviteCandidate: boolean;
 }
 
@@ -45,7 +45,7 @@ export function calendarInvitees(
 /**
  * Whether a reschedule lets Google send its calendar update.
  *
- * "Notify candidate (Google Calendar)" unticked means the candidate hears nothing from Google
+ * "Notify (Google Calendar)" unticked means the candidate hears nothing from Google
  * about the move. Google writes to every guest or to none, so when the
  * candidate is on the invite the move goes out silently (the panel still gets
  * this system's own notice); when they are not, the panel's calendar update
