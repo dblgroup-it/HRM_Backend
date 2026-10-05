@@ -1996,7 +1996,7 @@ model CandidatePhoto {
 ///
 /// Errors only (any 4xx/5xx), plus calls slower than the threshold — not
 /// every request, so it stays small enough to search on the live site. Kept
-/// 30 days (`ApiLogService.purgeExpired`).
+/// 7 days (`ApiLogService.purgeExpired`).
 model ApiLog {
   id         String   @id @default(cuid())
   createdAt  DateTime @default(now()) @map("created_at")

@@ -22,8 +22,8 @@ export interface ApiLogEntry {
   stack?: string | null;
 }
 
-/** Days of API log kept. */
-const KEEP_DAYS = 30;
+/** Days of API log kept — a week (owner's decision, 2026-10-05). */
+const KEEP_DAYS = 7;
 
 /**
  * Errors and slow calls, from the API and from users' browsers.
@@ -152,7 +152,7 @@ export class ApiLogService {
     };
   }
 
-  /** Every night: keep the last 30 days, today included. Never throws. */
+  /** Every night: keep the last 7 days, today included. Never throws. */
   @Cron('30 3 * * *', { name: 'api-log-retention', timeZone: 'Asia/Dhaka' })
   async purgeExpired(now: Date = new Date()): Promise<number> {
     const cutoff = retentionCutoff(now, KEEP_DAYS);
