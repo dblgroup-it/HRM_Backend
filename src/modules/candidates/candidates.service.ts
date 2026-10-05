@@ -64,6 +64,7 @@ import { renderPlainMessage } from '../integrations/mail/branded-email';
 import { designationLabel } from '../requisition/requisition-inputs';
 import { CandidateMailService } from './candidate-mail.service';
 import { applicationId, applicationNoFromSearch } from './reference-ids';
+import { dueReferralsWhere, openReferralWhere } from './referral-window';
 
 /** The subset of a Multer file we use (typed locally to avoid extra deps). */
 export interface UploadedCv {
@@ -1121,18 +1122,10 @@ export class CandidatesService {
     const referrer = referredByCode
       ? await this.findReferrer(referredByCode)
       : null;
-    // The whole batch is one referral: the referrer is thanked once, with
-    // everyone in it listed.
+    // The whole batch is one referral — the referrer's open one, if they are
+    // still adding to it: the referrer is thanked once, with everyone listed.
     const referral = referrer
-      ? await this.prisma.candidateReferral.create({
-          data: {
-            requisitionId: reqId,
-            referrerCode: referrer.code,
-            referrerName: referrer.name,
-            createdById: userId,
-          },
-          select: { id: true },
-        })
+      ? await this.referralFor(reqId, referrer, userId)
       : null;
     const names = bulkCandidateNames(
       dto.names,
@@ -1165,7 +1158,7 @@ export class CandidatesService {
           err instanceof ServiceUnavailableException
         ) {
           if (!created.length) {
-            if (referral) await this.dropReferral(referral.id);
+            if (referral?.isNew) await this.dropReferral(referral.id);
             throw err;
           }
         }
@@ -1183,10 +1176,10 @@ export class CandidatesService {
         await this.notifyFactoryIntake(intake.req, userId, intake.role, created.length);
       }
     }
-    if (referral) {
-      if (created.length) this.queueReferralNotice(referral.id);
-      // Nothing went in, so there is no referral to tell anybody about.
-      else await this.dropReferral(referral.id);
+    // Nothing went in, so there is no referral to tell anybody about. Its
+    // letters otherwise go from the sweep, once it has been quiet a while.
+    if (referral?.isNew && !created.length) {
+      await this.dropReferral(referral.id);
     }
     return { created, failed };
   }
@@ -1245,21 +1238,11 @@ export class CandidatesService {
 
     const flagEntry = await this.checkRegistry(dto.email, dto.phone);
     // Made last, once the CV is safely on Drive, so a failed upload leaves no
-    // empty referral behind.
-    const ownReferral =
-      referrer && !opts.referralId
-        ? await this.prisma.candidateReferral.create({
-            data: {
-              requisitionId: reqId,
-              referrerCode: referrer.code,
-              referrerName: referrer.name,
-              createdById: userId,
-            },
-            select: { id: true },
-          })
-        : null;
+    // empty referral behind. CVs sent in one at a time join the referrer's
+    // open referral, so they are one referral and one letter.
     const referralId = referrer
-      ? (opts.referralId ?? ownReferral?.id ?? null)
+      ? (opts.referralId ??
+        (await this.referralFor(reqId, referrer, userId)).id)
       : null;
     const created = await this.prisma.candidate.create({
       data: {
@@ -1301,7 +1284,6 @@ export class CandidatesService {
       // "Applied 2×" (by email or mobile) both need what is on the CV.
       this.queueCvRead(created.id, reqId);
     }
-    if (ownReferral) this.queueReferralNotice(ownReferral.id);
     return serializeCandidate(created, this.files);
   }
 
@@ -1327,6 +1309,38 @@ export class CandidatesService {
     };
   }
 
+  /**
+   * The referral a referred CV belongs to: the one this person is still
+   * adding to for this job and referrer, or a new one.
+   */
+  private async referralFor(
+    reqId: string,
+    referrer: Referrer,
+    userId: string,
+  ): Promise<{ id: string; isNew: boolean }> {
+    const open = await this.prisma.candidateReferral.findFirst({
+      where: openReferralWhere({
+        requisitionId: reqId,
+        referrerCode: referrer.code,
+        createdById: userId,
+        now: new Date(),
+      }),
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (open) return { id: open.id, isNew: false };
+    const made = await this.prisma.candidateReferral.create({
+      data: {
+        requisitionId: reqId,
+        referrerCode: referrer.code,
+        referrerName: referrer.name,
+        createdById: userId,
+      },
+      select: { id: true },
+    });
+    return { id: made.id, isNew: true };
+  }
+
   private async dropReferral(id: string): Promise<void> {
     await this.prisma.candidateReferral
       .delete({ where: { id } })
@@ -1349,25 +1363,20 @@ export class CandidatesService {
   }
 
   /**
-   * Referral letters the queue never got to — the server restarted while
-   * the CVs were being read. Anything still unsent after a quarter of an
-   * hour is read (where still unread) and sent. After two days it is left
-   * alone: "thank you for your referral" that late is worse than nothing.
+   * Send the letters of every referral that has gone quiet — nothing added
+   * for five minutes (`referral-window.ts`) — so CVs sent in one at a time
+   * are one letter to the referrer, not one each. The CVs are read first,
+   * where still unread, since that is where most addresses come from; the
+   * letters queue behind the reads. After two days a referral is left alone:
+   * "thank you for your referral" that late is worse than nothing.
    *
    * Not skipped on the dev server: everything it sends goes through
    * MailService, which keeps it in the outbox there.
    */
-  @Cron('*/10 * * * *')
+  @Cron('*/2 * * * *')
   async sendOverdueReferralNotices(): Promise<void> {
-    const now = Date.now();
     const overdue = await this.prisma.candidateReferral.findMany({
-      where: {
-        notifiedAt: null,
-        createdAt: {
-          lt: new Date(now - 15 * 60_000),
-          gt: new Date(now - 2 * 24 * 60 * 60_000),
-        },
-      },
+      where: dueReferralsWhere(new Date()),
       orderBy: { createdAt: 'asc' },
       take: 20,
       select: {

@@ -5,7 +5,8 @@
  * a title (Mr., Dr., Engr.), the Md. / Mst. that prefixes a great many
  * Bangladeshi names, or initials (A.K.M., S.M.). Those are skipped, and the
  * first word after them is the name. Abdul / Abdur / Abu and their kin are
- * not names on their own, so the word after them comes too ("Abdur Rahman").
+ * not names on their own, nor is Al (Al Amin), so the word after them comes
+ * too ("Abdur Rahman", "Al Amin").
  * A name typed all in capitals or all in lower case is written properly.
  *
  * When nothing is left after the prefixes — someone entered only "Mohammad" —
@@ -62,7 +63,17 @@ const INITIALISMS = new Set([
 ]);
 
 /** Names that need the word after them to be a name. */
-const JOINED = new Set(['abdul', 'abdur', 'abdus', 'abdun', 'abu', 'abul']);
+const JOINED = new Set([
+  'abdul',
+  'abdur',
+  'abdus',
+  'abdun',
+  'abu',
+  'abul',
+  // Al Amin, Al Mamun, Al Imran — "Dear Al," is not a name.
+  'al',
+  'el',
+]);
 
 const bare = (word: string) => word.replace(/[.,]/g, '').toLowerCase();
 

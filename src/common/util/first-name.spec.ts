@@ -29,10 +29,13 @@ describe('firstName', () => {
     expect(firstName('M. Asaduzzaman')).toBe('Asaduzzaman');
   });
 
-  it('keeps Abdul / Abdur / Abu with the word that completes them', () => {
+  it('keeps Abdul / Abdur / Abu / Al with the word that completes them', () => {
     expect(firstName('Md. Abdur Rahman')).toBe('Abdur Rahman');
     expect(firstName('Abdul Karim')).toBe('Abdul Karim');
     expect(firstName('Abu Bakar Siddique')).toBe('Abu Bakar');
+    expect(firstName('Md. Al Amin')).toBe('Al Amin');
+    expect(firstName('AL MAMUN')).toBe('Al Mamun');
+    expect(firstName('Al-Amin Hossain')).toBe('Al-Amin');
   });
 
   it('writes a name typed in one case properly, and leaves mixed case alone', () => {
