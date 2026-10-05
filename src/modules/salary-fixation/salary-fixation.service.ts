@@ -17,6 +17,7 @@ import { DriveService } from '../integrations/google/drive.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { lockedMarkConflicts, lockedMarkMessage } from './screening-lock';
+import { screeningMarkProblem } from './screening-marks';
 import {
   bandFromScore,
   bandSalary,
@@ -168,6 +169,8 @@ export class SalaryFixationService {
           ? dto.proposedSalaryOverride
           : (existing?.proposedSalaryOverride ?? null),
     };
+    const problem = screeningMarkProblem(merged);
+    if (problem) throw new BadRequestException(problem);
 
     const saved = await this.prisma.salaryFixation.upsert({
       where: { candidateId: cand.id },
@@ -659,6 +662,8 @@ export class SalaryFixationService {
       ),
       aiTestEnabled: pick(dto.aiTestEnabled, existing?.aiTestEnabled, true),
     };
+    const problem = screeningMarkProblem(data);
+    if (problem) throw new BadRequestException(problem);
 
     const saved = await this.prisma.salaryFixation.upsert({
       where: { candidateId },
