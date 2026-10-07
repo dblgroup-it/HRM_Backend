@@ -24,6 +24,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
     let message: string | string[] = 'Internal server error';
+    // A machine-readable reason, when the thrower gave one — so a page can
+    // act on it (ask for an email code again) without matching on wording.
+    let code: string | undefined;
     if (exception instanceof HttpException) {
       const res = exception.getResponse();
       message =
@@ -31,6 +34,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
           ? res
           : ((res as { message?: string | string[] }).message ??
             exception.message);
+      if (typeof res === 'object' && res !== null) {
+        const c = (res as { code?: unknown }).code;
+        if (typeof c === 'string') code = c;
+      }
     }
 
     // For the API log (main.ts reads it when the response finishes): the
@@ -60,6 +67,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       success: false,
       statusCode: status,
       message,
+      ...(code && { code }),
       path: request.url,
       timestamp: new Date().toISOString(),
     });

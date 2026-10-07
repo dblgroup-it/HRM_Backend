@@ -40,6 +40,8 @@ export type EmailBlock =
   | { kind: 'link'; label: string; href: string }
   /** A numbered list. */
   | { kind: 'list'; items: string[] }
+  /** A one-time code, large and spaced, on its own line to copy. */
+  | { kind: 'code'; code: string }
   | { kind: 'signoff'; lines: string[] };
 
 export interface BrandedEmailInput {
@@ -151,6 +153,13 @@ function blockHtml(block: EmailBlock): string {
       </table>`;
     }
 
+    case 'code':
+      // Monospace so 0/O and 1/l cannot be mistaken; a table cell rather
+      // than padding on a <p>, which Outlook ignores.
+      return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 22px">
+        <tr><td align="center" bgcolor="#f6f9fc" style="padding:16px 18px 16px 28px;background:#f6f9fc;border:1px solid #e3e9f0;border-radius:10px;font-family:Consolas,'Courier New',monospace;font-size:32px;line-height:1;font-weight:700;letter-spacing:10px;color:${INK}">${esc(block.code)}</td></tr>
+      </table>`;
+
     case 'signoff': {
       const [first, ...rest] = block.lines;
       const lines = [
@@ -182,6 +191,8 @@ function blockText(block: EmailBlock): string {
       return `${block.label}\n${block.href}`;
     case 'list':
       return block.items.map((item, i) => `${i + 1}. ${item}`).join('\n');
+    case 'code':
+      return block.code;
     case 'signoff':
       return block.lines.join('\n');
   }

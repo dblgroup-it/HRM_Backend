@@ -260,6 +260,39 @@ export class PublicApplyDto {
   @IsNumber({}, { message: 'Expected salary should be a figure, e.g. 40000' })
   @Min(0)
   salaryExpectation?: number;
+
+  /** From `POST /apply/:reqId/email-code/verify` — proves `email` is theirs. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  emailVerificationToken?: string;
+}
+
+/** Ask for a code to prove the address on an application. */
+export class ApplyEmailCodeDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsEmail()
+  @MaxLength(160)
+  email!: string;
+
+  /** As typed so far — only to greet them in the letter. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
+}
+
+export class VerifyApplyEmailCodeDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsEmail()
+  @MaxLength(160)
+  email!: string;
+
+  @IsString()
+  @Matches(/^\s*\d{6}\s*$/, {
+    message: 'Enter the 6-digit code from the email.',
+  })
+  code!: string;
 }
 
 /** "Tk 40,000.50" → 40000.5; nothing numeric in it → undefined. */

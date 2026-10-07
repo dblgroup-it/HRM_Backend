@@ -5,6 +5,7 @@ import {
 } from '../integrations/mail/automated-notice';
 import { renderPlainMessage } from '../integrations/mail/branded-email';
 import {
+  applyEmailCodeEmail,
   applicationReceivedEmail,
   referredCandidateEmail,
   referrerEmail,
@@ -187,6 +188,46 @@ describe('a recruiter’s own message in the layout', () => {
     expect(email.html).toMatch(
       /mso-hide:all[^>]*>Please bring: - NID - Certificates/,
     );
+  });
+
+  it('carries the logo and the notice', () => branded(email));
+});
+
+describe('application email code', () => {
+  const email = applyEmailCodeEmail({
+    candidateName: 'Md. Rahim Uddin',
+    position: 'Senior Merchandiser',
+    code: '048193',
+    validMinutes: 10,
+  });
+
+  it('keeps the code out of the subject, and puts it in the inbox preview', () => {
+    expect(email.subject).toBe('Your DBL Group application verification code');
+    expect(email.subject).not.toContain('048193');
+    expect(email.html).toContain('Your verification code is 048193.');
+  });
+
+  it('greets by first name, names the post, gives the code and its lifetime', () => {
+    inOrder(email.text, [
+      'Dear Rahim,',
+      'submit your application for Senior Merchandiser at DBL Group.',
+      '048193',
+      'This code expires in 10 minutes.',
+      'Nothing will be submitted without this code.',
+      'Talent Acquisition Team',
+    ]);
+  });
+
+  it('shows the code on its own, leading zero kept', () => {
+    expect(email.html).toMatch(/monospace[^>]*>048193<\/td>/);
+    expect(email.text).toContain('\n\n048193\n\n');
+  });
+
+  it('greets an applicant who has not typed a name yet', () => {
+    expect(
+      applyEmailCodeEmail({ position: 'X', code: '123456', validMinutes: 10 })
+        .text,
+    ).toContain('Dear Applicant,');
   });
 
   it('carries the logo and the notice', () => branded(email));

@@ -127,6 +127,47 @@ export function applicationReceivedEmail(
   });
 }
 
+// --- Email check on the careers-page application ---------------------------
+
+export interface ApplyEmailCodeInput {
+  /** As typed on the form so far — the greeting falls back without it. */
+  candidateName?: string | null;
+  position: string;
+  code: string;
+  /** Minutes the code lasts, as the letter states it. */
+  validMinutes: number;
+}
+
+export function applyEmailCodeEmail(input: ApplyEmailCodeInput): RenderedEmail {
+  return renderBrandedEmail({
+    // The code stays out of the subject: subjects are what mail logs record.
+    subject: 'Your DBL Group application verification code',
+    preheader: `Your verification code is ${input.code}. It expires in ${input.validMinutes} minutes.`,
+    blocks: [
+      { kind: 'paragraph', content: dear(input.candidateName, 'Applicant') },
+      {
+        kind: 'paragraph',
+        content: [
+          'Use the code below to verify your email address and submit your application for ',
+          { strong: input.position },
+          ' at DBL Group.',
+        ],
+      },
+      { kind: 'code', code: input.code },
+      {
+        kind: 'paragraph',
+        content: `This code expires in ${input.validMinutes} minutes. Please do not share it with anyone.`,
+      },
+      {
+        kind: 'paragraph',
+        content:
+          'If you did not start an application at DBL Group, you can safely ignore this email. Nothing will be submitted without this code.',
+      },
+      SIGN_OFF,
+    ],
+  });
+}
+
 // --- Employee referral: to the candidate ------------------------------------
 
 export interface ReferredCandidateInput extends VacancyFacts {

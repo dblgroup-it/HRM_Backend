@@ -840,6 +840,24 @@ model Candidate {
   @@map("candidates")
 }
 
+/// The live email code for one address on the careers-page application
+/// (`candidates/apply-email-verification.ts`). Keyed on the lowercased
+/// address, so a resend replaces the last code. Deleted a day after last use.
+model ApplyEmailCode {
+  email       String    @id @db.VarChar(160)
+  codeHash    String?   @map("code_hash")
+  expiresAt   DateTime? @map("expires_at")
+  attempts    Int       @default(0)
+  sentAt      DateTime? @map("sent_at")
+  /// Codes sent since windowStart — capped per hour.
+  windowStart DateTime? @map("window_start")
+  windowCount Int       @default(0) @map("window_count")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([updatedAt])
+  @@map("apply_email_codes")
+}
+
 /// An employee referral: a DBL employee putting one candidate or several
 /// forward for a requisition, sent in together. Quoted to the referrer as
 /// REF-<year>-<n> (`candidates/reference-ids.ts`).

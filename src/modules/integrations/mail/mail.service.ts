@@ -51,6 +51,18 @@ export class MailService {
     );
   }
 
+  /**
+   * Whether a message sent now would reach its recipient — the dev server's
+   * outbox counts, the Settings master switch being off does not. For flows
+   * that cannot work unless the mail arrives, such as an emailed code.
+   */
+  async canDeliver(): Promise<boolean> {
+    if (this.sandbox.enabled) return true;
+    if (!this.isConfigured()) return false;
+    const { emailEnabled } = await this.appSettings.getNotificationConfig();
+    return emailEnabled;
+  }
+
   private getTransporter(): Transporter {
     if (!this.isConfigured()) {
       throw new ServiceUnavailableException(
