@@ -25,7 +25,9 @@ export type FilePurpose =
    * is not a control. The grant is minted into a response the caller was
    * already entitled to receive, names one file, and expires.
    */
-  | 'signature';
+  | 'signature'
+  /** A guide from the Tutorials menu — `f` is its slug, not a Drive id. */
+  | 'tutorial';
 
 interface GrantPayload {
   /** Google Drive file id. Signed in, never taken from the request. */

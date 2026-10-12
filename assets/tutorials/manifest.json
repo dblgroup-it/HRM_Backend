@@ -1,0 +1,197 @@
+{
+  "version": "1.1",
+  "date": "12 October 2026",
+  "guides": [
+    {
+      "slug": "master",
+      "number": "00",
+      "file": "DBL-HRM-00-System-Workflow-Master-Document.pdf",
+      "title": "System Workflow — Master Document",
+      "kicker": "System Workflow · Master Document",
+      "subtitle": "How DBL Group’s manpower requisition, recruitment and onboarding system works — end to end, role by role.",
+      "audience": "DBL Group management, the CHRO and HR leadership, and everyone who sets up, runs or supports the hiring process.",
+      "pages": 28,
+      "bytes": 1230297,
+      "roles": [
+        "*"
+      ]
+    },
+    {
+      "slug": "raiser",
+      "number": "01",
+      "file": "DBL-HRM-01-Role-Guide-Requisition-Raiser.pdf",
+      "title": "Requisition Raiser",
+      "kicker": "Role Guide 01",
+      "subtitle": "How to raise a manpower requisition and see it through job analysis and approval.",
+      "audience": "Department and division heads, and anyone nominated to raise manpower requisitions for a unit or factory.",
+      "pages": 10,
+      "bytes": 692655,
+      "roles": [
+        "requisition_raiser"
+      ]
+    },
+    {
+      "slug": "factory-hr",
+      "number": "02",
+      "file": "DBL-HRM-02-Role-Guide-Factory-HR.pdf",
+      "title": "Factory HR",
+      "kicker": "Role Guide 02",
+      "subtitle": "Job analysis for your unit’s requisitions, CVs sent in to the recruiter, and the first interviews handed to you.",
+      "audience": "HR officers at each unit or factory who hold the Factory HR role.",
+      "pages": 11,
+      "bytes": 715709,
+      "roles": [
+        "factory_hr"
+      ]
+    },
+    {
+      "slug": "approver",
+      "number": "03",
+      "file": "DBL-HRM-03-Role-Guide-Requisition-Approver.pdf",
+      "title": "Requisition Approver",
+      "kicker": "Role Guide 03",
+      "subtitle": "How to review and sign off manpower requisitions when you are named in an approval chain.",
+      "audience": "Unit approvers, SBU Heads, factory and division heads — anyone named as a level in a raiser’s approval chain.",
+      "pages": 8,
+      "bytes": 631536,
+      "roles": [
+        "unit_approver",
+        "sbu_head"
+      ]
+    },
+    {
+      "slug": "hota",
+      "number": "04",
+      "file": "DBL-HRM-04-Role-Guide-Head-of-Talent-Acquisition.pdf",
+      "title": "Head of Talent Acquisition",
+      "kicker": "Role Guide 04",
+      "subtitle": "Final approval of every requisition, launching recruitment, Hiring Approval Sheets, medical requests and the settings that drive the workflow.",
+      "audience": "Head of Talent Acquisition and the corporate talent-acquisition team holding this role.",
+      "pages": 11,
+      "bytes": 707697,
+      "roles": [
+        "corporate_hr"
+      ]
+    },
+    {
+      "slug": "chro",
+      "number": "05",
+      "file": "DBL-HRM-05-Role-Guide-CHRO.pdf",
+      "title": "Chief Human Resources Officer",
+      "kicker": "Role Guide 05",
+      "subtitle": "Escalated requisitions, Hiring Approval Sheets, signing letters, and oversight of the whole hiring process.",
+      "audience": "The CHRO, and anyone holding the CHRO role in the system.",
+      "pages": 9,
+      "bytes": 630081,
+      "roles": [
+        "chro"
+      ]
+    },
+    {
+      "slug": "board",
+      "number": "06",
+      "file": "DBL-HRM-06-Role-Guide-Board-Member.pdf",
+      "title": "Board Member",
+      "kicker": "Role Guide 06",
+      "subtitle": "Approving requisitions and Hiring Approval Sheets from an emailed link — no sign-in required.",
+      "audience": "Members of DBL Group’s board who are asked to approve requisitions or selected candidates.",
+      "pages": 6,
+      "bytes": 559570,
+      "roles": [
+        "chro",
+        "corporate_hr"
+      ]
+    },
+    {
+      "slug": "recruiter",
+      "number": "07",
+      "file": "DBL-HRM-07-Role-Guide-Corporate-Recruiter.pdf",
+      "title": "Corporate Recruiter",
+      "kicker": "Role Guide 07",
+      "subtitle": "Running a requisition’s hiring from job posting to the new hire’s first day: candidates, tests, interviews, salary fixation and onboarding.",
+      "audience": "Corporate Recruiters assigned to requisitions by Head of Talent Acquisition.",
+      "pages": 15,
+      "bytes": 791021,
+      "roles": [
+        "corporate_recruiter",
+        "corporate_hr"
+      ]
+    },
+    {
+      "slug": "factory-hr-head",
+      "number": "08",
+      "file": "DBL-HRM-08-Role-Guide-Factory-HR-Head.pdf",
+      "title": "Factory HR Head",
+      "kicker": "Role Guide 08",
+      "subtitle": "Approving the finalists your unit’s Factory HR puts through after a first interview, and sending CVs to the recruiter.",
+      "audience": "Heads of HR at units and factories who hold the Factory HR Head role.",
+      "pages": 7,
+      "bytes": 601860,
+      "roles": [
+        "factory_hr_head"
+      ]
+    },
+    {
+      "slug": "panelist",
+      "number": "09",
+      "file": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.pdf",
+      "title": "Interview Panelist & Interviewer",
+      "kicker": "Role Guide 09",
+      "subtitle": "Scoring candidates and recommending an outcome — and running a first interview when candidates are handed to you.",
+      "audience": "Managers and staff who sit on interview panels, and colleagues asked to run a candidate’s first interview.",
+      "pages": 7,
+      "bytes": 594582,
+      "roles": [
+        "interviewer",
+        "factory_hr",
+        "factory_hr_head"
+      ]
+    },
+    {
+      "slug": "medical",
+      "number": "10",
+      "file": "DBL-HRM-10-Role-Guide-Medical-Officer-and-CMO.pdf",
+      "title": "Medical Officer & Central Medical Officer",
+      "kicker": "Role Guide 10",
+      "subtitle": "Recording pre-employment medical examinations and confirming every finding before a candidate is cleared.",
+      "audience": "Examining Medical Officers and the Central Medical Officer.",
+      "pages": 8,
+      "bytes": 629996,
+      "roles": [
+        "medical_officer",
+        "central_medical_officer"
+      ]
+    },
+    {
+      "slug": "candidate",
+      "number": "11",
+      "file": "DBL-HRM-11-Guide-Candidate-Journey.pdf",
+      "title": "The Candidate Journey",
+      "kicker": "Guide 11",
+      "subtitle": "What applicants and new hires see and do — from the careers page to their joining date.",
+      "audience": "HR teams who support applicants, and anyone who needs to understand the system from the candidate’s side.",
+      "pages": 8,
+      "bytes": 626485,
+      "roles": [
+        "corporate_hr",
+        "corporate_recruiter",
+        "chro"
+      ]
+    },
+    {
+      "slug": "admin",
+      "number": "12",
+      "file": "DBL-HRM-12-Role-Guide-System-Administrator-and-Super-User.pdf",
+      "title": "System Administrator & Super User",
+      "kicker": "Role Guide 12",
+      "subtitle": "Access control, organisation set-up, integrations, monitoring and records — keeping the system running for everyone else.",
+      "audience": "The platform administrator account, Super Users and the IT Department, DBL Group.",
+      "pages": 10,
+      "bytes": 669647,
+      "roles": [
+        "super_user",
+        "admin"
+      ]
+    }
+  ]
+}

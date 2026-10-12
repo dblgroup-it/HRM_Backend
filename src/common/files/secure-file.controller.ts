@@ -1,4 +1,10 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Res,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 
@@ -29,7 +35,11 @@ export class SecureFileController {
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get(':grant')
   async open(@Param('grant') grant: string, @Res() res: Response) {
-    const { fileId, filename } = this.grants.verify(grant);
+    const { fileId, purpose, filename } = this.grants.verify(grant);
+    // A tutorial link names a guide, not a Drive file; it opens elsewhere.
+    if (purpose === 'tutorial') {
+      throw new ForbiddenException('Open this guide from the Tutorials menu.');
+    }
     await this.files.stream(res, fileId, { filename });
   }
 }

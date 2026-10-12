@@ -44,6 +44,7 @@ import { BoardModule } from './modules/board/board.module';
 import { SalaryFixationModule } from './modules/salary-fixation/salary-fixation.module';
 import { AiProficiencyModule } from './modules/ai-proficiency/ai-proficiency.module';
 import { PdfModule } from './common/pdf/pdf.module';
+import { TutorialsModule } from './modules/tutorials/tutorials.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { PdfModule } from './common/pdf/pdf.module';
     RbacModule,
     LeaveModule,
     AuditModule,
+    TutorialsModule,
     RealtimeModule,
     AutomationModule,
     BoardModule,
