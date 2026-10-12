@@ -49,18 +49,6 @@ function onboarding(over: Record<string, unknown> = {}) {
         replaceOfName: null,
         replaceOfEmployeeCode: null,
         separationReason: null,
-        approvalSteps: [
-          {
-            status: 'APPROVED',
-            assignee: 'Md. Anowar Hossain',
-            title: 'Unit Head',
-          },
-          {
-            status: 'APPROVED',
-            assignee: 'Tareq Ahmed',
-            title: 'Head of Talent Acquisition',
-          },
-        ],
         replacements: [
           {
             employeeName: 'Md. Rasel Rana',
@@ -182,7 +170,6 @@ function build(
 const DTO = {
   preferredEmail: 'quality.accesories@glory-dbl.com',
   platform: 'Google',
-  approvedBy: 'Md. Anowar Hossain (Unit Head)',
   purpose: 'Buyers and suppliers.',
   deletions: [
     {
@@ -195,13 +182,10 @@ const DTO = {
 };
 
 describe('ItAccountRequestService: sending the request', () => {
-  it('starts from the requisition: sign-offs, purpose, and the leavers with their addresses', async () => {
+  it('starts from the requisition: the purpose, and the leavers with their addresses', async () => {
     const { svc } = build();
     const d = await svc.draft('c-1', 'hr-1');
     expect(d.recipients).toEqual(['hr-lt-req@dbl-group.com']);
-    expect(d.approvedBy).toBe(
-      'Md. Anowar Hossain (Unit Head) and Tareq Ahmed (Head of Talent Acquisition)',
-    );
     expect(d.purpose).toBe(
       'This account will be used for official communication as Executive, Quality.',
     );

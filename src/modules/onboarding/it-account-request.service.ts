@@ -26,7 +26,6 @@ import {
   SendItRequestDto,
 } from './dto/it-account-request.dto';
 import {
-  approvedByLine,
   defaultItPurpose,
   renderItCompletion,
   renderItRequest,
@@ -51,7 +50,6 @@ const withCandidate = {
     include: {
       requisition: {
         include: {
-          approvalSteps: { orderBy: { orderIndex: 'asc' } },
           replacements: { orderBy: { orderIndex: 'asc' } },
         },
       },
@@ -181,11 +179,6 @@ export class ItAccountRequestService {
       },
       preferredEmail: prev?.preferredEmail ?? '',
       platform: prev?.platform ?? config.platform,
-      approvedBy:
-        prev?.approvedBy ??
-        approvedByLine(
-          req.approvalSteps.filter((s) => s.status === 'APPROVED'),
-        ),
       purpose: prev?.purpose ?? defaultItPurpose(designation, req.department),
       deletions: leavers.map((l) => {
         // A re-send starts from what was asked last time, including an
@@ -253,7 +246,6 @@ export class ItAccountRequestService {
       employeeName: content.employeeName,
       preferredEmail: content.preferredEmail ?? null,
       platform: content.platform,
-      approvedBy: content.approvedBy ?? null,
       purpose: content.purpose ?? null,
       deletions: content.deletions as unknown as Prisma.InputJsonValue,
       // The copy kept is what was sent minus the secret: the raw link would
@@ -615,7 +607,6 @@ export class ItAccountRequestService {
       preferredEmail: dto.preferredEmail?.trim() || null,
       platform: dto.platform?.trim() || config.platform,
       joiningDate: ob.offerJoiningTentative ?? ob.offerJoiningDate ?? null,
-      approvedBy: dto.approvedBy?.trim() || null,
       purpose: dto.purpose?.trim() || null,
       deletions: (dto.deletions ?? []).map((d) => ({
         name: d.name.trim(),
@@ -648,7 +639,6 @@ export class ItAccountRequestService {
           employeeName: prev.employeeName,
           preferredEmail: prev.preferredEmail,
           platform: prev.platform,
-          approvedBy: prev.approvedBy,
           purpose: prev.purpose,
           deletions: prev.deletions as Prisma.InputJsonValue,
           bodyText: prev.bodyText,

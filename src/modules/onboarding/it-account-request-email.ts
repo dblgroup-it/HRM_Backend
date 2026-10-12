@@ -41,7 +41,6 @@ export interface ItRequestMail {
   preferredEmail?: string | null;
   platform: string;
   joiningDate?: Date | null;
-  approvedBy?: string | null;
   purpose?: string | null;
   deletions: ItLeaver[];
   /** Who is asking — the signature. */
@@ -100,29 +99,6 @@ export function defaultItPurpose(
   return role
     ? `This account will be used for official communication as ${role}.`
     : 'This account will be used for official communication.';
-}
-
-/**
- * The requisition's sign-offs as one line: "A (Unit Head), B (Plant Manager)
- * and C (Head of Talent Acquisition)". Steps nobody has signed are left out.
- */
-export function approvedByLine(
-  steps: readonly { assignee: string | null; title: string | null }[],
-): string {
-  const parts = steps
-    .map((s) => {
-      const who = s.assignee?.trim();
-      if (!who) return null;
-      const title = s.title?.trim();
-      return title ? `${who} (${title})` : who;
-    })
-    .filter((p): p is string => Boolean(p));
-  return joinAnd(parts);
-}
-
-function joinAnd(parts: string[]): string {
-  if (parts.length <= 1) return parts[0] ?? '';
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 /** 15 October 2026 — the date as Dhaka reads it. */
@@ -240,7 +216,6 @@ export function renderItRequest(m: ItRequestMail): RenderedMail {
   rows.push(['New Employee', 'Yes']);
   rows.push(['Email Platform', m.platform.trim() || 'Google']);
   if (m.joiningDate) rows.push(['Joining Date', formatItDate(m.joiningDate)]);
-  if (m.approvedBy?.trim()) rows.push(['Approved by', m.approvedBy.trim()]);
   if (m.purpose?.trim()) rows.push(['Purpose', m.purpose.trim()]);
   blocks.push({ kind: 'fields', rows });
 

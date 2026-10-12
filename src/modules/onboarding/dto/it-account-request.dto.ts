@@ -45,11 +45,6 @@ export class SendItRequestDto {
   @IsOptional()
   @IsString()
   @MaxLength(600)
-  approvedBy?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(600)
   purpose?: string;
 
   /** `@Type` matters: without it the global pipe turns each row into `{}`. */

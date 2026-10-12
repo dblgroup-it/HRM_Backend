@@ -1884,7 +1884,6 @@ model ItAccountRequest {
   /// Left blank by HR means IT chooses the address.
   preferredEmail     String?    @map("preferred_email") @db.VarChar(254)
   platform           String     @db.VarChar(40)
-  approvedBy         String?    @map("approved_by")
   purpose            String?
   /// Leavers whose accounts IT is asked to delete: [{ name, code, email, reason }].
   deletions          Json       @default("[]")

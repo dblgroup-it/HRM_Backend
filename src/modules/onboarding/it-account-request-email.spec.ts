@@ -1,5 +1,4 @@
 import {
-  approvedByLine,
   defaultItPurpose,
   itRequestSubject,
   renderItCompletion,
@@ -19,8 +18,6 @@ const glory: ItRequestMail = {
   employeeName: 'Sudansha Kirtonia',
   preferredEmail: 'quality.accesories@glory-dbl.com',
   platform: 'Google',
-  approvedBy:
-    'Md. Anowar Hossain, General Manager (Production), and Tareq Ahmed, HR Head',
   purpose:
     'This account will be used to communicate with buyers, buying houses, suppliers and the marketing team.',
   deletions: [
@@ -56,7 +53,6 @@ describe('the request to IT', () => {
         'Preferred Email Address: quality.accesories@glory-dbl.com',
         'New Employee: Yes',
         'Email Platform: Google',
-        'Approved by: Md. Anowar Hossain, General Manager (Production), and Tareq Ahmed, HR Head',
         'Purpose: This account will be used to communicate with buyers, buying houses, suppliers and the marketing team.',
         '',
         "2. Deletion of Terminated Employee's Email Account",
@@ -119,7 +115,7 @@ describe('the request to IT', () => {
       'Employee Name: Sudansha Kirtonia\nEmployee ID: 15112345\nDesignation: Executive\nDepartment: Quality\nPreferred Email Address',
     );
     expect(text).toContain(
-      'Email Platform: Google\nJoining Date: 15 October 2026\nApproved by',
+      'Email Platform: Google\nJoining Date: 15 October 2026\nPurpose',
     );
   });
 
@@ -260,20 +256,7 @@ describe('the reply from IT', () => {
   });
 });
 
-describe('defaults HR starts from', () => {
-  it('lists the sign-offs as one line', () => {
-    expect(
-      approvedByLine([
-        { assignee: 'Md. Anowar Hossain', title: 'Unit Head' },
-        { assignee: '', title: 'Never signed' },
-        { assignee: 'Tareq Ahmed', title: 'Head of Talent Acquisition' },
-      ]),
-    ).toBe(
-      'Md. Anowar Hossain (Unit Head) and Tareq Ahmed (Head of Talent Acquisition)',
-    );
-    expect(approvedByLine([])).toBe('');
-  });
-
+describe('the purpose HR starts from', () => {
   it('writes a purpose from the post', () => {
     expect(defaultItPurpose('Executive', 'Quality')).toBe(
       'This account will be used for official communication as Executive, Quality.',
