@@ -297,6 +297,7 @@ model User {
   boardApprovalVotes            BoardApprovalVote[]
   referenceChecksConducted      ReferenceCheck[]       @relation("ReferenceCheckConductedBy")
   facilityNotificationsSent     FacilityNotification[] @relation("FacilityNotificationSentBy")
+  itAccountRequestsSent         ItAccountRequest[]     @relation("ItAccountRequestSentBy")
   facilityNotificationsReceived FacilityNotification[] @relation("FacilityNotificationRecipient")
   approvalPathsUpdated          ApprovalPath[]         @relation("ApprovalPathUpdatedBy")
   approvalPathsAsRaiser         ApprovalPath[]         @relation("ApprovalPathRaiser")
@@ -1386,6 +1387,10 @@ model Onboarding {
   itEmail                      String?         @map("it_email") @db.VarChar(254)
   itAssetId                    String?         @map("it_asset_id") @db.VarChar(50)
   itNotifiedAt                 DateTime?       @map("it_notified_at")
+  /// "Notify IT": the email asking IT for this hire's work email account (and,
+  /// for a replacement, to delete the leaver's). One per onboarding; sending it
+  /// again updates the same row with a fresh link.
+  itRequest                    ItAccountRequest?
   docs                         OnboardingDoc[]
   medicalExam                  MedicalExam?
   createdAt                    DateTime        @default(now()) @map("created_at")
@@ -1859,6 +1864,56 @@ model FacilityNotification {
 
   @@index([candidateId, facilityKey])
   @@map("facility_notifications")
+}
+
+/// The request HR sends IT from the last onboarding step ("Notify IT"), in
+/// DBL's own email format, and IT's answer from the link inside it.
+///
+/// IT confirming is what completes the onboarding: the address they created
+/// becomes the hire's work email, and the requester gets the "completed"
+/// reply. Everything the email said is kept as sent (`bodyText`), because the
+/// requisition, the placement and the leaver's record can all change later.
+model ItAccountRequest {
+  id                 String     @id @default(cuid())
+  onboardingId       String     @unique @map("onboarding_id")
+  onboarding         Onboarding @relation(fields: [onboardingId], references: [id], onDelete: Cascade)
+  /// The IT address(es) it went to — Integrations' setting at the time.
+  sentTo             String     @map("sent_to") @db.VarChar(500)
+  subject            String     @db.VarChar(300)
+  employeeName       String     @map("employee_name") @db.VarChar(150)
+  /// Left blank by HR means IT chooses the address.
+  preferredEmail     String?    @map("preferred_email") @db.VarChar(254)
+  platform           String     @db.VarChar(40)
+  approvedBy         String?    @map("approved_by")
+  purpose            String?
+  /// Leavers whose accounts IT is asked to delete: [{ name, code, email, reason }].
+  deletions          Json       @default("[]")
+  bodyText           String     @map("body_text")
+  /// Message-ID of the latest send, so IT's "completed" reply threads under it.
+  messageId          String?    @map("message_id") @db.VarChar(300)
+  /// SHA-256 of the raw link token, which lives only in the email.
+  tokenHash          String     @unique @map("token_hash") @db.VarChar(64)
+  tokenExpiresAt     DateTime   @map("token_expires_at")
+  sentById           String?    @map("sent_by_id")
+  sentBy             User?      @relation("ItAccountRequestSentBy", fields: [sentById], references: [id], onDelete: SetNull)
+  sentByName         String     @map("sent_by_name") @db.VarChar(150)
+  sentAt             DateTime   @default(now()) @map("sent_at")
+  lastSentAt         DateTime   @default(now()) @map("last_sent_at")
+  sendCount          Int        @default(1) @map("send_count")
+  /// IT's answer, from the link.
+  completedAt        DateTime?  @map("completed_at")
+  completedByName    String?    @map("completed_by_name") @db.VarChar(150)
+  createdEmail       String?    @map("created_email") @db.VarChar(254)
+  /// The deletions as IT answered them: [{ name, code, email, reason, deleted }].
+  deletionsDone      Json?      @map("deletions_done")
+  completionNote     String?    @map("completion_note")
+  /// When the "completed" reply went to the requester.
+  confirmationSentAt DateTime?  @map("confirmation_sent_at")
+  /// Closed without IT's answer — HR recorded the work email by hand.
+  closedAt           DateTime?  @map("closed_at")
+  closedReason       String?    @map("closed_reason") @db.VarChar(200)
+
+  @@map("it_account_requests")
 }
 
 model SyncLog {

@@ -31,6 +31,12 @@ export interface NotifyInput {
    * build absolute links. Still subject to their opt-in; never persisted.
    */
   email?: (to: { name: string; origin: string }) => NotifyEmail;
+  /**
+   * In-app only. For a person who has just been sent the real email about
+   * this — a reply in their own thread — so the generic copy would be a
+   * duplicate.
+   */
+  skipEmail?: boolean;
 }
 
 export interface BroadcastChangeOptions<T = unknown> {
@@ -90,12 +96,12 @@ export class NotificationsService {
 
   /** Persist a notification for a user, push it live, and optionally email it. */
   async notify(userId: string, input: NotifyInput): Promise<void> {
-    const { email: _email, ...data } = input;
+    const { email: _email, skipEmail, ...data } = input;
     const notification = await this.prisma.notification.create({
       data: { userId, ...data },
     });
     this.gateway.emitToUser(userId, 'notification', notification);
-    this.emailIfEnabled(userId, input);
+    if (!skipEmail) this.emailIfEnabled(userId, input);
   }
 
   /** Fire-and-forget email of a notification, if the user opted in. */

@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { parseEmailList } from '../../common/util/email-list';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
 
@@ -27,9 +28,28 @@ export interface ScreeningConfig {
   aiTestPassPct: number;
 }
 
+/**
+ * "Notify IT" on onboarding's last step: where the request for a new hire's
+ * work email goes, and how it is addressed. Kept here rather than in .env
+ * because IT's mailbox changes and the administrator changes it on
+ * Integrations, not the server.
+ */
+export interface ItRequestConfig {
+  /** One or more IT addresses; the request goes to all of them. */
+  recipients: string[];
+  /** How the email opens: "Dear <salutation>,". */
+  salutation: string;
+  /** The platform new accounts are made on, unless HR picks another. */
+  platform: string;
+}
+
+/** At most this many IT addresses — a request is for a desk, not a list. */
+export const IT_REQUEST_MAX_RECIPIENTS = 5;
+
 const AI_KEY = 'ai';
 const NOTIFICATION_KEY = 'notifications';
 const SCREENING_KEY = 'screening';
+const IT_REQUEST_KEY = 'it_requests';
 
 const DEFAULT_AI: AiConfig = {
   shortlistThreshold: 60,
@@ -43,6 +63,12 @@ const DEFAULT_SCREENING: ScreeningConfig = {
   writtenTestPassPct: 50,
   computerTestPassPct: 50,
   aiTestPassPct: 50,
+};
+
+const DEFAULT_IT_REQUEST: ItRequestConfig = {
+  recipients: ['hr-lt-req@dbl-group.com'],
+  salutation: 'IT Team',
+  platform: 'Google',
 };
 
 const clamp = (n: number, lo: number, hi: number) =>
@@ -178,6 +204,68 @@ export class SettingsService {
       where: { key: SCREENING_KEY },
       create: {
         key: SCREENING_KEY,
+        value: merged as unknown as Prisma.InputJsonValue,
+      },
+      update: { value: merged as unknown as Prisma.InputJsonValue },
+    });
+    return merged;
+  }
+
+  /** Effective "Notify IT" config (defaults merged with stored overrides). */
+  async getItRequestConfig(): Promise<ItRequestConfig> {
+    const row = await this.prisma.setting.findUnique({
+      where: { key: IT_REQUEST_KEY },
+    });
+    const v = (row?.value as Partial<ItRequestConfig> | null) ?? {};
+    const recipients = Array.isArray(v.recipients)
+      ? parseEmailList(v.recipients.join(',')).valid
+      : [];
+    return {
+      recipients: recipients.length
+        ? recipients
+        : DEFAULT_IT_REQUEST.recipients,
+      salutation: v.salutation?.trim() || DEFAULT_IT_REQUEST.salutation,
+      platform: v.platform?.trim() || DEFAULT_IT_REQUEST.platform,
+    };
+  }
+
+  /**
+   * Change it. `recipients` arrives as the box was typed — "a@x, b@x" — and
+   * is refused, naming the culprit, if anything in it is not an address.
+   */
+  async setItRequestConfig(input: {
+    recipients?: string;
+    salutation?: string;
+    platform?: string;
+  }): Promise<ItRequestConfig> {
+    const current = await this.getItRequestConfig();
+    let recipients = current.recipients;
+    if (input.recipients !== undefined) {
+      const { valid, invalid } = parseEmailList(input.recipients);
+      if (invalid.length) {
+        throw new BadRequestException(
+          `Not an email address: ${invalid.join(', ')}`,
+        );
+      }
+      if (!valid.length) {
+        throw new BadRequestException('Enter at least one IT email address.');
+      }
+      if (valid.length > IT_REQUEST_MAX_RECIPIENTS) {
+        throw new BadRequestException(
+          `At most ${IT_REQUEST_MAX_RECIPIENTS} addresses.`,
+        );
+      }
+      recipients = valid;
+    }
+    const merged: ItRequestConfig = {
+      recipients,
+      salutation: input.salutation?.trim() || current.salutation,
+      platform: input.platform?.trim() || current.platform,
+    };
+    await this.prisma.setting.upsert({
+      where: { key: IT_REQUEST_KEY },
+      create: {
+        key: IT_REQUEST_KEY,
         value: merged as unknown as Prisma.InputJsonValue,
       },
       update: { value: merged as unknown as Prisma.InputJsonValue },

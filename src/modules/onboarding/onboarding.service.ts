@@ -8,7 +8,12 @@ import {
 } from '@nestjs/common';
 import { tokenLookupWhere } from '../../common/crypto/action-token';
 import { ConfigService } from '@nestjs/config';
-import { OnboardingDocStatus, MedicalExam, Prisma } from '@prisma/client';
+import {
+  OnboardingDocStatus,
+  MedicalExam,
+  Prisma,
+  type ItAccountRequest,
+} from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 
 import type { Response } from 'express';
@@ -95,6 +100,7 @@ import {
 } from './medical-approval';
 import { SandboxService } from '../sandbox/sandbox.service';
 import { AUTOMATED_EMAIL_NOTICE } from '../integrations/mail/automated-notice';
+import { itRequestView } from './it-account-request.service';
 
 /**
  * The role whose holders may be named as the signatory on a letter, and the
@@ -251,6 +257,8 @@ type OnboardingWithDocs = Prisma.OnboardingGetPayload<{
   offerSignatory?: { name: string } | null;
   /** Present only where the query includes it. */
   appointmentSignatory?: { name: string } | null;
+  /** Present only where the query includes it. */
+  itRequest?: ItAccountRequest | null;
 };
 
 @Injectable()
@@ -322,6 +330,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     return {
@@ -504,6 +513,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     await this.notifyMedicalTeamIfDue(ob.id);
@@ -526,6 +536,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     await this.notifyMedicalTeamIfDue(ob.id);
@@ -553,6 +564,7 @@ export class OnboardingService {
             facilitiesReviewedBy: { select: { name: true } },
             offerSignatory: { select: { name: true } },
             appointmentSignatory: { select: { name: true } },
+            itRequest: true,
           },
         })
       : await this.prisma.onboarding.update({
@@ -567,6 +579,7 @@ export class OnboardingService {
             facilitiesReviewedBy: { select: { name: true } },
             offerSignatory: { select: { name: true } },
             appointmentSignatory: { select: { name: true } },
+            itRequest: true,
           },
         });
     // This is the last gate before medical, so it is also the moment the
@@ -611,6 +624,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     if (!ob)
@@ -836,6 +850,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -980,6 +995,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1303,6 +1319,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     if (!alreadyAccepted) {
@@ -1412,6 +1429,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1543,6 +1561,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     // Auto-reject all remaining applied candidates for this requisition.
@@ -1624,6 +1643,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1676,7 +1696,12 @@ export class OnboardingService {
     };
   }
 
-  /** Step 24 — hand off to IT (webhook), write back the issued email + asset id. */
+  /**
+   * Complete onboarding with the work email typed in by HR (or written back by
+   * the IT webhook, where one is configured). The usual route is "Notify IT"
+   * (ItAccountRequestService), whose link completes it from IT's side; this
+   * is for an address that arrived some other way.
+   */
   async notifyIt(candidateId: string, dto: NotifyItDto, userId: string) {
     const cand = await this.requireCandidate(candidateId, userId);
     const ob = await this.requireOnboarding(candidateId);
@@ -1747,6 +1772,19 @@ export class OnboardingService {
       }
     }
 
+    // A request still waiting on IT is answered by this instead: its link now
+    // tells IT the email was recorded here, so nobody makes a second account.
+    await this.prisma.itAccountRequest.updateMany({
+      where: { onboardingId: ob.id, completedAt: null, closedAt: null },
+      data: {
+        closedAt: new Date(),
+        closedReason: (email
+          ? `HR recorded the work email by hand: ${email}`
+          : 'HR completed the onboarding by hand'
+        ).slice(0, 200),
+      },
+    });
+
     const updated = await this.prisma.onboarding.update({
       where: { id: ob.id },
       data: {
@@ -1761,6 +1799,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -1843,6 +1882,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
         candidate: {
           include: {
             requisition: {
@@ -2869,6 +2909,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
         candidate: {
           include: {
             requisition: {
@@ -3366,6 +3407,7 @@ export class OnboardingService {
         facilitiesReviewedBy: { select: { name: true } },
         offerSignatory: { select: { name: true } },
         appointmentSignatory: { select: { name: true } },
+        itRequest: true,
       },
     });
     this.notifications.broadcastChange('candidate', cand.requisitionId, {
@@ -4103,6 +4145,8 @@ export class OnboardingService {
       itEmail: ob.itEmail ?? '',
       itAssetId: ob.itAssetId ?? '',
       itNotifiedAt: ob.itNotifiedAt?.toISOString() ?? null,
+      /** "Notify IT": the request to IT and its answer, if one was sent. */
+      itRequest: itRequestView(ob.itRequest),
       // Joining documents hold national ID, certificates and photographs, and
       // the Medical Fitness Report is filed here too. None of them is readable
       // on Drive any more; each `url` is a short-lived grant into this API,

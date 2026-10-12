@@ -5,7 +5,15 @@ import {
   Get,
   Patch,
 } from '@nestjs/common';
-import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { ConfigService } from '@nestjs/config';
 
 import {
@@ -50,6 +58,24 @@ class UpdateScreeningSettingsDto {
   @Min(0)
   @Max(100)
   aiTestPassPct?: number;
+}
+
+class UpdateItRequestSettingsDto {
+  /** As typed: one or more addresses separated by commas. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  recipients?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  salutation?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  platform?: string;
 }
 
 @Controller('settings')
@@ -107,6 +133,22 @@ export class SettingsController {
     return this.settings.setNotificationConfig(dto);
   }
 
+  /** Where "Notify IT" sends requests and how they open (super user only). */
+  @Get('it-requests')
+  async getItRequests(@CurrentUser() user: AuthUser) {
+    await this.requireSuperUser(user.id, 'view the IT request settings');
+    return this.settings.getItRequestConfig();
+  }
+
+  @Patch('it-requests')
+  async updateItRequests(
+    @Body() dto: UpdateItRequestSettingsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.requireSuperUser(user.id, 'change the IT request settings');
+    return this.settings.setItRequestConfig(dto);
+  }
+
   /** Anyone authenticated can read the pass marks (shown in Salary Fixation). */
   @Get('screening')
   getScreening() {
@@ -122,6 +164,12 @@ export class SettingsController {
   ) {
     await this.requireAiSettingsAccess(user.id);
     return this.settings.setScreeningConfig(dto);
+  }
+
+  private async requireSuperUser(userId: string, what: string): Promise<void> {
+    if (!(await this.permissions.isSuperUser(userId))) {
+      throw new ForbiddenException(`Only a super user can ${what}`);
+    }
   }
 
   /** Head of Talent Acquisition and CHRO are both GLOBAL roles, so no unit to scope

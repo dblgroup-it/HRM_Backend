@@ -21,12 +21,20 @@ export interface MailAttachment {
 }
 
 export interface SendMailInput {
+  /** One address, or several separated by commas. */
   to: string;
+  /** Copied in — a requester keeping their own copy of what went out. */
+  cc?: string;
   subject: string;
   text?: string;
   html?: string;
   replyTo?: string;
   attachments?: MailAttachment[];
+  /**
+   * Message-ID of the email this answers, so a reply ("completed") lands in
+   * the same thread as the request in everyone's inbox.
+   */
+  inReplyTo?: string;
 }
 
 /** Sends mail through the recruitment Gmail account (app password, SMTP). */
@@ -96,6 +104,7 @@ export class MailService {
         subject: input.subject,
         body: input.text ?? input.html ?? '',
         meta: {
+          cc: input.cc ?? null,
           // The outbox shows the HTML in a browser frame, where the inline
           // logo's cid: reference would be a broken image.
           html: input.html ? previewHtml(input.html) : null,
@@ -121,11 +130,15 @@ export class MailService {
     const info = await this.getTransporter().sendMail({
       from: `DBL Group Recruitment <${from}>`,
       to: input.to,
+      cc: input.cc,
       subject: input.subject,
       text: input.text,
       html: input.html,
       replyTo: input.replyTo,
       attachments: input.attachments,
+      ...(input.inReplyTo
+        ? { inReplyTo: input.inReplyTo, references: input.inReplyTo }
+        : {}),
     });
     this.logger.log(`Email sent to ${input.to} (${info.messageId})`);
     return { messageId: info.messageId };

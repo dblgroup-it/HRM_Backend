@@ -9,6 +9,9 @@ import { OnboardingPublicController } from './onboarding-public.controller';
 import { FacilityProvisioningService } from './facility-provisioning.service';
 import { FacilityProvisioningController } from './facility-provisioning.controller';
 import { FacilityProvisioningPublicController } from './facility-provisioning-public.controller';
+import { ItAccountRequestService } from './it-account-request.service';
+import { ItAccountRequestController } from './it-account-request.controller';
+import { ItAccountRequestPublicController } from './it-account-request-public.controller';
 
 @Module({
   // CandidatesModule exports RecruitmentService (Drive workspace builder).
@@ -16,6 +19,7 @@ import { FacilityProvisioningPublicController } from './facility-provisioning-pu
   providers: [
     OnboardingService,
     FacilityProvisioningService,
+    ItAccountRequestService,
     ReferenceCheckService,
   ],
   controllers: [
@@ -23,6 +27,8 @@ import { FacilityProvisioningPublicController } from './facility-provisioning-pu
     OnboardingPublicController,
     FacilityProvisioningController,
     FacilityProvisioningPublicController,
+    ItAccountRequestController,
+    ItAccountRequestPublicController,
     ReferenceCheckController,
   ],
 })

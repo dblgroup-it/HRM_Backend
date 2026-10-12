@@ -702,6 +702,7 @@ export class CandidatesService {
           include: {
             docs: { orderBy: { createdAt: 'asc' } },
             medicalClearedBy: { select: { name: true } },
+            itRequest: true,
           },
         },
         salaryFixation: true,
@@ -874,9 +875,26 @@ export class CandidatesService {
         phase: 'onboarding',
         title: 'Final HR verification',
       });
+      const it = ob.itRequest;
+      if (it) {
+        pushIf(e, it.sentAt, {
+          phase: 'onboarding',
+          title: 'IT asked to create the work email',
+          detail: `Sent to ${it.sentTo}${it.sendCount > 1 ? ` · sent ${it.sendCount} times` : ''}`,
+          actor: it.sentByName,
+        });
+        pushIf(e, it.completedAt, {
+          phase: 'onboarding',
+          title: 'Work email created by IT',
+          detail: it.createdEmail ?? undefined,
+          actor: it.completedByName ?? undefined,
+        });
+      }
+      // The hire is complete once the work email is in — from IT's link, or
+      // recorded here by hand.
       pushIf(e, ob.itNotifiedAt, {
         phase: 'onboarding',
-        title: 'IT provisioning requested',
+        title: 'Onboarding completed',
         detail:
           [ob.itEmail, ob.itAssetId].filter(Boolean).join(' · ') || undefined,
       });
