@@ -26,10 +26,16 @@ export interface TutorialEntry {
   pages: number;
   bytes: number;
   /**
-   * Role keys the guide is for — "For you" on the page. `*` is everybody;
-   * `admin` is the platform administrator login.
+   * Role keys whose holders see this guide. Super users and the platform
+   * administrator see every guide, whatever is listed here.
    */
   roles: string[];
+  /** The section it sits in on the page — "Requisition", "Onboarding"… */
+  group: string;
+  /** The cover as a small WebP, beside the PDF; absent on older builds. */
+  thumb?: string;
+  /** The guide's section titles, for "Inside this guide". */
+  contents: string[];
 }
 
 export interface TutorialManifest {
@@ -39,6 +45,7 @@ export interface TutorialManifest {
 }
 
 const SAFE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.pdf$/;
+const SAFE_THUMB = /^[A-Za-z0-9][A-Za-z0-9._-]*\.webp$/;
 
 /**
  * The manifest, keeping only well-formed entries whose PDF is really there.
@@ -66,17 +73,36 @@ export function readManifest(dir: string): TutorialManifest | null {
   return {
     version: String(m.version ?? ''),
     date: String(m.date ?? ''),
-    guides: [...guides].sort((a, b) => a.number.localeCompare(b.number)),
+    guides: guides
+      .map((g) => ({
+        ...g,
+        group: typeof g.group === 'string' && g.group ? g.group : 'Guides',
+        contents: Array.isArray(g.contents)
+          ? g.contents
+              .filter((c): c is string => typeof c === 'string')
+              .slice(0, 20)
+          : [],
+        // A missing or odd thumbnail costs the picture, not the guide.
+        thumb:
+          typeof g.thumb === 'string' &&
+          SAFE_THUMB.test(g.thumb) &&
+          fs.existsSync(path.join(dir, g.thumb))
+            ? g.thumb
+            : undefined,
+      }))
+      .sort((a, b) => a.number.localeCompare(b.number)),
   };
 }
 
-/** Whether a guide is written for this person — by their roles, or the admin login. */
-export function isForYou(
+/**
+ * Whether this person sees a guide: only the guides for the roles they hold
+ * — Factory HR sees the Factory HR guide, not the whole set. Super users and
+ * the platform administrator, who support everybody, see every guide.
+ */
+export function canSee(
   guide: Pick<TutorialEntry, 'roles'>,
   roleKeys: readonly string[],
-  isAdminLogin: boolean,
+  seesEverything: boolean,
 ): boolean {
-  return guide.roles.some(
-    (r) => r === '*' || (r === 'admin' && isAdminLogin) || roleKeys.includes(r),
-  );
+  return seesEverything || guide.roles.some((r) => roleKeys.includes(r));
 }

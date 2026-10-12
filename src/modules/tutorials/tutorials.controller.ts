@@ -14,10 +14,18 @@ import { TutorialsService } from './tutorials.service';
 export class TutorialsController {
   constructor(private readonly tutorials: TutorialsService) {}
 
-  /** Every signed-in user may read the guides. */
+  /** The guides for the caller's roles (all of them for a super user). */
   @Get()
   list(@CurrentUser() user: AuthUser) {
     return this.tutorials.list(user);
+  }
+
+  /** The cover picture on a guide's card — same signed link as the PDF. */
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Get('thumb/:grant')
+  thumb(@Param('grant') grant: string, @Res() res: Response) {
+    return this.tutorials.thumb(grant, res);
   }
 
   /**

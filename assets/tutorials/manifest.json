@@ -13,7 +13,24 @@
       "pages": 28,
       "bytes": 1230297,
       "roles": [
-        "*"
+        "chro",
+        "corporate_hr"
+      ],
+      "group": "Overview",
+      "thumb": "DBL-HRM-00-System-Workflow-Master-Document.webp",
+      "contents": [
+        "Introduction",
+        "The system at a glance",
+        "Roles and participants",
+        "Phase 1 — Manpower requisition",
+        "Phase 2 — Sourcing and CV collection",
+        "Phase 3 — Assessment and interviews",
+        "Phase 4 — Selection and salary",
+        "Phase 5 — Pre-employment and onboarding",
+        "Notifications, emails and reminders",
+        "Administration and configuration",
+        "Records, security and data protection",
+        "Appendices"
       ]
     },
     {
@@ -28,6 +45,19 @@
       "bytes": 692655,
       "roles": [
         "requisition_raiser"
+      ],
+      "group": "Requisition",
+      "thumb": "DBL-HRM-01-Role-Guide-Requisition-Raiser.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Raising a requisition",
+        "What happens after you submit",
+        "When a requisition comes back to you",
+        "After approval",
+        "Notifications",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -42,6 +72,19 @@
       "bytes": 715709,
       "roles": [
         "factory_hr"
+      ],
+      "group": "Requisition",
+      "thumb": "DBL-HRM-02-Role-Guide-Factory-HR.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Writing the job analysis",
+        "Sending CVs to the recruiter",
+        "Running first interviews",
+        "Availability and what you can see",
+        "Notifications",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -57,6 +100,16 @@
       "roles": [
         "unit_approver",
         "sbu_head"
+      ],
+      "group": "Requisition",
+      "thumb": "DBL-HRM-03-Role-Guide-Requisition-Approver.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Reviewing and deciding",
+        "Notifications and reminders",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -71,6 +124,22 @@
       "bytes": 707697,
       "roles": [
         "corporate_hr"
+      ],
+      "group": "Requisition",
+      "thumb": "DBL-HRM-04-Role-Guide-Head-of-Talent-Acquisition.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Approval Paths: who raises, who approves",
+        "Final approval and escalation",
+        "Launching recruitment",
+        "Overseeing recruitment",
+        "Hiring Approval Sheets",
+        "Medical Requests",
+        "Settings you look after",
+        "Notifications",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -85,6 +154,19 @@
       "bytes": 630081,
       "roles": [
         "chro"
+      ],
+      "group": "Requisition",
+      "thumb": "DBL-HRM-05-Role-Guide-CHRO.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Escalated requisitions",
+        "Hiring Approval Sheets",
+        "Signing offer and appointment letters",
+        "Oversight and configuration",
+        "Notifications",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -100,6 +182,16 @@
       "roles": [
         "chro",
         "corporate_hr"
+      ],
+      "group": "Approvals",
+      "thumb": "DBL-HRM-06-Role-Guide-Board-Member.webp",
+      "contents": [
+        "Your role at a glance",
+        "Approving a requisition",
+        "Approving a Hiring Approval Sheet",
+        "Keeping it secure",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -115,6 +207,23 @@
       "roles": [
         "corporate_recruiter",
         "corporate_hr"
+      ],
+      "group": "Recruitment & interviews",
+      "thumb": "DBL-HRM-07-Role-Guide-Corporate-Recruiter.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Publishing the job",
+        "Collecting CVs",
+        "Working the pipeline",
+        "Screening tests",
+        "Interviews",
+        "Salary fixation and selection",
+        "Onboarding",
+        "Regret letters, Talent Bank and leave",
+        "Notifications",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -129,6 +238,17 @@
       "bytes": 601860,
       "roles": [
         "factory_hr_head"
+      ],
+      "group": "Recruitment & interviews",
+      "thumb": "DBL-HRM-08-Role-Guide-Factory-HR-Head.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Approving first-interview finalists",
+        "Sending CVs to the recruiter",
+        "Notifications",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -142,9 +262,18 @@
       "pages": 7,
       "bytes": 594582,
       "roles": [
-        "interviewer",
-        "factory_hr",
-        "factory_hr_head"
+        "interviewer"
+      ],
+      "group": "Recruitment & interviews",
+      "thumb": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.webp",
+      "contents": [
+        "Your role at a glance",
+        "Your invitation",
+        "Scoring a candidate",
+        "My Interviews",
+        "Running a first interview handed to you",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -160,6 +289,18 @@
       "roles": [
         "medical_officer",
         "central_medical_officer"
+      ],
+      "group": "Onboarding",
+      "thumb": "DBL-HRM-10-Role-Guide-Medical-Officer-and-CMO.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "How a candidate reaches you",
+        "Medical Officer: recording the examination",
+        "Central Medical Officer: confirming findings",
+        "Notifications",
+        "Questions and answers",
+        "Quick reference"
       ]
     },
     {
@@ -174,8 +315,19 @@
       "bytes": 626485,
       "roles": [
         "corporate_hr",
-        "corporate_recruiter",
-        "chro"
+        "corporate_recruiter"
+      ],
+      "group": "Onboarding",
+      "thumb": "DBL-HRM-11-Guide-Candidate-Journey.webp",
+      "contents": [
+        "The journey at a glance",
+        "Finding a job and applying",
+        "Tests and interviews",
+        "The onboarding portal",
+        "Emails a candidate receives",
+        "Privacy and security",
+        "Questions applicants ask",
+        "Quick reference"
       ]
     },
     {
@@ -191,6 +343,20 @@
       "roles": [
         "super_user",
         "admin"
+      ],
+      "group": "Administration",
+      "thumb": "DBL-HRM-12-Role-Guide-System-Administrator-and-Super-User.webp",
+      "contents": [
+        "Your role at a glance",
+        "Access and signing in",
+        "Access Control",
+        "Organisation set-up",
+        "Integrations and automation",
+        "Monitoring and records",
+        "Deleting a requisition",
+        "Security overview",
+        "Questions and answers",
+        "Quick reference"
       ]
     }
   ]

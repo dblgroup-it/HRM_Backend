@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { isForYou, readManifest } from './tutorial-catalogue';
+import { canSee, readManifest } from './tutorial-catalogue';
 
 describe('tutorial catalogue', () => {
   let dir: string;
@@ -57,13 +57,23 @@ describe('tutorial catalogue', () => {
     expect(readManifest(dir)).toBeNull();
   });
 
-  it('marks a guide for the people it is written for', () => {
-    expect(isForYou({ roles: ['*'] }, [], false)).toBe(true);
-    expect(isForYou({ roles: ['factory_hr'] }, ['factory_hr'], false)).toBe(
-      true,
-    );
-    expect(isForYou({ roles: ['factory_hr'] }, ['chro'], false)).toBe(false);
-    expect(isForYou({ roles: ['super_user', 'admin'] }, [], true)).toBe(true);
-    expect(isForYou({ roles: ['super_user', 'admin'] }, [], false)).toBe(false);
+  it('shows a guide only to holders of its roles — and everything to an administrator', () => {
+    expect(canSee({ roles: ['factory_hr'] }, ['factory_hr'], false)).toBe(true);
+    expect(canSee({ roles: ['factory_hr'] }, ['chro'], false)).toBe(false);
+    expect(
+      canSee({ roles: ['unit_approver', 'sbu_head'] }, ['sbu_head'], false),
+    ).toBe(true);
+    expect(canSee({ roles: ['factory_hr'] }, [], false)).toBe(false);
+    expect(canSee({ roles: ['factory_hr'] }, [], true)).toBe(true);
+  });
+
+  it('keeps a guide whose thumbnail is missing, without the picture', () => {
+    fs.writeFileSync(path.join(dir, 'a.pdf'), '%PDF');
+    write([entry({ file: 'a.pdf', thumb: 'a.webp', group: 'Requisition' })]);
+    const [g] = readManifest(dir)!.guides;
+    expect(g.thumb).toBeUndefined();
+    expect(g.group).toBe('Requisition');
+    fs.writeFileSync(path.join(dir, 'a.webp'), 'x');
+    expect(readManifest(dir)!.guides[0].thumb).toBe('a.webp');
   });
 });

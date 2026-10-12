@@ -10,8 +10,9 @@ import * as path from 'node:path';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import {
-  isForYou,
+  canSee,
   readManifest,
+  type TutorialEntry,
   type TutorialManifest,
 } from './tutorial-catalogue';
 
@@ -46,42 +47,58 @@ export class TutorialsService {
   }
 
   /**
-   * Every guide, the ones written for this person's roles marked, each with
-   * a signed link — the session token is not sent with a link opened in a
-   * new tab, so the link carries its own short-lived permission.
+   * The guides for the roles this person holds — each with a signed link,
+   * since a link opened in a new tab carries no session token. Super users
+   * and the platform administrator get every guide.
    */
   async list(user: { id: string; role: string }) {
-    const m = this.manifest();
-    if (!m) return { version: null, date: null, guides: [] };
     const perms = await this.permissions.getUserPermissions(user.id);
-    const keys = perms.roles.map((r) => r.key);
+    const keys = [...new Set(perms.roles.map((r) => r.key))];
+    const everything = perms.isSuperUser || user.role === 'ADMIN';
+    const roles = [
+      ...new Map(perms.roles.map((r) => [r.key, r.name])).entries(),
+    ].map(([key, name]) => ({ key, name }));
+    if (user.role === 'ADMIN' && !roles.length) {
+      roles.push({ key: 'admin', name: 'Administrator' });
+    }
+
+    const m = this.manifest();
+    const visible = (m?.guides ?? []).filter((g) =>
+      canSee(g, keys, everything),
+    );
     return {
-      version: m.version,
-      date: m.date,
-      guides: m.guides.map((g) => {
-        const grant = this.grants.mint(g.slug, 'tutorial', {
-          filename: g.file,
-          ttlSeconds: LINK_TTL_SECONDS,
-        });
-        return {
-          slug: g.slug,
-          number: g.number,
-          title: g.title,
-          kicker: g.kicker,
-          subtitle: g.subtitle,
-          audience: g.audience,
-          pages: g.pages,
-          bytes: g.bytes,
-          forYou: isForYou(g, keys, user.role === 'ADMIN'),
-          url: `/api/tutorials/file/${grant}`,
-          downloadUrl: `/api/tutorials/file/${grant}?download=1`,
-        };
-      }),
+      version: m?.version || null,
+      date: m?.date || null,
+      scope: everything ? ('all' as const) : ('roles' as const),
+      roles,
+      guides: visible.map((g) => this.view(g)),
     };
   }
 
-  /** Stream one guide named by a signed link. */
-  async stream(grant: string, download: boolean, res: Response): Promise<void> {
+  private view(g: TutorialEntry) {
+    const grant = this.grants.mint(g.slug, 'tutorial', {
+      filename: g.file,
+      ttlSeconds: LINK_TTL_SECONDS,
+    });
+    return {
+      slug: g.slug,
+      number: g.number,
+      title: g.title,
+      kicker: g.kicker,
+      subtitle: g.subtitle,
+      audience: g.audience,
+      group: g.group,
+      contents: g.contents,
+      pages: g.pages,
+      bytes: g.bytes,
+      url: `/api/tutorials/file/${grant}`,
+      downloadUrl: `/api/tutorials/file/${grant}?download=1`,
+      thumbUrl: g.thumb ? `/api/tutorials/thumb/${grant}` : null,
+    };
+  }
+
+  /** The guide a signed link names. */
+  private guideFor(grant: string): TutorialEntry {
     const { fileId: slug, purpose } = this.grants.verify(grant);
     if (purpose !== 'tutorial') {
       throw new ForbiddenException('This link does not open a tutorial.');
@@ -89,6 +106,26 @@ export class TutorialsService {
     const guide = this.manifest()?.guides.find((g) => g.slug === slug);
     if (!guide)
       throw new NotFoundException('This guide is no longer available.');
+    return guide;
+  }
+
+  /** The cover picture on a guide's card. */
+  async thumb(grant: string, res: Response): Promise<void> {
+    const guide = this.guideFor(grant);
+    if (!guide.thumb) throw new NotFoundException('No cover picture.');
+    const file = path.join(this.dir, guide.thumb);
+    const stat = await fs.promises.stat(file).catch(() => null);
+    if (!stat?.isFile()) throw new NotFoundException('No cover picture.');
+    res.setHeader('Content-Type', 'image/webp');
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    fs.createReadStream(file).pipe(res);
+  }
+
+  /** Stream one guide named by a signed link. */
+  async stream(grant: string, download: boolean, res: Response): Promise<void> {
+    const guide = this.guideFor(grant);
     const file = path.join(this.dir, guide.file);
     const stat = await fs.promises.stat(file).catch(() => null);
     if (!stat?.isFile()) {
