@@ -89,6 +89,7 @@ export class TutorialsService {
       audience: g.audience,
       group: g.group,
       contents: g.contents,
+      chapters: g.chapters,
       pages: g.pages,
       bytes: g.bytes,
       url: `/api/tutorials/file/${grant}`,

@@ -36,6 +36,14 @@ export interface TutorialEntry {
   thumb?: string;
   /** The guide's section titles, for "Inside this guide". */
   contents: string[];
+  /** The same sections with the page each starts on, so a chapter opens at its page. */
+  chapters: TutorialChapter[];
+}
+
+export interface TutorialChapter {
+  title: string;
+  /** 1-based; null when the build could not place it. */
+  page: number | null;
 }
 
 export interface TutorialManifest {
@@ -82,6 +90,7 @@ export function readManifest(dir: string): TutorialManifest | null {
               .filter((c): c is string => typeof c === 'string')
               .slice(0, 20)
           : [],
+        chapters: readChapters(g),
         // A missing or odd thumbnail costs the picture, not the guide.
         thumb:
           typeof g.thumb === 'string' &&
@@ -92,6 +101,36 @@ export function readManifest(dir: string): TutorialManifest | null {
       }))
       .sort((a, b) => a.number.localeCompare(b.number)),
   };
+}
+
+/**
+ * A guide's chapters with their pages. A page outside the document is dropped
+ * rather than trusted; a manifest from before chapters falls back to the
+ * section titles, without pages.
+ */
+function readChapters(g: TutorialEntry): TutorialChapter[] {
+  const pages = Number.isInteger(g.pages) ? g.pages : 0;
+  const listed: unknown[] = Array.isArray(g.chapters)
+    ? g.chapters
+    : Array.isArray(g.contents)
+      ? g.contents.map((title) => ({ title, page: null }))
+      : [];
+  return listed
+    .filter(
+      (c): c is { title: string; page?: unknown } =>
+        Boolean(c) && typeof (c as { title?: unknown }).title === 'string',
+    )
+    .slice(0, 20)
+    .map((c) => ({
+      title: c.title,
+      page:
+        typeof c.page === 'number' &&
+        Number.isInteger(c.page) &&
+        c.page >= 1 &&
+        c.page <= pages
+          ? c.page
+          : null,
+    }));
 }
 
 /**

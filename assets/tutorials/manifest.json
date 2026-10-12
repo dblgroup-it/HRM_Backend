@@ -31,6 +31,56 @@
         "Administration and configuration",
         "Records, security and data protection",
         "Appendices"
+      ],
+      "chapters": [
+        {
+          "title": "Introduction",
+          "page": 4
+        },
+        {
+          "title": "The system at a glance",
+          "page": 6
+        },
+        {
+          "title": "Roles and participants",
+          "page": 9
+        },
+        {
+          "title": "Phase 1 — Manpower requisition",
+          "page": 11
+        },
+        {
+          "title": "Phase 2 — Sourcing and CV collection",
+          "page": 14
+        },
+        {
+          "title": "Phase 3 — Assessment and interviews",
+          "page": 16
+        },
+        {
+          "title": "Phase 4 — Selection and salary",
+          "page": 18
+        },
+        {
+          "title": "Phase 5 — Pre-employment and onboarding",
+          "page": 19
+        },
+        {
+          "title": "Notifications, emails and reminders",
+          "page": 22
+        },
+        {
+          "title": "Administration and configuration",
+          "page": 24
+        },
+        {
+          "title": "Records, security and data protection",
+          "page": 25
+        },
+        {
+          "title": "Appendices",
+          "page": 26
+        }
       ]
     },
     {
@@ -58,6 +108,44 @@
         "Notifications",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 3
+        },
+        {
+          "title": "Raising a requisition",
+          "page": 5
+        },
+        {
+          "title": "What happens after you submit",
+          "page": 6
+        },
+        {
+          "title": "When a requisition comes back to you",
+          "page": 7
+        },
+        {
+          "title": "After approval",
+          "page": 8
+        },
+        {
+          "title": "Notifications",
+          "page": 8
+        },
+        {
+          "title": "Questions and answers",
+          "page": 9
+        },
+        {
+          "title": "Quick reference",
+          "page": 10
+        }
       ]
     },
     {
@@ -85,6 +173,44 @@
         "Notifications",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 3
+        },
+        {
+          "title": "Writing the job analysis",
+          "page": 5
+        },
+        {
+          "title": "Sending CVs to the recruiter",
+          "page": 6
+        },
+        {
+          "title": "Running first interviews",
+          "page": 7
+        },
+        {
+          "title": "Availability and what you can see",
+          "page": 9
+        },
+        {
+          "title": "Notifications",
+          "page": 9
+        },
+        {
+          "title": "Questions and answers",
+          "page": 10
+        },
+        {
+          "title": "Quick reference",
+          "page": 11
+        }
       ]
     },
     {
@@ -110,6 +236,32 @@
         "Notifications and reminders",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 3
+        },
+        {
+          "title": "Reviewing and deciding",
+          "page": 5
+        },
+        {
+          "title": "Notifications and reminders",
+          "page": 6
+        },
+        {
+          "title": "Questions and answers",
+          "page": 7
+        },
+        {
+          "title": "Quick reference",
+          "page": 8
+        }
       ]
     },
     {
@@ -140,6 +292,56 @@
         "Notifications",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 4
+        },
+        {
+          "title": "Approval Paths: who raises, who approves",
+          "page": 5
+        },
+        {
+          "title": "Final approval and escalation",
+          "page": 6
+        },
+        {
+          "title": "Launching recruitment",
+          "page": 7
+        },
+        {
+          "title": "Overseeing recruitment",
+          "page": 7
+        },
+        {
+          "title": "Hiring Approval Sheets",
+          "page": 8
+        },
+        {
+          "title": "Medical Requests",
+          "page": 9
+        },
+        {
+          "title": "Settings you look after",
+          "page": 9
+        },
+        {
+          "title": "Notifications",
+          "page": 10
+        },
+        {
+          "title": "Questions and answers",
+          "page": 10
+        },
+        {
+          "title": "Quick reference",
+          "page": 11
+        }
       ]
     },
     {
@@ -167,6 +369,44 @@
         "Notifications",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 3
+        },
+        {
+          "title": "Escalated requisitions",
+          "page": 5
+        },
+        {
+          "title": "Hiring Approval Sheets",
+          "page": 6
+        },
+        {
+          "title": "Signing offer and appointment letters",
+          "page": 6
+        },
+        {
+          "title": "Oversight and configuration",
+          "page": 7
+        },
+        {
+          "title": "Notifications",
+          "page": 7
+        },
+        {
+          "title": "Questions and answers",
+          "page": 7
+        },
+        {
+          "title": "Quick reference",
+          "page": 9
+        }
       ]
     },
     {
@@ -192,6 +432,32 @@
         "Keeping it secure",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Approving a requisition",
+          "page": 3
+        },
+        {
+          "title": "Approving a Hiring Approval Sheet",
+          "page": 4
+        },
+        {
+          "title": "Keeping it secure",
+          "page": 4
+        },
+        {
+          "title": "Questions and answers",
+          "page": 5
+        },
+        {
+          "title": "Quick reference",
+          "page": 6
+        }
       ]
     },
     {
@@ -224,6 +490,60 @@
         "Notifications",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 4
+        },
+        {
+          "title": "Publishing the job",
+          "page": 5
+        },
+        {
+          "title": "Collecting CVs",
+          "page": 5
+        },
+        {
+          "title": "Working the pipeline",
+          "page": 6
+        },
+        {
+          "title": "Screening tests",
+          "page": 7
+        },
+        {
+          "title": "Interviews",
+          "page": 8
+        },
+        {
+          "title": "Salary fixation and selection",
+          "page": 10
+        },
+        {
+          "title": "Onboarding",
+          "page": 11
+        },
+        {
+          "title": "Regret letters, Talent Bank and leave",
+          "page": 13
+        },
+        {
+          "title": "Notifications",
+          "page": 13
+        },
+        {
+          "title": "Questions and answers",
+          "page": 14
+        },
+        {
+          "title": "Quick reference",
+          "page": 15
+        }
       ]
     },
     {
@@ -249,6 +569,36 @@
         "Notifications",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 3
+        },
+        {
+          "title": "Approving first-interview finalists",
+          "page": 5
+        },
+        {
+          "title": "Sending CVs to the recruiter",
+          "page": 6
+        },
+        {
+          "title": "Notifications",
+          "page": 6
+        },
+        {
+          "title": "Questions and answers",
+          "page": 6
+        },
+        {
+          "title": "Quick reference",
+          "page": 7
+        }
       ]
     },
     {
@@ -274,6 +624,36 @@
         "Running a first interview handed to you",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Your invitation",
+          "page": 3
+        },
+        {
+          "title": "Scoring a candidate",
+          "page": 4
+        },
+        {
+          "title": "My Interviews",
+          "page": 5
+        },
+        {
+          "title": "Running a first interview handed to you",
+          "page": 6
+        },
+        {
+          "title": "Questions and answers",
+          "page": 6
+        },
+        {
+          "title": "Quick reference",
+          "page": 7
+        }
       ]
     },
     {
@@ -301,6 +681,40 @@
         "Notifications",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 3
+        },
+        {
+          "title": "How a candidate reaches you",
+          "page": 5
+        },
+        {
+          "title": "Medical Officer: recording the examination",
+          "page": 5
+        },
+        {
+          "title": "Central Medical Officer: confirming findings",
+          "page": 6
+        },
+        {
+          "title": "Notifications",
+          "page": 6
+        },
+        {
+          "title": "Questions and answers",
+          "page": 7
+        },
+        {
+          "title": "Quick reference",
+          "page": 8
+        }
       ]
     },
     {
@@ -328,6 +742,40 @@
         "Privacy and security",
         "Questions applicants ask",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "The journey at a glance",
+          "page": 3
+        },
+        {
+          "title": "Finding a job and applying",
+          "page": 3
+        },
+        {
+          "title": "Tests and interviews",
+          "page": 5
+        },
+        {
+          "title": "The onboarding portal",
+          "page": 5
+        },
+        {
+          "title": "Emails a candidate receives",
+          "page": 6
+        },
+        {
+          "title": "Privacy and security",
+          "page": 7
+        },
+        {
+          "title": "Questions applicants ask",
+          "page": 7
+        },
+        {
+          "title": "Quick reference",
+          "page": 8
+        }
       ]
     },
     {
@@ -357,6 +805,48 @@
         "Security overview",
         "Questions and answers",
         "Quick reference"
+      ],
+      "chapters": [
+        {
+          "title": "Your role at a glance",
+          "page": 3
+        },
+        {
+          "title": "Access and signing in",
+          "page": 4
+        },
+        {
+          "title": "Access Control",
+          "page": 5
+        },
+        {
+          "title": "Organisation set-up",
+          "page": 7
+        },
+        {
+          "title": "Integrations and automation",
+          "page": 7
+        },
+        {
+          "title": "Monitoring and records",
+          "page": 8
+        },
+        {
+          "title": "Deleting a requisition",
+          "page": 9
+        },
+        {
+          "title": "Security overview",
+          "page": 9
+        },
+        {
+          "title": "Questions and answers",
+          "page": 9
+        },
+        {
+          "title": "Quick reference",
+          "page": 10
+        }
       ]
     }
   ]

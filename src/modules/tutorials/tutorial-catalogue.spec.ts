@@ -67,6 +67,36 @@ describe('tutorial catalogue', () => {
     expect(canSee({ roles: ['factory_hr'] }, [], true)).toBe(true);
   });
 
+  it('gives each chapter its page, dropping a page the document does not have', () => {
+    fs.writeFileSync(path.join(dir, 'a.pdf'), '%PDF');
+    write([
+      entry({
+        file: 'a.pdf',
+        pages: 10,
+        chapters: [
+          { title: 'Introduction', page: 2 },
+          { title: 'Appendices', page: 11 },
+          { title: 'Odd', page: '3' },
+          { page: 4 },
+        ],
+      }),
+    ]);
+    expect(readManifest(dir)!.guides[0].chapters).toEqual([
+      { title: 'Introduction', page: 2 },
+      { title: 'Appendices', page: null },
+      { title: 'Odd', page: null },
+    ]);
+  });
+
+  it("reads an older manifest's section titles as chapters without pages", () => {
+    fs.writeFileSync(path.join(dir, 'a.pdf'), '%PDF');
+    write([entry({ file: 'a.pdf', contents: ['Introduction', 'Appendices'] })]);
+    expect(readManifest(dir)!.guides[0].chapters).toEqual([
+      { title: 'Introduction', page: null },
+      { title: 'Appendices', page: null },
+    ]);
+  });
+
   it('keeps a guide whose thumbnail is missing, without the picture', () => {
     fs.writeFileSync(path.join(dir, 'a.pdf'), '%PDF');
     write([entry({ file: 'a.pdf', thumb: 'a.webp', group: 'Requisition' })]);
