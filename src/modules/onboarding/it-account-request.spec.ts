@@ -365,6 +365,24 @@ describe('ItAccountRequestService: sending the request', () => {
     expect(mail.send).not.toHaveBeenCalled();
   });
 
+  it('answers for every pick — one already the To address is marked, not dropped', async () => {
+    // Dropping it silently left the dialog spinning on "Looking up the
+    // address…" for a person whose address was the IT one (2026-10-13).
+    const { svc, mail } = build();
+    const preview = await svc.preview(
+      'c-1',
+      { ...DTO, ccCodes: ['15100002', '15104846'] },
+      'hr-1',
+    );
+    expect(preview.cc.map((c) => [c.code, c.email, c.skip])).toEqual([
+      ['15100002', 'HR-LT-REQ@dbl-group.com', 'to'],
+      ['15104846', 'nusrat.jahan@dbl-group.com', null],
+    ]);
+    // …and it does not stop the request going, nor go on CC.
+    await svc.send('c-1', { ...DTO, ccCodes: ['15100002'] }, { id: 'hr-1' });
+    expect(mail.send.mock.calls[0][0].cc).toBeUndefined();
+  });
+
   it('starts a re-send from the people copied last time', async () => {
     const copied = [
       {

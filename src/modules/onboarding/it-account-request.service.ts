@@ -91,6 +91,13 @@ export type ItCcPerson = {
   email: string | null;
 };
 
+/**
+ * A pick as the dialog sees it. `skip` says why a person with an address is
+ * not put on CC: it is already the To address, or another pick's. Every pick
+ * comes back, so the dialog is never left waiting for one.
+ */
+export type ItCcLookup = ItCcPerson & { skip: 'to' | 'duplicate' | null };
+
 function ccOf(value: Prisma.JsonValue | null | undefined): ItCcPerson[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -253,7 +260,7 @@ export class ItAccountRequestService {
       this.settings.getItRequestConfig(),
       this.requester(actor.id),
     ]);
-    const cc = await this.resolveCc(dto.ccCodes, config.recipients);
+    const cc = this.onCc(await this.resolveCc(dto.ccCodes, config.recipients));
     const noAddress = cc.find((c) => !c.email);
     if (noAddress) {
       throw new BadRequestException(
@@ -558,16 +565,19 @@ export class ItAccountRequestService {
   }
 
   /**
-   * The people HR chose to copy, looked up by employee code.
+   * The people HR chose to copy, looked up by employee code — every one of
+   * them, in the order picked.
    *
-   * In the order picked, each once, and never an address the request is
-   * already going to. A code the directory does not know comes back with no
-   * address, so the dialog can say so and sending can refuse it.
+   * One whose address the request already goes to (the To, or an earlier
+   * pick) comes back marked `skip` rather than left out: dropping it silently
+   * left the dialog waiting for an answer that never came. A code the
+   * directory does not know comes back with no address, so the dialog can say
+   * so and sending can refuse it.
    */
   private async resolveCc(
     codes: string[] | undefined,
     recipients: string[],
-  ): Promise<ItCcPerson[]> {
+  ): Promise<ItCcLookup[]> {
     const wanted = [
       ...new Set((codes ?? []).map((c) => c.trim()).filter(Boolean)),
     ];
@@ -582,25 +592,39 @@ export class ItAccountRequestService {
       },
     });
     const going = new Set(recipients.map((r) => r.trim().toLowerCase()));
-    const out: ItCcPerson[] = [];
+    const out: ItCcLookup[] = [];
     for (const code of wanted) {
       const u = users.find((x) => x.employeeCode === code);
-      const email = u?.email?.trim() || null;
+      const raw = u?.email?.trim() || null;
+      const email = raw && isEmailAddress(raw) ? raw : null;
       const key = email?.toLowerCase();
-      if (
-        key &&
-        (going.has(key) || out.some((o) => o.email?.toLowerCase() === key))
-      ) {
-        continue;
-      }
       out.push({
         code,
         name: u?.name ?? code,
         designation: u?.employee?.designation ?? null,
-        email: email && isEmailAddress(email) ? email : null,
+        email,
+        skip: !key
+          ? null
+          : going.has(key)
+            ? 'to'
+            : out.some((o) => !o.skip && o.email?.toLowerCase() === key)
+              ? 'duplicate'
+              : null,
       });
     }
     return out;
+  }
+
+  /** Those who actually go on CC, as stored on the request. */
+  private onCc(lookups: ItCcLookup[]): ItCcPerson[] {
+    return lookups
+      .filter((c) => !c.skip)
+      .map(({ code, name, designation, email }) => ({
+        code,
+        name,
+        designation,
+        email,
+      }));
   }
 
   private async requester(userId: string): Promise<Requester> {
