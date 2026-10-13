@@ -768,6 +768,7 @@ model Candidate {
   /// The applicant's profile picture, when BDJobs sent one. Its own table so
   /// the bytes are never loaded with a candidate list.
   photo                 CandidatePhoto?
+  bdjobsPayload         CandidateBdjobsPayload?
   createdById           String?                @map("created_by_id")
   createdBy             User?                  @relation("CandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Bdjobs inbound: unique per Bdjobs application — used for deduplication.
@@ -2064,6 +2065,21 @@ model CandidatePhoto {
   createdAt   DateTime @default(now()) @map("created_at")
 
   @@map("candidate_photos")
+}
+
+/// The application exactly as BDJobs last sent it — kept so a CV can be
+/// rebuilt after a mapping fix without asking BDJobs to send it again.
+/// Without the signature `ts` and any inline image bytes (the photo has its own table).
+model CandidateBdjobsPayload {
+  candidateId  String    @id @map("candidate_id")
+  candidate    Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  payload      Json
+  /// When this copy arrived — the first import, or the latest resend.
+  receivedAt   DateTime  @default(now()) @map("received_at")
+  /// How many times a resend of the same application refreshed the CV.
+  refreshCount Int       @default(0) @map("refresh_count")
+
+  @@map("candidate_bdjobs_payloads")
 }
 
 /// API errors and slow calls, from the server and from users' browsers.

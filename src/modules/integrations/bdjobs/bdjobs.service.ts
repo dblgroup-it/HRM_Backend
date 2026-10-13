@@ -27,6 +27,7 @@ import {
   flatProfilePhoto,
 } from '../../candidates/cv/bdjobs-profile.adapter';
 import { BdJobsInboundError } from './bdjobs-inbound.errors';
+import { refreshUpdate, samePayload, storablePayload } from './bdjobs-refresh';
 import type { CvProfile } from '../../candidates/cv/cv-profile.types';
 import {
   decodeDataUri,
@@ -535,6 +536,8 @@ export class BdJobsService {
       requisitionCode: string;
       status: string;
       duplicate: boolean;
+      /** A resend of an application we had: its BDJobs data was refreshed. */
+      refreshed?: boolean;
       /** What we understood from the payload, so it can be checked at a glance. */
       received?: {
         matchedVacancyBy: string;
@@ -684,27 +687,32 @@ export class BdJobsService {
       );
     }
 
-    // 5. Deduplicate by Bdjobs applicationId (globally unique per application).
+    // 5. Bdjobs applicationId is globally unique per application. One we
+    //    already have is not ignored any more: a resend refreshes what came
+    //    from BDJobs (see bdjobs-refresh.ts) — after the shared checks below.
     const existing = await this.prisma.candidate.findFirst({
       where: { bdjobsApplicationId: dto.applicationId },
-      select: { id: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        gender: true,
+        salaryExpectation: true,
+        bdjobsApplicantId: true,
+        cvFileId: true,
+        cvUrl: true,
+        requisitionId: true,
+        requisition: { select: { code: true } },
+        bdjobsPayload: { select: { payload: true } },
+      },
     });
-    if (existing) {
-      return {
-        success: true,
-        data: {
-          candidateId: existing.id,
-          requisitionCode: requisition.code,
-          status: 'duplicate',
-          duplicate: true,
-        },
-        message: `This applicationId was already imported as candidate ${existing.id}; nothing was changed.`,
-      };
-    }
+    // What is kept of this payload — whether it creates or refreshes.
+    const stored = storablePayload(dto);
 
     // 6. Create the candidate. The top-level candidate block wins where it is
     //    given — Bdjobs may have corrected it — and the CV fills the rest.
-    const name = dto.candidate?.name ?? cv?.personal.fullName;
+    const name = existing?.name ?? dto.candidate?.name ?? cv?.personal.fullName;
     if (!name) {
       throw new BdJobsInboundError(
         HttpStatus.BAD_REQUEST,
@@ -756,6 +764,22 @@ export class BdJobsService {
       }
     }
 
+    if (existing) {
+      return this.refreshExisting({
+        existing,
+        dto,
+        cv,
+        stored,
+        applicantId,
+        inlinePhoto,
+        photoStatus,
+        photoRef,
+        requisition,
+        matchedBy,
+        warnings,
+      });
+    }
+
     const candidate = await this.prisma.candidate.create({
       data: {
         requisitionId: requisition.id,
@@ -779,6 +803,10 @@ export class BdJobsService {
         bdjobsApplicationId: dto.applicationId,
         bdjobsApplicantId: applicantId,
         bdjobsJobId: dto.bdJobsJobId,
+        // Kept so the CV can be rebuilt after any later mapping fix.
+        bdjobsPayload: {
+          create: { payload: stored as Prisma.InputJsonValue },
+        },
       },
     });
 
@@ -817,27 +845,148 @@ export class BdJobsService {
         duplicate: false,
         // Echoed back so a mismatch shows up in the reply rather than weeks
         // later on somebody's shortlist.
-        received: {
-          matchedVacancyBy: matchedBy,
+        received: receivedSummary({
+          matchedBy,
           name,
           email: candidate.email,
           phone: candidate.phone,
           cvDocument: Boolean(candidate.cvUrl),
-          structuredCv: Boolean(cv),
-          roles: cv?.employment.length ?? 0,
-          qualifications: cv?.education.length ?? 0,
-          totalExperience: cv?.summary.totalExperienceLabel ?? null,
-          lastOrganization: cv?.summary.lastOrganization ?? null,
-          trainings: cv?.training?.length ?? 0,
-          certifications: cv?.certifications?.length ?? 0,
-          skills: cv?.skills?.length ?? 0,
-          languages: cv?.languages?.length ?? 0,
-          references: cv?.references?.length ?? 0,
-          careerInfo: Boolean(cv?.career),
-          photo: photoStatus,
-        },
+          cv,
+          photoStatus,
+        }),
       },
       message: `Imported ${name} against ${requisition.code}, at the Shortlisted stage.`,
+      ...(warnings.length ? { warnings } : {}),
+    };
+  }
+
+  /**
+   * BDJobs sent an application we already have.
+   *
+   * The same payload again — a retry after a timeout — changes nothing and
+   * costs nothing. A different one refreshes what came from BDJobs (the CV
+   * data, the photo, the attached CV's link) and is kept as the new copy;
+   * everything HR has done stays as it is (`refreshUpdate`). The candidate
+   * stays on the vacancy they are on, and the AI summary is redone where the
+   * stage still allows a screen.
+   */
+  private async refreshExisting(args: {
+    existing: {
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      gender: string | null;
+      salaryExpectation: number | null;
+      bdjobsApplicantId: string | null;
+      cvFileId: string | null;
+      cvUrl: string | null;
+      requisitionId: string;
+      requisition: { code: string };
+      bdjobsPayload: { payload: Prisma.JsonValue } | null;
+    };
+    dto: BdJobsInboundCandidateDto;
+    cv: CvProfile | null;
+    stored: Record<string, unknown>;
+    applicantId: string | null;
+    inlinePhoto: LoadedPhoto | null;
+    photoStatus: 'stored' | 'downloading' | 'rejected' | 'none';
+    photoRef: string | undefined;
+    requisition: { id: string; code: string };
+    matchedBy: string;
+    warnings: string[];
+  }) {
+    const { existing, dto, cv, stored, warnings } = args;
+    const code = existing.requisition.code;
+
+    if (samePayload(existing.bdjobsPayload?.payload, stored)) {
+      return {
+        success: true,
+        data: {
+          candidateId: existing.id,
+          requisitionCode: code,
+          status: 'duplicate',
+          duplicate: true,
+          refreshed: false,
+        },
+        message: `This applicationId was already imported as candidate ${existing.id}, with this same payload; nothing was changed.`,
+      };
+    }
+
+    if (existing.requisitionId !== args.requisition.id) {
+      warnings.push(
+        `This application is already on ${code}; it was refreshed there, not moved to ${args.requisition.code}.`,
+      );
+    }
+
+    const now = new Date();
+    const data = refreshUpdate(
+      existing,
+      {
+        cv,
+        email: dto.candidate?.email ?? cv?.contact.email ?? null,
+        phone: dto.candidate?.phone ?? cv?.contact.phone ?? null,
+        gender: normalizeGender(cv?.personal.gender),
+        resumeUrl: dto.resume?.url ?? null,
+        applicantId: args.applicantId,
+      },
+      now,
+    );
+    const payload = stored as Prisma.InputJsonValue;
+    const [candidate] = await this.prisma.$transaction([
+      this.prisma.candidate.update({
+        where: { id: existing.id },
+        data: data as Prisma.CandidateUpdateInput,
+      }),
+      this.prisma.candidateBdjobsPayload.upsert({
+        where: { candidateId: existing.id },
+        create: { candidateId: existing.id, payload },
+        update: { payload, receivedAt: now, refreshCount: { increment: 1 } },
+      }),
+    ]);
+
+    if (args.inlinePhoto) {
+      const photo = {
+        mimeType: args.inlinePhoto.mimeType,
+        data: new Uint8Array(args.inlinePhoto.data),
+        sourceUrl: null,
+      };
+      await this.prisma.candidatePhoto.upsert({
+        where: { candidateId: existing.id },
+        create: { candidateId: existing.id, ...photo },
+        update: photo,
+      });
+    } else if (args.photoStatus === 'downloading' && args.photoRef) {
+      this.fetchPhotoLater(existing.id, args.photoRef);
+    }
+
+    this.logger.log(
+      `BDJobs candidate refreshed: ${existing.id} (${existing.name}) on ${code}` +
+        (cv
+          ? ` — ${cv.employment.length} roles, ${cv.education.length} qualifications, ${cv.training?.length ?? 0} trainings, ${cv.languages?.length ?? 0} languages`
+          : ''),
+    );
+    this.candidates.onCandidateRefreshed(existing.id, existing.requisitionId);
+
+    return {
+      success: true,
+      data: {
+        candidateId: existing.id,
+        requisitionCode: code,
+        status: 'refreshed',
+        duplicate: true,
+        refreshed: true,
+        received: receivedSummary({
+          matchedBy: args.matchedBy,
+          name: existing.name,
+          email: candidate.email,
+          phone: candidate.phone,
+          cvDocument: Boolean(candidate.cvUrl),
+          cv,
+          photoStatus: args.photoStatus,
+        }),
+      },
+      message: `This applicationId was already imported as candidate ${existing.id} (${existing.name}); its BDJobs CV was refreshed from this payload. The stage and everything HR has done are unchanged.`,
       ...(warnings.length ? { warnings } : {}),
     };
   }
@@ -869,6 +1018,38 @@ export class BdJobsService {
       }
     })();
   }
+}
+
+/** What we understood from the payload, echoed in the reply so a gap shows at once. */
+function receivedSummary(r: {
+  matchedBy: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  cvDocument: boolean;
+  cv: CvProfile | null;
+  photoStatus: 'stored' | 'downloading' | 'rejected' | 'none';
+}) {
+  const cv = r.cv;
+  return {
+    matchedVacancyBy: r.matchedBy,
+    name: r.name,
+    email: r.email,
+    phone: r.phone,
+    cvDocument: r.cvDocument,
+    structuredCv: Boolean(cv),
+    roles: cv?.employment.length ?? 0,
+    qualifications: cv?.education.length ?? 0,
+    totalExperience: cv?.summary.totalExperienceLabel ?? null,
+    lastOrganization: cv?.summary.lastOrganization ?? null,
+    trainings: cv?.training?.length ?? 0,
+    certifications: cv?.certifications?.length ?? 0,
+    skills: cv?.skills?.length ?? 0,
+    languages: cv?.languages?.length ?? 0,
+    references: cv?.references?.length ?? 0,
+    careerInfo: Boolean(cv?.career),
+    photo: r.photoStatus,
+  };
 }
 
 /**

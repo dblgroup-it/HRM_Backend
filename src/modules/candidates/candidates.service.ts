@@ -2441,6 +2441,18 @@ export class CandidatesService {
     this.autoScreen(candidateId);
   }
 
+  /**
+   * BDJobs re-sent an application and its CV was refreshed. Live-update the
+   * pipeline and redo the AI summary on the new data (where the stage still
+   * allows a screen).
+   */
+  onCandidateRefreshed(candidateId: string, reqId: string): void {
+    this.notifications.broadcastChange('candidate', reqId, {
+      action: 'refreshed',
+    });
+    this.autoScreen(candidateId);
+  }
+
   /** Fire-and-forget screen used right after a CV first arrives. */
   private autoScreen(candidateId: string): void {
     if (!this.ai.isConfigured()) return;
