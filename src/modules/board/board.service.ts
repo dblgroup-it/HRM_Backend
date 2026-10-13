@@ -24,6 +24,7 @@ import { MailService } from '../integrations/mail/mail.service';
 import { AUTOMATED_EMAIL_NOTICE } from '../integrations/mail/automated-notice';
 import { DriveService } from '../integrations/google/drive.service';
 import { RecruitmentService } from '../candidates/recruitment.service';
+import { profileCvLink, ttlUntil } from '../candidates/cv/profile-cv-link';
 
 /**
  * The requisition's sign-off chain written as one line.
@@ -376,6 +377,10 @@ export class BoardService {
     const expiresAt = new Date(Date.now() + BOARD_TOKEN_VALID_MS);
     const frontendUrl =
       this.config.get<string>('frontendUrl') ?? 'http://localhost:3000';
+    // The BDJobs CV, for as long as the approval link lasts.
+    const bdjobsCv = profileCvLink(this.files, candidate, {
+      ttlSeconds: ttlUntil(expiresAt),
+    });
 
     await this.prisma.boardApproval.update({
       where: { id: approvalId },
@@ -421,6 +426,10 @@ export class BoardService {
               cvUrl: candidate.cvFileId
                 ? `${frontendUrl}/api/board-vote/${token}/cv`
                 : candidate.cvUrl,
+              profileCvUrl: bdjobsCv.profileCvUrl
+                ? `${frontendUrl}${bdjobsCv.profileCvUrl}`
+                : null,
+              profileCvSource: bdjobsCv.profileCvSource,
             },
             candidate.requisition,
             `${frontendUrl}/board-vote/${token}`,
@@ -751,6 +760,9 @@ export class BoardService {
         cvUrl: candidate.cvFileId
           ? `/api/board-vote/${token}/cv`
           : candidate.cvUrl,
+        ...profileCvLink(this.files, candidate, {
+          ttlSeconds: ttlUntil(vote.tokenExpiresAt),
+        }),
         // The AI match score is deliberately withheld: this chain signs off on
         // the agreed salary, which is the figure that matters here.
         salary: await this.fixedSalary(candidate.id).catch(() => null),
@@ -1018,6 +1030,8 @@ export class BoardService {
       cvFileId?: string | null;
       cvUrl: string | null;
     }) => string | null,
+    /** How long the BDJobs CV link lasts for this audience. Defaults to a short grant. */
+    profileTtlSeconds?: number,
   ) {
     const req = r.candidate.requisition;
     const isReplacement = req.requirementType === 'existing';
@@ -1035,6 +1049,9 @@ export class BoardService {
         : (this.files.url(r.candidate.cvFileId, 'cv', {
             filename: `${r.candidate.name} — CV`,
           }) ?? r.candidate.cvUrl),
+      ...profileCvLink(this.files, r.candidate, {
+        ttlSeconds: profileTtlSeconds,
+      }),
       position: req.designation,
       department: req.department,
       unit: req.unitFactory,
@@ -1340,11 +1357,14 @@ export class BoardService {
     // and is still served by this API rather than by a public Drive URL.
     const cvTtlSeconds = 30 * 24 * 60 * 60;
     const rows = batch.approvals.map((a) =>
-      this.sheetRow(a, (c) =>
-        this.files.url(c.cvFileId, 'cv', {
-          filename: `${c.name} — CV`,
-          ttlSeconds: cvTtlSeconds,
-        }),
+      this.sheetRow(
+        a,
+        (c) =>
+          this.files.url(c.cvFileId, 'cv', {
+            filename: `${c.name} — CV`,
+            ttlSeconds: cvTtlSeconds,
+          }),
+        cvTtlSeconds,
       ),
     );
     const expiresAt = new Date(Date.now() + BOARD_TOKEN_VALID_MS);
@@ -1487,11 +1507,14 @@ export class BoardService {
     // and is still served by this API rather than by a public Drive URL.
     const cvTtlSeconds = 30 * 24 * 60 * 60;
     const rows = batch.approvals.map((a) =>
-      this.sheetRow(a, (c) =>
-        this.files.url(c.cvFileId, 'cv', {
-          filename: `${c.name} — CV`,
-          ttlSeconds: cvTtlSeconds,
-        }),
+      this.sheetRow(
+        a,
+        (c) =>
+          this.files.url(c.cvFileId, 'cv', {
+            filename: `${c.name} — CV`,
+            ttlSeconds: cvTtlSeconds,
+          }),
+        cvTtlSeconds,
       ),
     );
     const expiresAt = new Date(Date.now() + BOARD_TOKEN_VALID_MS);
@@ -1612,8 +1635,11 @@ export class BoardService {
       // token is used or expires, and the token cannot be pointed at a
       // candidate who is not on this sheet (checked server-side).
       rows: vote.batch.approvals.map((a) =>
-        this.sheetRow(a, (c) =>
-          c.cvFileId ? `/api/board-sheet/${token}/cv/${c.id}` : c.cvUrl,
+        this.sheetRow(
+          a,
+          (c) =>
+            c.cvFileId ? `/api/board-sheet/${token}/cv/${c.id}` : c.cvUrl,
+          ttlUntil(vote.tokenExpiresAt),
         ),
       ),
     };
@@ -1855,9 +1881,10 @@ export class BoardService {
       { header: 'Remark', key: 'remark', width: 22 },
       { header: 'Requisition', key: 'code', width: 15 },
       { header: 'Vacancy approved by', key: 'chain', width: 46 },
-      { header: 'CV', key: 'cv', width: 10 },
+      { header: 'CV', key: 'cv', width: 12 },
+      { header: 'BDJobs CV', key: 'bdjobsCv', width: 12 },
     ];
-    const LAST_COL = 'O';
+    const LAST_COL = 'P';
 
     // ── Title block ────────────────────────────────────────────────────
     ws.mergeCells(`A1:${LAST_COL}1`);
@@ -1918,6 +1945,7 @@ export class BoardService {
         code: r.requisitionCode,
         chain: r.approvalChain,
         cv: r.cvUrl ? 'Open CV' : '',
+        bdjobsCv: r.profileCvUrl ? 'Open CV' : '',
       });
       const bg = i % 2 === 0 ? 'FFFFFFFF' : ZEBRA;
       row.eachCell({ includeEmpty: true }, (cell, col) => {
@@ -1951,6 +1979,14 @@ export class BoardService {
         const cv = row.getCell('cv');
         // Absolute: the workbook is opened outside the browser.
         cv.value = { text: 'Open CV', hyperlink: this.absoluteUrl(r.cvUrl) };
+        cv.font = { size: 10, color: { argb: BRAND }, underline: true };
+      }
+      if (r.profileCvUrl) {
+        const cv = row.getCell('bdjobsCv');
+        cv.value = {
+          text: 'Open CV',
+          hyperlink: this.absoluteUrl(r.profileCvUrl),
+        };
         cv.font = { size: 10, color: { argb: BRAND }, underline: true };
       }
       row.getCell('chain').font = { size: 9, color: { argb: MUTED } };
@@ -2089,6 +2125,8 @@ export class BoardService {
     rows: {
       name: string;
       cvUrl: string | null;
+      profileCvUrl?: string | null;
+      profileCvSource?: string | null;
       position: string;
       department: string;
       unit: string;
@@ -2122,10 +2160,20 @@ export class BoardService {
     const th =
       'padding:8px;border:1px solid #c9d6e6;background:#eef4fa;font-size:9.5px;font-weight:700;color:#3d556e;text-transform:uppercase;letter-spacing:.3px;text-align:left;line-height:1.3';
     const nowrap = 'white-space:nowrap';
-    const cvLink = (url: string | null, size: string) =>
+    const cvLink = (url: string | null, size: string, label = 'View CV') =>
       url
-        ? `<a href="${esc(this.absoluteUrl(url))}" target="_blank" rel="noreferrer" style="display:inline-block;white-space:nowrap;font-weight:400;font-size:${size};color:#1877c0;text-decoration:underline">View CV</a>`
+        ? `<a href="${esc(this.absoluteUrl(url))}" target="_blank" rel="noreferrer" style="display:inline-block;white-space:nowrap;font-weight:400;font-size:${size};color:#1877c0;text-decoration:underline">${label}</a>`
         : '';
+    /** "Personal CV" and "BDJobs CV" for a BDJobs applicant; "View CV" otherwise. */
+    const cvLinks = (r: (typeof rows)[number], size: string, sep: string) => {
+      const bdjobs = r.profileCvSource === 'bdjobs';
+      return [
+        cvLink(r.cvUrl, size, bdjobs ? 'Personal CV' : 'View CV'),
+        cvLink(r.profileCvUrl ?? null, size, bdjobs ? 'BDJobs CV' : 'View CV'),
+      ]
+        .filter(Boolean)
+        .join(sep);
+    };
 
     // Budgeted so the long fields have room; the short ones never wrap at all.
     const cols = [3, 12, 9, 8, 10, 10, 8, 8, 8, 9, 6, 9]
@@ -2139,7 +2187,7 @@ export class BoardService {
         <td style="${td};${nowrap};text-align:center;color:#7b8a9c">${i + 1}</td>
         <td style="${td}">
           <span style="font-weight:700">${esc(r.name)}</span>
-          ${r.cvUrl ? `<br>${cvLink(r.cvUrl, '10.5px')}` : ''}
+          ${r.cvUrl || r.profileCvUrl ? `<br>${cvLinks(r, '10.5px', '<br>')}` : ''}
         </td>
         <td style="${td}">${esc(r.position)}</td>
         <td style="${td}">${esc(r.department)}</td>
@@ -2186,7 +2234,7 @@ export class BoardService {
           </table>
           <p style="margin:4px 0 0;font-size:12px;color:#5a6b7f;line-height:1.5">${esc(r.position)} · ${esc(r.department)}</p>
           <p style="margin:1px 0 0;font-size:12px;color:#5a6b7f;line-height:1.5">${esc(r.unit)}</p>
-          ${r.cvUrl ? `<p style="margin:7px 0 0">${cvLink(r.cvUrl, '12px')}</p>` : ''}
+          ${r.cvUrl || r.profileCvUrl ? `<p style="margin:7px 0 0">${cvLinks(r, '12px', ' &nbsp;·&nbsp; ')}</p>` : ''}
         </td></tr>
         <tr><td style="padding:10px 14px">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
@@ -2409,7 +2457,13 @@ export class BoardService {
 
   private buildApprovalEmail(
     memberName: string,
-    candidate: { name: string; cvUrl: string | null; salary: number },
+    candidate: {
+      name: string;
+      cvUrl: string | null;
+      salary: number;
+      profileCvUrl?: string | null;
+      profileCvSource?: string | null;
+    },
     req: {
       code: string;
       designation: string;
@@ -2455,14 +2509,28 @@ export class BoardService {
              }
            </p>`;
 
-    const cvRow = candidate.cvUrl
+    // A BDJobs applicant has two: the CV they attached, and their
+    // application as BDJobs' CV. Either may be missing.
+    const bdjobs = candidate.profileCvSource === 'bdjobs';
+    const cvAnchor = (href: string, label: string) =>
+      `<a href="${href}" style="color:#1877c0;font-size:13px;font-weight:600;text-decoration:none">${label} →</a>`;
+    const cvAnchors = [
+      candidate.cvUrl
+        ? cvAnchor(candidate.cvUrl, bdjobs ? 'Personal CV' : 'View CV / Resume')
+        : null,
+      candidate.profileCvUrl
+        ? cvAnchor(
+            candidate.profileCvUrl,
+            bdjobs ? 'BDJobs CV' : 'View CV / Resume',
+          )
+        : null,
+    ].filter(Boolean);
+    const cvRow = cvAnchors.length
       ? `
       <tr>
         <td style="padding:14px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#6b7c93;vertical-align:middle">Curriculum Vitae</td>
         <td style="padding:14px 0 0 20px;font-family:Arial,Helvetica,sans-serif;vertical-align:middle">
-          <a href="${candidate.cvUrl}" style="color:#1877c0;font-size:13px;font-weight:600;text-decoration:none">
-            View CV / Resume →
-          </a>
+          ${cvAnchors.join('&nbsp;&nbsp;&nbsp;')}
         </td>
       </tr>`
       : '';

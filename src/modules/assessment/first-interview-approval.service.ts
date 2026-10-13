@@ -16,6 +16,7 @@ import {
   headScope,
   type HeadDecision,
 } from './first-interview-approval';
+import { profileCvLink } from '../candidates/cv/profile-cv-link';
 
 /** Highest total a first-interview evaluation can reach. */
 const MAX_TOTAL = CRITERIA.reduce((sum, c) => sum + c.max, 0);
@@ -62,6 +63,7 @@ export class FirstInterviewApprovalService {
             phone: true,
             cvFileId: true,
             cvUrl: true,
+            cvProfile: true,
             matchScore: true,
             presentSalary: true,
             salaryExpectation: true,
@@ -111,6 +113,7 @@ export class FirstInterviewApprovalService {
             this.files.url(r.candidate.cvFileId, 'cv', {
               filename: `${r.candidate.name} — CV`,
             }) ?? r.candidate.cvUrl,
+          ...profileCvLink(this.files, r.candidate),
           matchScore: r.candidate.matchScore,
           presentSalary: r.candidate.presentSalary,
           salaryExpectation: r.candidate.salaryExpectation,

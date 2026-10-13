@@ -35,6 +35,7 @@ import { CandidatesService } from '../candidates/candidates.service';
 import { CandidateMailService } from '../candidates/candidate-mail.service';
 import { regretMailBlocker } from '../candidates/regret-mail';
 import { buildCandidateBrief } from './candidate-brief';
+import { profileCvLink, ttlUntil } from '../candidates/cv/profile-cv-link';
 import { rejectBlocker } from './reject-guard';
 import {
   PermissionsService,
@@ -939,6 +940,8 @@ export class InterviewService {
             this.files.url(r.candidate.cvFileId, 'cv', {
               filename: `${r.candidate.name} — CV`,
             }) ?? r.candidate.cvUrl,
+          // The BDJobs CV beside it, as the recruiter's row has it.
+          ...profileCvLink(this.files, r.candidate),
           /** The same block the token form shows — see `candidate-brief`. */
           brief: buildCandidateBrief(r.candidate),
         },
@@ -1154,6 +1157,10 @@ export class InterviewService {
         cvUrl: et.round.candidate.cvFileId
           ? `/api/eval/${et.token}/cv`
           : et.round.candidate.cvUrl,
+        // The BDJobs CV, for as long as this evaluation link works.
+        ...profileCvLink(this.files, et.round.candidate, {
+          ttlSeconds: ttlUntil(et.expiresAt),
+        }),
         /**
          * The CV as facts, not as a document.
          *
@@ -2707,6 +2714,7 @@ export class InterviewService {
           this.files.url(r.candidate.cvFileId, 'cv', {
             filename: `${r.candidate.name} — CV`,
           }) ?? r.candidate.cvUrl,
+        ...profileCvLink(this.files, r.candidate),
         rejectedAt: r.candidate.rejectedAt?.toISOString() ?? null,
         rejectionStage: r.candidate.rejectionStage,
         rejectionReason: r.candidate.rejectionReason,

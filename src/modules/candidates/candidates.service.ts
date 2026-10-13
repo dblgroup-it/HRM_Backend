@@ -38,6 +38,7 @@ import type { CvProfile } from './cv/cv-profile.types';
 import { buildCvPage } from './cv/cv-document';
 import { photoDataUri } from './cv/candidate-photo';
 import { loadRemoteCv } from './cv/remote-cv';
+import { profileCvLink } from './cv/profile-cv-link';
 import { cvProfileToText } from './cv/cv-text';
 import { extractedCvToProfile } from './cv/cv-extract';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
@@ -3300,29 +3301,6 @@ function dedupeByEmail<T>(rows: T[], getEmail: (row: T) => string | null): T[] {
  * authorization check that produced this row. A candidate whose CV lives
  * somewhere else entirely (an external link with no Drive file) keeps that URL.
  */
-/**
- * The CV rendered from the stored profile, as a PDF in a new tab.
- *
- * Offered for a Bdjobs application — as "BDJobs CV" beside the candidate's
- * own file when they sent one ("Personal CV") — and for any candidate whose
- * profile is the only CV there is. Not for an uploaded file: its profile is
- * the AI's reading of that same document, and the document is the CV.
- */
-function profileCv(c: CandidateRow, files: FileGrantService) {
-  const source = (c.cvProfile as { source?: unknown } | null)?.source;
-  const show =
-    Boolean(c.cvProfile) && (source === 'bdjobs' || (!c.cvFileId && !c.cvUrl));
-  return {
-    profileCvUrl: show
-      ? `/api/candidates/profile-cv/${files.mint(c.id, 'cv-profile', {
-          filename: `${c.name} — CV`,
-        })}`
-      : null,
-    /** 'bdjobs' labels it "BDJobs CV"; anything else is just "CV". */
-    profileCvSource: show && typeof source === 'string' ? source : null,
-  };
-}
-
 function serializeCandidate(c: CandidateRow, files: FileGrantService) {
   return {
     id: c.id,
@@ -3353,7 +3331,8 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
      * document. Lets the UI offer the generated CV instead of showing nothing.
      */
     hasGeneratedCv: Boolean(c.cvProfile),
-    ...profileCv(c, files),
+    // "BDJobs CV" — the application as a PDF (see profile-cv-link.ts).
+    ...profileCvLink(files, c),
     notes: c.notes ?? '',
     /** Employee referral — who put them forward, as they were at the time. */
     referral: c.referredByCode
