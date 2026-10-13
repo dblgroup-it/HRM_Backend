@@ -40,6 +40,10 @@ export class SecureFileController {
     if (purpose === 'tutorial') {
       throw new ForbiddenException('Open this guide from the Tutorials menu.');
     }
+    // So does a rendered CV: its id is a candidate's, not a file's.
+    if (purpose === 'cv-profile') {
+      throw new ForbiddenException('Open this CV from the candidate list.');
+    }
     await this.files.stream(res, fileId, { filename });
   }
 }

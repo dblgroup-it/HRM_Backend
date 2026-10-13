@@ -38,8 +38,13 @@ export interface CvProfile {
     weightKg?: number;
   };
 
-  /** The candidate's own statement of what they are looking for. */
+  /**
+   * The candidate's own statement of what they are looking for. Plain text;
+   * line breaks are kept (`\n`), since Bdjobs sends these as HTML paragraphs.
+   */
   careerObjective?: string;
+  /** The covering letter sent with the application, when there is one. */
+  coverLetter?: string;
 
   contact: {
     email?: string;
@@ -127,6 +132,10 @@ export interface CvEmployment {
   /** "Area of Expertise" for this post. */
   expertise?: string;
 }
+
+// `role` on CvEmployment (duties) and `achievement` on CvEducation are plain
+// text that may hold line breaks (`\n`) — the HTML Bdjobs sends is turned
+// into text on the way in, never stored.
 
 export interface CvEducation {
   institute: string;

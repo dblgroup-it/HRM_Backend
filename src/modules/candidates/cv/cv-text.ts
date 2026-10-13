@@ -127,6 +127,9 @@ export function cvProfileToText(profile: CvProfile): string {
 
   const objective = text(profile.careerObjective);
   if (objective) blocks.splice(1, 0, `CAREER OBJECTIVE\n${objective}`);
+  const cover = text(profile.coverLetter);
+  if (cover && cover !== objective)
+    blocks.splice(objective ? 2 : 1, 0, `COVER LETTER\n${cover}`);
   if (s.statedExperienceYears)
     blocks.push(
       `STATED EXPERIENCE\nThe candidate states ${s.statedExperienceYears} years of experience.`,

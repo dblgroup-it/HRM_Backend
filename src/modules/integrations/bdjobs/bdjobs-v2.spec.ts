@@ -191,18 +191,19 @@ describe('BDJobs v2 payload (51 parameters)', () => {
   it('prints the new sections in the generated CV, with the photo', () => {
     const cv = bdjobsToCvProfile(BDJOBS_V2_EXAMPLE.CandidateData, NOW);
     const html = buildCvDocument(cv, NOW, 'data:image/png;base64,iVBORw0KGgo=');
+    // Bdjobs' own section names — the CV is laid out as their details CV.
     for (const heading of [
       'Career Objective',
       'Training',
-      'Professional Certifications',
-      'Career and Application',
-      'Skills',
-      'Languages',
-      'References',
+      'Professional Qualification',
+      'Career and Application Information',
+      'Skill',
+      'Language Proficiency',
+      'Reference',
     ])
       expect(html).toContain(heading);
     expect(html).toContain('data:image/png;base64,iVBORw0KGgo=');
-    expect(html).toContain("Mother's name");
+    expect(html).toContain("Mother's Name");
   });
 
   it('never embeds a photo that is not inline image data', () => {

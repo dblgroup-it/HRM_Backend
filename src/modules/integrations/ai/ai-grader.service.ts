@@ -167,6 +167,11 @@ export interface ScreenRole {
 export interface ScreenInput extends ScreenRole {
   cvMimeType: string;
   cvBase64: string;
+  /**
+   * The applicant's BDJobs profile as text, when they also attached a CV of
+   * their own. Both are read and scored as one record, with one summary.
+   */
+  profileText?: string;
 }
 
 /**
@@ -914,7 +919,15 @@ Respond with ONLY a compact JSON array and nothing else, in this exact shape:
         address: null,
       };
     }
-    const prompt = this.buildScreenPrompt(input, true);
+    const profile = input.profileText?.trim();
+    const prompt = profile
+      ? `${this.buildScreenPrompt(input, true, true)}
+
+CANDIDATE'S BDJOBS PROFILE (structured application data from the job board, rendered as text):
+"""
+${profile.slice(0, 20_000)}
+"""`
+      : this.buildScreenPrompt(input, true);
     const raw =
       this.provider === 'claude'
         ? await this.callClaudeVision(prompt, input.cvMimeType, input.cvBase64)
@@ -962,12 +975,20 @@ ${cv.slice(0, 20_000)}
     return this.parseScreen(raw);
   }
 
-  private buildScreenPrompt(i: ScreenRole, attached: boolean): string {
+  private buildScreenPrompt(
+    i: ScreenRole,
+    attached: boolean,
+    /** A CV attached *and* the BDJobs profile at the end — one person, two records. */
+    both = false,
+  ): string {
     const list = (arr?: string[]) =>
       arr && arr.length
         ? arr.map((x) => `- ${x}`).join('\n')
         : '(none specified)';
-    return `You are a recruitment screening assistant. Read the candidate CV ${attached ? 'attached to this message' : 'given at the end of this message'} and score it against the role below. Be objective and evidence-based.
+    const read = both
+      ? `You have TWO records of the same applicant: the CV they wrote themselves, attached to this message, and their BDJobs profile (the application they filled in on the job board), given at the end of this message. Read BOTH and score them as ONE candidate against the role below — use whichever record states a fact more fully, and prefer the more specific and more recent detail where they differ. Be objective and evidence-based.`
+      : `Read the candidate CV ${attached ? 'attached to this message' : 'given at the end of this message'} and score it against the role below. Be objective and evidence-based.`;
+    return `You are a recruitment screening assistant. ${read}
 
 ROLE: ${i.designation}
 Job description: ${i.jobDescription || '(none)'}
@@ -998,7 +1019,7 @@ Include these ONLY when the role or CV provides enough information to judge:
 Select 4–6 criteria total. Assign integer weights that sum to exactly 100. Experience + Education together must carry at least 50% of the total weight. Award each criterion a score from 0 up to its weight (partial credit is fine). The overall score is the sum of all criterion scores.
 
 Respond with ONLY a compact JSON object and nothing else:
-{"score":<integer 0-100>,"summary":"<two sentences: key strengths and main gaps>","email":"<email or empty>","phone":"<phone or empty>","address":"<full postal address exactly as written, or empty>","criteria":[{"label":"<exact label from the list above>","weight":<integer>,"requirement":"<concise role requirement for this criterion>","applicant":"<what the CV actually shows for this criterion>","score":<integer 0-weight>}]}`;
+{"score":<integer 0-100>,"summary":"<two sentences: key strengths and main gaps${both ? ' — ONE common summary drawing on both records; if they disagree on something material (years of experience, current employer, degree), say so in a few words' : ''}>","email":"<email or empty>","phone":"<phone or empty>","address":"<full postal address exactly as written, or empty>","criteria":[{"label":"<exact label from the list above>","weight":<integer>,"requirement":"<concise role requirement for this criterion>","applicant":"<what the CV actually shows for this criterion>","score":<integer 0-weight>}]}`;
   }
 
   private parseScreen(raw: string): ScreenResult {

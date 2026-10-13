@@ -27,7 +27,12 @@ export type FilePurpose =
    */
   | 'signature'
   /** A guide from the Tutorials menu — `f` is its slug, not a Drive id. */
-  | 'tutorial';
+  | 'tutorial'
+  /**
+   * The CV rendered from a candidate's stored profile — the BDJobs CV. `f` is
+   * the candidate id, not a Drive id; it opens on its own route, as a PDF.
+   */
+  | 'cv-profile';
 
 interface GrantPayload {
   /** Google Drive file id. Signed in, never taken from the request. */

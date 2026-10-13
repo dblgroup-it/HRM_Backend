@@ -1,5 +1,8 @@
 import { bdjobsToCvProfile } from './bdjobs-cv.mapper';
-import { bdjobsProfileToCandidateData } from './bdjobs-profile.adapter';
+import {
+  bdjobsProfileToCandidateData,
+  flatProfilePhoto,
+} from './bdjobs-profile.adapter';
 import { buildCvDocument } from './cv-document';
 
 const NOW = new Date('2026-09-14T00:00:00.000Z');
@@ -102,22 +105,18 @@ describe('buildCvDocument — the nested CandidateData application', () => {
     expect(body).toContain('+880 01800000000');
   });
 
-  it('shows the facts a recruiter reads first', () => {
-    expect(body).toContain('Total experience');
-    expect(body).toContain('Currently at');
-    expect(body).toContain('Example Ltd — Analyst');
-    expect(body).toContain('Latest education');
+  it('lays the jobs out as Bdjobs does — numbered, with years and dates', () => {
+    expect(body).toContain('Experience');
+    expect(body).toContain('Total Year of Experience: 7.8 yrs');
+    expect(body).toContain('1. Analyst (7.8 yrs)');
+    expect(body).toContain('(01 Dec, 2018 - Continuing )');
+    expect(body).toContain('Example Ltd');
   });
 
-  it('renders the employment history with a readable period', () => {
-    expect(body).toContain('Professional Experience');
-    expect(body).toContain('Dec 2018 – Present');
-    expect(body).toContain('Analyst');
-    expect(body).toContain('CURRENT');
-  });
-
-  it('renders education with year, institute and result', () => {
-    expect(body).toContain('Education');
+  it('renders education as the ruled table, with its result', () => {
+    expect(body).toContain('Academic / Education');
+    expect(body).toContain('Exam Title');
+    expect(body).toContain('Pas.Year');
     expect(body).toContain('Example University');
     expect(body).toContain('2013');
     expect(body).toContain('45%');
@@ -125,10 +124,20 @@ describe('buildCvDocument — the nested CandidateData application', () => {
 
   it('includes personal details that were actually supplied', () => {
     expect(body).toContain('Personal Details');
-    expect(body).toContain('Unmarried');
+    expect(body).toContain('Marital Status : Unmarried');
+    expect(body).toContain('Gender : Male');
+    expect(body).toContain('Date of Birth : 01 Jul, 1990');
+    // The present address heads the page.
     expect(body).toContain('1 Example Road, Dhaka');
     // Nothing was sent for these, so no empty rows.
-    expect(body).not.toContain('Blood group');
+    expect(body).not.toContain('Blood Group');
+    expect(body).not.toContain('Training');
+  });
+
+  it('states the salary the way the career block does', () => {
+    expect(body).toContain('Career and Application Information');
+    expect(body).toContain('Present Salary : Tk. 10,000');
+    expect(body).not.toContain('Expected Salary');
   });
 
   it('says it was generated, and from what', () => {
@@ -151,14 +160,14 @@ describe('buildCvDocument — the flat profile application', () => {
 
   it('renders the same document from the other payload shape', () => {
     expect(body).toContain('Test Applicant Two');
-    expect(body).toContain('Professional Experience');
+    expect(body).toContain('Experience');
     expect(body).toContain('Alpha Ltd');
     expect(body).toContain('Dhaka');
   });
 
   it('does not claim a salary when Bdjobs sent 0 for "not stated"', () => {
-    expect(body).not.toContain('Expected salary');
-    expect(body).not.toContain('Current salary');
+    expect(body).not.toContain('Expected Salary');
+    expect(body).not.toContain('Present Salary');
   });
 
   it("tidies Bdjobs' backtick padding", () => {
@@ -182,7 +191,7 @@ describe('buildCvDocument — degenerate input', () => {
     const html = buildCvDocument(cv, NOW);
     expect(html).toContain('Candidate name not supplied');
     // No invented sections for data that does not exist.
-    expect(text(html)).not.toContain('Professional Experience');
+    expect(text(html)).not.toContain('Experience');
     expect(text(html)).not.toContain('Education');
   });
 
@@ -194,5 +203,174 @@ describe('buildCvDocument — degenerate input', () => {
     const html = buildCvDocument(cv, NOW);
     expect(html).not.toContain('<script>');
     expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+/**
+ * The flat profile as the live job board sends it now — every block, with
+ * Bdjobs' quirks: HTML in free text, a quoted expertise list, a result code
+ * with the CGPA in `resultScale`, a coded marital status, a height that
+ * cannot be right, skills as plain names, and the photo inside `profile`.
+ * Invented values in that shape.
+ */
+const FULL_FLAT = {
+  totalExperienceYears: 2.25,
+  currentEmployer: 'Example Tech Ltd',
+  currentDesignation: 'engineer',
+  expectedSalary: 60000,
+  currentSalary: 30000,
+  skills: ['ASP.NET Core MVC', 'Financial Research'],
+  dateOfBirth: '2003-11-02',
+  gender: 'M',
+  coverLetter: '<p>I would like to apply.</p>',
+  careerObjective: '<p>To build <b>reliable</b> software.</p><p>And learn.</p>',
+  linkedinUrl: 'linkedin.com/in/example',
+  fatherName: 'Father Example ',
+  motherName: 'Mother Example',
+  nationality: 'Bangladeshi',
+  nationalId: '',
+  religion: 'Islam',
+  bloodGroup: 'b+',
+  heightMeters: 0.129794,
+  weightKg: 71,
+  maritalStatus: 2,
+  currentAddress1: '34 Example Road, Narayanganj 1400',
+  currentAddress2: '',
+  permanentAddress: '34 Example Road, Narayanganj 1400',
+  employmentHistory: [
+    {
+      companyName: 'Example Tech Ltd',
+      designation: 'engineer',
+      fromDate: '2024-08-18T00:00:00',
+      companyLocation: 'Dhaka',
+      areaOfExpertise: '"ASP.NET Core","ASP.NET Core MVC"',
+      responsibilities:
+        '<p>Build services</p><ul><li>APIs</li><li>Tests</li></ul>',
+    },
+  ],
+  educationHistory: [
+    {
+      institute: 'Example University',
+      passingYear: 2025,
+      degree: 'Bachelor of Science (BSc)',
+      concentration: 'Computer Science & Engineering',
+      result: 11,
+      resultScale: 3.54,
+      duration: '4',
+      achievement: '<p>Dean&#39;s list</p>',
+    },
+  ],
+  languages: [
+    { language: 'English', reading: 'High', writing: 'High', speaking: 'High' },
+  ],
+  trainings: [
+    {
+      title: 'AI training',
+      topic: 'ai, python',
+      institute: 'Example Institute',
+      country: 'Bangladesh',
+      location: 'Dhaka',
+      year: 2025,
+      duration: '2',
+    },
+  ],
+  professionalQualifications: [
+    {
+      certification: 'Example Certificate',
+      institute: 'Example Board',
+      location: 'Dhaka',
+      fromDate: '2026-05-03T00:00:00',
+      toDate: '2026-10-04T00:00:00',
+    },
+  ],
+  photo: {
+    url: 'https://example.invalid/photo.jpg',
+    fileName: 'p',
+    mimeType: 'image/jpeg',
+  },
+  references: [
+    {
+      name: 'Referee Example',
+      organization: 'Example Org',
+      designation: 'Software Engineer',
+      email: 'referee@example.invalid',
+    },
+  ],
+};
+
+describe('buildCvDocument — the full flat profile (2026-10-13)', () => {
+  const warnings: string[] = [];
+  const data = bdjobsProfileToCandidateData(FULL_FLAT, {
+    name: 'Mr Example',
+    email: 'mr.example@example.invalid',
+    phone: '+8801700000000',
+  });
+  const cv = bdjobsToCvProfile(
+    data!,
+    new Date('2026-10-13T00:00:00Z'),
+    warnings,
+  );
+  const body = text(buildCvDocument(cv, new Date('2026-10-13T00:00:00Z')));
+
+  it('carries every block the flat profile sends', () => {
+    for (const heading of [
+      'Career Objective',
+      'Cover Letter',
+      'Experience',
+      'Academic / Education',
+      'Training',
+      'Professional Qualification',
+      'Career and Application Information',
+      'Skill',
+      'Language Proficiency',
+      'Personal Details',
+      'Reference',
+    ])
+      expect(body).toContain(heading);
+    expect(body).toContain("Father's Name : Father Example");
+    expect(body).toContain('Blood Group : B+');
+    expect(body).toContain('Weight (Kg) : 71');
+    expect(body).toContain('Referee Example');
+    expect(body).toContain('AI training');
+    expect(body).toContain('03 May, 2026');
+    expect(body).toContain('https://linkedin.com/in/example');
+  });
+
+  it('turns their HTML into text, never markup', () => {
+    expect(cv.careerObjective).toBe('To build reliable software.\nAnd learn.');
+    expect(cv.employment[0].role).toBe('Build services\n• APIs\n• Tests');
+    expect(cv.education[0].achievement).toBe("Dean's list");
+    expect(body).not.toContain('<p>');
+  });
+
+  it('reads the quoted expertise list and the CGPA', () => {
+    expect(cv.employment[0].expertise).toBe('ASP.NET Core, ASP.NET Core MVC');
+    expect(cv.education[0].result).toBe('CGPA 3.54');
+  });
+
+  it("prints what Bdjobs states as the total, and each job's years", () => {
+    expect(body).toContain('Total Year of Experience: 2.3 yrs');
+    expect(body).toContain('1. engineer (2.2 yrs)');
+    expect(body).toContain('(18 Aug, 2024 - Continuing )');
+  });
+
+  it('leaves off a coded marital status and an impossible height, and says so', () => {
+    expect(body).not.toContain('Marital Status');
+    expect(body).not.toContain('Height');
+    expect(warnings.join(' ')).toContain('maritalStatus "2" is a code');
+    expect(warnings.join(' ')).toContain('height "0.129794"');
+  });
+
+  it('lists skills sent as plain names', () => {
+    expect(cv.skills?.map((k) => k.name)).toEqual([
+      'ASP.NET Core MVC',
+      'Financial Research',
+    ]);
+  });
+
+  it('finds the photo inside the profile', () => {
+    expect(flatProfilePhoto(FULL_FLAT)).toEqual({
+      url: 'https://example.invalid/photo.jpg',
+    });
   });
 });

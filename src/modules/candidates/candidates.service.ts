@@ -35,8 +35,9 @@ import { RecruitmentService } from './recruitment.service';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import type { CvProfile } from './cv/cv-profile.types';
-import { buildCvDocument } from './cv/cv-document';
+import { buildCvPage } from './cv/cv-document';
 import { photoDataUri } from './cv/candidate-photo';
+import { loadRemoteCv } from './cv/remote-cv';
 import { cvProfileToText } from './cv/cv-text';
 import { extractedCvToProfile } from './cv/cv-extract';
 import { pushIf, sortTimeline, type TimelineEvent } from './candidate-timeline';
@@ -621,7 +622,45 @@ export class CandidatesService {
       where: { candidateId },
       select: { mimeType: true, data: true },
     });
-    return buildCvDocument(profile, new Date(), photo ? photoDataUri(photo) : null);
+    return buildCvPage(profile, new Date(), photo ? photoDataUri(photo) : null);
+  }
+
+  /**
+   * The CV behind a signed `profileCvUrl` — the BDJobs CV, opened in a new
+   * tab as a PDF.
+   *
+   * The grant is the credential, as for every file link (see
+   * SecureFileController): it was minted in the candidate list, behind the
+   * caller's recruitment check, names one candidate, and expires. A new tab
+   * carries no session token, which is why the CV used to sit in a dialog.
+   */
+  async profileCvPage(
+    grant: string,
+  ): Promise<{ html: string; filename: string }> {
+    const { fileId: candidateId, purpose } = this.files.verify(grant);
+    if (purpose !== 'cv-profile') {
+      throw new ForbiddenException('This link does not open a CV.');
+    }
+    const cand = await this.prisma.candidate.findUnique({
+      where: { id: candidateId },
+      select: { name: true, cvProfile: true },
+    });
+    const profile = cand?.cvProfile as unknown as CvProfile | null;
+    if (!cand || !profile) {
+      throw new NotFoundException('No CV is stored for this candidate.');
+    }
+    const photo = await this.prisma.candidatePhoto.findUnique({
+      where: { candidateId },
+      select: { mimeType: true, data: true },
+    });
+    return {
+      html: buildCvPage(
+        profile,
+        new Date(),
+        photo ? photoDataUri(photo) : null,
+      ),
+      filename: `${cand.name} — ${profile.source === 'bdjobs' ? 'BDJobs CV' : 'CV'}.pdf`,
+    };
   }
 
   /**
@@ -2141,7 +2180,12 @@ export class CandidatesService {
       }
     }
 
-    if (cand.cvProfile && !force) {
+    // A BDJobs profile is the application itself, not a reading of a file —
+    // even a forced re-read must not replace it with the AI's reading of a
+    // CV uploaded later. That file is read beside it at screening instead.
+    const fromBdjobs =
+      (cand.cvProfile as { source?: unknown } | null)?.source === 'bdjobs';
+    if (cand.cvProfile && (!force || fromBdjobs)) {
       if (cand.gender) return true;
       // Read before gender was asked for. The profile is never overwritten
       // (see above), so ask for the gender alone.
@@ -2279,20 +2323,28 @@ export class CandidatesService {
         : undefined,
     };
 
+    // A Bdjobs applicant can have two CVs: the profile they filled in, and a
+    // customized one they attached (a link, or a file HR uploaded). When both
+    // exist the AI reads both and writes one summary; either alone is read
+    // alone. An uploaded file's own profile is the AI's reading of that same
+    // file, so it is never sent beside it.
+    const profile = (cand.cvProfile as unknown as CvProfile | null) ?? null;
+    const bdjobsText =
+      profile?.source === 'bdjobs' ? cvProfileToText(profile) : null;
+    const file = await this.screenableCvFile(cand, Boolean(bdjobsText));
+
     let result: ScreenResult;
-    if (cand.cvFileId) {
-      const { buffer, mimeType } = await this.drive.getFileBuffer(
-        cand.cvFileId,
-      );
+    if (file) {
       result = await this.ai.screenCv({
         ...role,
-        cvMimeType: mimeType,
-        cvBase64: buffer.toString('base64'),
+        cvMimeType: file.mimeType,
+        cvBase64: file.data.toString('base64'),
+        profileText: bdjobsText ?? undefined,
       });
-    } else if (cand.cvProfile) {
+    } else if (profile) {
       result = await this.ai.screenCvText({
         ...role,
-        cvText: cvProfileToText(cand.cvProfile as unknown as CvProfile),
+        cvText: cvProfileToText(profile),
       });
     } else {
       return null;
@@ -2335,6 +2387,41 @@ export class CandidatesService {
       }
     }
     return this.prisma.candidate.update({ where: { id: cand.id }, data });
+  }
+
+  /**
+   * The CV document to show the AI, if there is one it can read.
+   *
+   * The Drive file when there is one. Otherwise, for a Bdjobs applicant, the
+   * customized CV they attached, fetched from Bdjobs' link — and if that
+   * cannot be fetched or is not a PDF or image, the screen goes ahead on the
+   * profile alone rather than failing or scoring an unreadable file 0.
+   */
+  private async screenableCvFile(
+    cand: { name: string; cvFileId: string | null; cvUrl: string | null },
+    hasBdjobsProfile: boolean,
+  ): Promise<{ mimeType: string; data: Buffer } | null> {
+    if (cand.cvFileId) {
+      const { buffer, mimeType } = await this.drive.getFileBuffer(
+        cand.cvFileId,
+      );
+      const readable =
+        mimeType === 'application/pdf' || mimeType.startsWith('image/');
+      // An unreadable upload is still screened on its own as before (the AI
+      // service says why it cannot score it); beside a profile, it is skipped.
+      if (readable || !hasBdjobsProfile) return { mimeType, data: buffer };
+      return null;
+    }
+    if (hasBdjobsProfile && cand.cvUrl && /^https?:\/\//i.test(cand.cvUrl)) {
+      try {
+        return await loadRemoteCv(cand.cvUrl);
+      } catch (err) {
+        this.logger.warn(
+          `${cand.name}'s personal CV was not read beside the BDJobs profile: ${(err as Error).message}`,
+        );
+      }
+    }
+    return null;
   }
 
   /**
@@ -3201,6 +3288,29 @@ function dedupeByEmail<T>(rows: T[], getEmail: (row: T) => string | null): T[] {
  * authorization check that produced this row. A candidate whose CV lives
  * somewhere else entirely (an external link with no Drive file) keeps that URL.
  */
+/**
+ * The CV rendered from the stored profile, as a PDF in a new tab.
+ *
+ * Offered for a Bdjobs application — as "BDJobs CV" beside the candidate's
+ * own file when they sent one ("Personal CV") — and for any candidate whose
+ * profile is the only CV there is. Not for an uploaded file: its profile is
+ * the AI's reading of that same document, and the document is the CV.
+ */
+function profileCv(c: CandidateRow, files: FileGrantService) {
+  const source = (c.cvProfile as { source?: unknown } | null)?.source;
+  const show =
+    Boolean(c.cvProfile) && (source === 'bdjobs' || (!c.cvFileId && !c.cvUrl));
+  return {
+    profileCvUrl: show
+      ? `/api/candidates/profile-cv/${files.mint(c.id, 'cv-profile', {
+          filename: `${c.name} — CV`,
+        })}`
+      : null,
+    /** 'bdjobs' labels it "BDJobs CV"; anything else is just "CV". */
+    profileCvSource: show && typeof source === 'string' ? source : null,
+  };
+}
+
 function serializeCandidate(c: CandidateRow, files: FileGrantService) {
   return {
     id: c.id,
@@ -3231,6 +3341,7 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
      * document. Lets the UI offer the generated CV instead of showing nothing.
      */
     hasGeneratedCv: Boolean(c.cvProfile),
+    ...profileCv(c, files),
     notes: c.notes ?? '',
     /** Employee referral — who put them forward, as they were at the time. */
     referral: c.referredByCode

@@ -1,28 +1,24 @@
-import type {
-  CvCertification,
-  CvEducation,
-  CvEmployment,
-  CvLanguage,
-  CvProfile,
-  CvReference,
-  CvSkill,
-  CvTraining,
-} from './cv-profile.types';
+import type { CvEmployment, CvProfile, CvReference } from './cv-profile.types';
 
 /**
- * A printable CV built from structured data, for candidates who never sent a file.
+ * The BDJobs CV — a candidate's application, laid out as Bdjobs' own
+ * "details CV" is: name and contact lines with the photo beside them, grey
+ * section bands, the jobs numbered with their years, and the education,
+ * training and qualifications in ruled tables. HR know that page; the CV here
+ * reads the same way (owner's reference, 2026-10-13).
  *
- * Bdjobs applications arrive as fields, not documents — there is no CV to open,
- * download or hand to an interviewer. Everything needed is already in
- * `CvProfile`; this renders it as the document it should have been.
+ * Built from `CvProfile`, so it is also what an applicant who never sent a
+ * file gets as their CV. Served as a PDF in a new tab
+ * (`CandidatesService.bdjobsCvPdf`), and as HTML where no browser is
+ * available to print one.
  *
- * Inline styles throughout, and no external assets: this is opened in a new
- * tab, printed, and pasted into mail, and every one of those strips a
- * stylesheet. Same reasoning as the offer letters.
+ * Inline styles throughout and no external assets — the photo is a data: URI
+ * — so the page renders the same in Chrome's PDF printer, a browser tab, and
+ * anywhere the markup is pasted.
  *
- * It is deliberately labelled as generated. An interviewer who believes they
- * are reading a CV the candidate wrote will read omissions as choices the
- * candidate made, and these omissions are Bdjobs' form design.
+ * It still says, in small print at the foot, that it was generated: an
+ * interviewer who believes the candidate wrote it would read Bdjobs' form
+ * design as the candidate's choices.
  */
 
 const esc = (v: string): string =>
@@ -36,301 +32,412 @@ const esc = (v: string): string =>
 const tidy = (v: string): string =>
   v.replace(/[`´]+/g, "'").replace(/\s+/g, ' ').replace(/'{2,}/g, "'").trim();
 
-const text = (v: string | undefined | null): string | null => {
+const text = (v: string | number | undefined | null): string | null => {
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : null;
   const t = (v ?? '').trim();
   return t ? tidy(t) : null;
 };
 
-/** "Mar 2011" — ISO in, human out. Returns null rather than "Invalid Date". */
-function monthYear(iso?: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-}
-
-/** "Mar 2011 – Present" for a job still running. */
-function period(job: CvEmployment): string {
-  const from = monthYear(job.from);
-  const to = job.current ? 'Present' : monthYear(job.to);
-  if (!from && !to) return '—';
-  return [from ?? '?', to ?? '?'].join(' – ');
-}
-
-/** "6 yrs 4 mos" for one role, so a reader can weigh it at a glance. */
-function span(job: CvEmployment, today: string): string | null {
-  if (!job.from) return null;
-  const end = job.to && job.to <= today ? job.to : today;
-  const a = new Date(job.from);
-  const b = new Date(end);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
-  const months =
-    (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
-  if (months <= 0) return null;
-  const y = Math.floor(months / 12);
-  const m = months % 12;
-  return [
-    y ? `${y} yr${y === 1 ? '' : 's'}` : null,
-    m ? `${m} mo${m === 1 ? '' : 's'}` : null,
-  ]
-    .filter(Boolean)
-    .join(' ');
-}
-
-const S = {
-  page: 'font-family:Arial,Helvetica,sans-serif;max-width:800px;margin:0 auto;padding:32px 40px;color:#1f2937;background:#fff',
-  name: 'margin:0;font-size:24px;line-height:1.2;font-weight:700;color:#0f172a',
-  contact: 'margin:6px 0 0;font-size:13px;color:#475569',
-  rule: 'border:0;border-top:2px solid #1877c0;margin:16px 0 0',
-  h2: 'margin:26px 0 10px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#1877c0',
-  table: 'width:100%;border-collapse:collapse;font-size:13px',
-  th: 'text-align:left;padding:6px 8px;background:#f1f5f9;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid #e2e8f0',
-  td: 'padding:7px 8px;border-bottom:1px solid #eef2f7;vertical-align:top',
-  muted: 'color:#64748b',
-  factLabel:
-    'font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#64748b',
-  factValue: 'font-size:14px;font-weight:600;color:#0f172a',
-  footer:
-    'margin:28px 0 0;padding-top:12px;border-top:1px solid #e2e8f0;font-size:11px;color:#94a3b8;line-height:1.6',
+/** Free text with its line breaks kept — duties, objectives, achievements. */
+const para = (v: string | undefined | null): string | null => {
+  const lines = (v ?? '')
+    .split(/\r?\n/)
+    .map((l) => tidy(l))
+    .filter(Boolean);
+  return lines.length ? lines.map(esc).join('<br>') : null;
 };
 
-function factCell(label: string, value: string): string {
-  return `<td style="${S.td};border-bottom:0;width:25%">
-      <div style="${S.factLabel}">${esc(label)}</div>
-      <div style="${S.factValue}">${esc(value)}</div>
-    </td>`;
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** "01 Feb, 2024", as Bdjobs prints a date. Read from the ISO day itself, so no zone can move it. */
+function dmy(iso?: string | null): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
+  if (!m) return null;
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${m[3]} ${month}, ${m[1]}` : null;
 }
 
-function employmentSection(jobs: CvEmployment[], today: string): string {
-  if (!jobs.length) return '';
-  const rows = jobs
-    .map((j) => {
-      const duration = span(j, today);
-      return `<tr>
-        <td style="${S.td};width:26%">${esc(period(j))}${
-          duration
-            ? `<div style="${S.muted};font-size:11px;margin-top:2px">${esc(duration)}</div>`
-            : ''
-        }</td>
-        <td style="${S.td}"><strong>${esc(j.company)}</strong>${
-          j.location
-            ? `<div style="${S.muted};font-size:11px">${esc(j.location)}</div>`
-            : ''
-        }${
-          j.current
-            ? ' <span style="font-size:10px;color:#1877c0;font-weight:700">CURRENT</span>'
-            : ''
-        }</td>
-        <td style="${S.td}">${esc(j.designation ?? '—')}${
-          j.expertise
-            ? `<div style="font-size:11px;margin-top:2px"><span style="${S.muted}">Expertise:</span> ${esc(j.expertise)}</div>`
-            : ''
-        }${
-          j.role
-            ? `<div style="${S.muted};font-size:11px;margin-top:2px">${esc(j.role)}</div>`
-            : ''
-        }</td>
-      </tr>`;
-    })
-    .join('');
-  return `<h2 style="${S.h2}">Professional Experience</h2>
-  <table style="${S.table}">
-    <tr><th style="${S.th}">Period</th><th style="${S.th}">Organization</th><th style="${S.th}">Designation</th></tr>
-    ${rows}
-  </table>`;
+function months(from: string, to: string): number {
+  const a = /^(\d{4})-(\d{2})/.exec(from);
+  const b = /^(\d{4})-(\d{2})/.exec(to);
+  if (!a || !b) return 0;
+  return (Number(b[1]) - Number(a[1])) * 12 + (Number(b[2]) - Number(a[2]));
 }
 
-function educationSection(quals: CvEducation[]): string {
-  if (!quals.length) return '';
-  const rows = quals
-    .map(
-      (q) => `<tr>
-        <td style="${S.td};width:16%">${esc(q.passYear ? String(q.passYear) : '—')}</td>
-        <td style="${S.td}"><strong>${esc(q.institute)}</strong>${
-          q.university && q.university !== q.institute
-            ? `<div style="${S.muted};font-size:11px">${esc(q.university)}</div>`
-            : ''
-        }</td>
-        <td style="${S.td}">${esc(q.degree ?? '—')}${
-          q.major
-            ? `<div style="${S.muted};font-size:11px">${esc(q.major)}</div>`
-            : ''
-        }${
-          q.duration
-            ? `<div style="${S.muted};font-size:11px">Duration: ${esc(q.duration)}</div>`
-            : ''
-        }${
-          q.achievement
-            ? `<div style="${S.muted};font-size:11px">Achievement: ${esc(q.achievement)}</div>`
-            : ''
-        }</td>
-        <td style="${S.td};width:16%">${esc(q.result ?? '—')}</td>
-      </tr>`,
-    )
-    .join('');
-  return `<h2 style="${S.h2}">Education</h2>
-  <table style="${S.table}">
-    <tr><th style="${S.th}">Year</th><th style="${S.th}">Institute</th><th style="${S.th}">Degree</th><th style="${S.th}">Result</th></tr>
-    ${rows}
-  </table>`;
+/** "2.7 yrs" — one decimal, as Bdjobs writes a span. */
+const years = (n: number): string => `${Math.round(n * 10) / 10} yrs`;
+
+function jobYears(job: CvEmployment, today: string): string | null {
+  if (!job.from) return null;
+  const end = job.to && job.to <= today ? job.to : today;
+  const m = months(job.from, end);
+  return m > 0 ? years(m / 12) : null;
 }
 
-function personalSection(p: CvProfile): string {
-  const items: [string, string | null][] = [
-    ["Father's name", text(p.personal.fatherName)],
-    ["Mother's name", text(p.personal.motherName)],
-    [
-      'Date of birth',
-      monthYear(p.personal.dateOfBirth) ? text(p.personal.dateOfBirth) : null,
-    ],
-    ['Gender', text(p.personal.gender)],
-    ['Marital status', text(p.personal.maritalStatus)],
-    ['Blood group', text(p.personal.bloodGroup)],
-    ['Religion', text(p.personal.religion)],
-    ['Nationality', text(p.personal.nationality)],
-    [
-      'Height / weight',
-      [
-        p.personal.heightMeters ? `${p.personal.heightMeters} m` : null,
-        p.personal.weightKg ? `${p.personal.weightKg} kg` : null,
-      ]
-        .filter(Boolean)
-        .join(' / ') || null,
-    ],
-    ['Present address', text(p.contact.currentAddress)],
-    ['Permanent address', text(p.contact.permanentAddress)],
-  ];
-  const rows = items
-    .filter(([, v]) => v)
-    .map(
-      ([k, v]) => `<tr>
-        <td style="${S.td};width:28%;${S.muted}">${esc(k)}</td>
-        <td style="${S.td}">${esc(v as string)}</td>
-      </tr>`,
-    )
-    .join('');
-  if (!rows) return '';
-  return `<h2 style="${S.h2}">Personal Details</h2>
-  <table style="${S.table}">${rows}</table>`;
+/** M / F / male → Male / Female; anything else as written. */
+function gender(v?: string | null): string | null {
+  const t = text(v);
+  if (!t) return null;
+  if (/^m(ale)?$/i.test(t)) return 'Male';
+  if (/^f(emale)?$/i.test(t)) return 'Female';
+  return t;
 }
 
-function table(head: string[], rows: string[][], widths: string[] = []): string {
+const money = (n?: number): string | null =>
+  n ? `Tk. ${n.toLocaleString('en-US')}` : null;
+
+// --- styles ------------------------------------------------------------------
+
+const INK = '#1f2328';
+const S = {
+  page: `font-family:Inter,'Segoe UI',Roboto,Arial,Helvetica,sans-serif;max-width:820px;margin:0 auto;padding:6px 4px;color:${INK};background:#fff;font-size:12.5px;line-height:1.5`,
+  name: 'margin:0 0 12px;font-size:21px;line-height:1.25;font-weight:600;color:#2e3192',
+  contactRow:
+    'margin:0 0 8px;border-collapse:collapse;font-size:12.5px;color:#30343b',
+  icon: 'display:block;width:14px;height:14px;margin-top:2px',
+  photo:
+    'width:116px;height:146px;object-fit:cover;display:block;border:1px solid #d6d9de;border-radius:4px;padding:3px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.12)',
+  rule: `border:0;border-top:1.5px solid ${INK};margin:14px 0 4px`,
+  band: 'margin:16px 0 10px;padding:7px 8px;background:#e7e7e7;font-size:14px;font-weight:600;color:#6b6f76;page-break-after:avoid;break-after:avoid',
+  body: 'margin:0;padding:0 6px',
+  table: 'width:100%;border-collapse:collapse;font-size:12px',
+  th: 'border:1px solid #d6d9de;padding:7px 6px;font-weight:600;text-align:center;color:#1f2328;background:#fff',
+  td: 'border:1px solid #d6d9de;padding:7px 6px;text-align:center;vertical-align:middle;color:#30343b',
+  label: 'padding:3px 6px 3px 6px;width:34%;vertical-align:top;color:#30343b',
+  colon: 'padding:3px 6px;width:3%;vertical-align:top;color:#30343b',
+  value: 'padding:3px 6px;vertical-align:top;color:#30343b',
+  strong: 'font-weight:600;color:#1f2328',
+  footer:
+    'margin:22px 0 0;padding-top:8px;border-top:1px solid #e3e5e8;font-size:10px;color:#9aa0a8;line-height:1.5',
+  keep: 'page-break-inside:avoid;break-inside:avoid',
+};
+
+/** Small line icons for the contact lines, drawn inline so nothing is fetched. */
+const ICON: Record<string, string> = {
+  address:
+    '<path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z" fill="#30343b"/><circle cx="12" cy="10" r="2.6" fill="#fff"/>',
+  phone:
+    '<rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="#30343b" stroke-width="2"/><line x1="10.5" y1="18" x2="13.5" y2="18" stroke="#30343b" stroke-width="2"/>',
+  email:
+    '<rect x="3" y="5.5" width="18" height="13" rx="1.5" fill="none" stroke="#30343b" stroke-width="2"/><path d="M3.5 6.5 12 13l8.5-6.5" fill="none" stroke="#30343b" stroke-width="2"/>',
+  facebook:
+    '<path d="M13.5 22v-8h2.7l.4-3.2h-3.1V8.9c0-.9.3-1.6 1.6-1.6h1.7V4.4c-.3 0-1.3-.1-2.5-.1-2.5 0-4.1 1.5-4.1 4.2v2.3H7.4V14h2.8v8z" fill="#30343b"/>',
+  linkedin:
+    '<rect x="3" y="9" width="4" height="12" fill="#30343b"/><circle cx="5" cy="5" r="2.2" fill="#30343b"/><path d="M10 9h3.8v1.7c.6-1 1.9-2 3.9-2 4 0 4.3 2.6 4.3 6V21h-4v-5.5c0-1.4 0-3.2-2-3.2s-2.2 1.5-2.2 3.1V21H10z" fill="#30343b"/>',
+};
+
+const icon = (name: keyof typeof ICON): string =>
+  `<svg viewBox="0 0 24 24" style="${S.icon}" aria-hidden="true">${ICON[name]}</svg>`;
+
+const band = (title: string): string =>
+  `<div style="${S.band}">${esc(title)}</div>`;
+
+const cell = (v: string | number | null | undefined): string =>
+  v === null || v === undefined || v === '' ? '' : esc(String(v));
+
+function grid(head: string[], rows: string[][], widths: string[] = []): string {
   return `<table style="${S.table}">
-    <tr>${head.map((h, i) => `<th style="${S.th}${widths[i] ? `;width:${widths[i]}` : ''}">${esc(h)}</th>`).join('')}</tr>
+    <tr>${head
+      .map(
+        (h, i) =>
+          `<th style="${S.th}${widths[i] ? `;width:${widths[i]}` : ''}">${esc(h)}</th>`,
+      )
+      .join('')}</tr>
     ${rows
-      .map((r) => `<tr>${r.map((c) => `<td style="${S.td}">${c}</td>`).join('')}</tr>`)
+      .map(
+        (r) =>
+          `<tr style="${S.keep}">${r.map((c) => `<td style="${S.td}">${c}</td>`).join('')}</tr>`,
+      )
       .join('')}
   </table>`;
 }
 
-const cell = (v?: string | number | null): string =>
-  v === undefined || v === null || v === '' ? '—' : esc(String(v));
+/** "Label : value" lines, as Bdjobs prints personal and career details. */
+function pairs(items: [string, string | null][]): string {
+  const shown = items.filter(([, v]) => v);
+  if (!shown.length) return '';
+  return `<table style="width:100%;border-collapse:collapse;font-size:12.5px">${shown
+    .map(
+      ([k, v]) => `<tr>
+        <td style="${S.label}">${esc(k)}</td>
+        <td style="${S.colon}">:</td>
+        <td style="${S.value}">${v}</td>
+      </tr>`,
+    )
+    .join('')}</table>`;
+}
 
-function trainingSection(rows: CvTraining[] = []): string {
-  if (!rows.length) return '';
-  return `<h2 style="${S.h2}">Training</h2>
-  ${table(
-    ['Year', 'Training', 'Institute', 'Duration'],
-    rows.map((t) => [
-      cell(t.year),
-      `<strong>${esc(t.title)}</strong>${t.topic ? `<div style="${S.muted};font-size:11px">${esc(t.topic)}</div>` : ''}`,
-      `${cell(t.institute)}${
-        t.location || t.country
-          ? `<div style="${S.muted};font-size:11px">${esc([t.location, t.country].filter(Boolean).join(', '))}</div>`
+// --- sections ------------------------------------------------------------------
+
+function experienceSection(p: CvProfile, today: string): string {
+  const jobs = p.employment;
+  const total =
+    p.summary.statedExperienceYears ?? p.summary.totalExperienceYears;
+  if (!jobs.length && !total) return '';
+  const items = jobs
+    .map((j, i) => {
+      const span = jobYears(j, today);
+      const from = dmy(j.from);
+      const to = j.current ? 'Continuing' : dmy(j.to);
+      const dates =
+        from || to ? `(${[from ?? '?', to ?? '?'].join(' - ')} )` : null;
+      const title = text(j.designation) ?? text(j.company) ?? '';
+      return `<tr style="${S.keep}">
+        <td style="width:22px;vertical-align:top;padding:0 0 12px 6px">${i + 1}.</td>
+        <td style="vertical-align:top;padding:0 6px 12px 4px">
+          <div style="${S.strong}">${esc(title)}${span ? ` (${esc(span)})` : ''}</div>
+          ${dates ? `<div>${esc(dates)}</div>` : ''}
+          <div style="${S.strong};margin-top:4px">${esc(j.company)}</div>
+          ${j.location ? `<div>${esc(j.location)}</div>` : ''}
+          ${
+            j.expertise
+              ? `<div style="${S.strong};margin-top:6px">Area of Expertise</div><div>${esc(j.expertise)}</div>`
+              : ''
+          }
+          ${
+            para(j.role)
+              ? `<div style="${S.strong};margin-top:6px">Duties/Responsibilities</div><div>${para(j.role)}</div>`
+              : ''
+          }
+        </td>
+      </tr>`;
+    })
+    .join('');
+  return `${band('Experience')}
+  ${
+    total
+      ? `<p style="${S.body};margin-bottom:10px"><span style="${S.strong}">Total Year of Experience:</span> ${esc(years(total))}</p>`
+      : ''
+  }
+  ${items ? `<table style="width:100%;border-collapse:collapse;font-size:12.5px">${items}</table>` : ''}`;
+}
+
+function educationSection(p: CvProfile): string {
+  if (!p.education.length) return '';
+  return `${band('Academic / Education')}
+  ${grid(
+    [
+      'Exam Title',
+      'Concentration/ Major',
+      'Institute',
+      'Result',
+      'Pas.Year',
+      'Duration',
+      'Achievement',
+    ],
+    p.education.map((q) => [
+      cell(q.degree),
+      cell(q.major),
+      `${cell(q.institute)}${
+        q.university
+          ? `<div style="color:#6b6f76;font-size:11px">${esc(q.university)}</div>`
           : ''
       }`,
-      cell(t.duration),
+      cell(q.result),
+      cell(q.passYear),
+      cell(q.duration),
+      para(q.achievement) ?? '',
     ]),
-    ['12%', '', '', '16%'],
+    ['14%', '13%', '20%', '11%', '9%', '10%', ''],
   )}`;
 }
 
-function certificationSection(rows: CvCertification[] = []): string {
-  if (!rows.length) return '';
-  return `<h2 style="${S.h2}">Professional Certifications</h2>
-  ${table(
-    ['Certification', 'Institute', 'Period'],
-    rows.map((c) => [
-      `<strong>${esc(c.name)}</strong>`,
-      `${cell(c.institute)}${c.location ? `<div style="${S.muted};font-size:11px">${esc(c.location)}</div>` : ''}`,
-      cell([monthYear(c.from), monthYear(c.to)].filter(Boolean).join(' – ')),
+function trainingSection(p: CvProfile): string {
+  if (!p.training?.length) return '';
+  return `${band('Training')}
+  ${grid(
+    [
+      'Training Title',
+      'Topic',
+      'Institute',
+      'Country',
+      'Location',
+      'Year',
+      'Duration',
+    ],
+    p.training.map((t) => [
+      cell(t.title),
+      cell(t.topic),
+      cell(t.institute),
+      cell(t.country),
+      cell(t.location),
+      cell(t.year),
+      cell(t.duration),
     ]),
-    ['', '', '24%'],
+  )}`;
+}
+
+function qualificationSection(p: CvProfile): string {
+  if (!p.certifications?.length) return '';
+  return `${band('Professional Qualification')}
+  ${grid(
+    ['Certification', 'Institute', 'Location', 'From', 'To'],
+    p.certifications.map((c) => [
+      cell(c.name),
+      cell(c.institute),
+      cell(c.location),
+      cell(dmy(c.from)),
+      cell(dmy(c.to)),
+    ]),
+    ['25%', '27%', '14%', '17%', '17%'],
   )}`;
 }
 
 function careerSection(p: CvProfile): string {
   const c = p.career;
-  const items: [string, string | null][] = [
-    ['Preferred job category', c?.preferredJobCategories?.join(', ') ?? null],
-    ['Looking for (job level)', text(c?.jobLevel)],
+  const list = (v?: string[]) => (v?.length ? esc(v.join(', ')) : null);
+  const body = pairs([
+    ['Preferred Job Category', list(c?.preferredJobCategories)],
     [
-      'Present salary',
-      p.compensation.current ? p.compensation.current.toLocaleString('en-US') : null,
+      'Looking For',
+      text(c?.jobLevel) ? esc(text(c?.jobLevel) as string) : null,
     ],
-    [
-      'Expected salary',
-      p.compensation.expected ? p.compensation.expected.toLocaleString('en-US') : null,
-    ],
-    ['Preferred district', c?.preferredDistricts?.join(', ') ?? null],
-    ['Preferred organization type', c?.preferredOrganizationTypes?.join(', ') ?? null],
-  ];
-  const rows = items.filter(([, v]) => v);
-  if (!rows.length) return '';
-  return `<h2 style="${S.h2}">Career and Application</h2>
-  <table style="${S.table}">${rows
-    .map(
-      ([k, v]) => `<tr><td style="${S.td};width:28%;${S.muted}">${esc(k)}</td><td style="${S.td}">${esc(v as string)}</td></tr>`,
-    )
-    .join('')}</table>`;
+    ['Present Salary', money(p.compensation.current)],
+    ['Expected Salary', money(p.compensation.expected)],
+    ['Preferred District', list(c?.preferredDistricts)],
+    ['Preferred Organization Types', list(c?.preferredOrganizationTypes)],
+  ]);
+  return body ? `${band('Career and Application Information')}${body}` : '';
 }
 
-function skillsSection(rows: CvSkill[] = []): string {
-  if (!rows.length) return '';
-  const described = rows.some((r) => r.description);
-  if (!described)
-    return `<h2 style="${S.h2}">Skills</h2>
-  <p style="margin:0;font-size:13px;line-height:1.8">${rows
-    .map(
-      (r) =>
-        `<span style="display:inline-block;margin:0 6px 6px 0;padding:2px 10px;border:1px solid #cbd5e1;border-radius:999px">${esc(r.name)}</span>`,
-    )
-    .join('')}</p>`;
-  return `<h2 style="${S.h2}">Skills</h2>
-  ${table(
-    ['Skill', 'Description'],
-    rows.map((r) => [`<strong>${esc(r.name)}</strong>`, cell(r.description)]),
-    ['32%', ''],
-  )}`;
+function skillSection(p: CvProfile): string {
+  const skills = p.skills ?? [];
+  if (!skills.length) return '';
+  const described = skills.some((s) => s.description);
+  const rows = described
+    ? skills.map((s) => [
+        `<div style="text-align:left">${esc(s.name)}</div>`,
+        `<div style="text-align:left">${cell(s.description)}</div>`,
+      ])
+    : [
+        [
+          `<ul style="margin:0;padding-left:16px;text-align:left">${skills
+            .map((s) => `<li style="margin:3px 0">${esc(s.name)}</li>`)
+            .join('')}</ul>`,
+          '<div style="color:#9aa0a8;font-style:italic;text-align:left">No description provided</div>',
+        ],
+      ];
+  return `${band('Skill')}${grid(['Fields of Skill', 'Description'], rows, ['38%', ''])}`;
 }
 
-function languageSection(rows: CvLanguage[] = []): string {
-  if (!rows.length) return '';
-  return `<h2 style="${S.h2}">Languages</h2>
-  ${table(
+function languageSection(p: CvProfile): string {
+  if (!p.languages?.length) return '';
+  return `${band('Language Proficiency')}
+  <div style="width:74%;margin:0 auto">${grid(
     ['Language', 'Reading', 'Writing', 'Speaking'],
-    rows.map((l) => [`<strong>${esc(l.language)}</strong>`, cell(l.reading), cell(l.writing), cell(l.speaking)]),
-  )}`;
+    p.languages.map((l) =>
+      [l.language, l.reading, l.writing, l.speaking].map(
+        (v) => `<div style="text-align:left">${cell(v)}</div>`,
+      ),
+    ),
+  )}</div>`;
 }
 
-function referenceSection(rows: CvReference[] = []): string {
-  if (!rows.length) return '';
-  return `<h2 style="${S.h2}">References</h2>
-  ${table(
-    ['Name', 'Organization', 'Relation', 'Contact'],
-    rows.map((r) => [
-      `<strong>${esc(r.name)}</strong>${r.designation ? `<div style="${S.muted};font-size:11px">${esc(r.designation)}</div>` : ''}`,
-      cell(r.organization),
-      cell(r.relation),
-      [r.email, r.phone].filter(Boolean).map((x) => esc(x as string)).join('<br>') || '—',
-    ]),
-  )}`;
+function personalSection(p: CvProfile): string {
+  const height = p.personal.heightMeters;
+  const permanent = text(p.contact.permanentAddress);
+  const current = text(p.contact.currentAddress);
+  const body = pairs([
+    [
+      "Father's Name",
+      text(p.personal.fatherName) ? esc(text(p.personal.fatherName)!) : null,
+    ],
+    [
+      "Mother's Name",
+      text(p.personal.motherName) ? esc(text(p.personal.motherName)!) : null,
+    ],
+    [
+      'Date of Birth',
+      dmy(p.personal.dateOfBirth) ? esc(dmy(p.personal.dateOfBirth)!) : null,
+    ],
+    [
+      'Gender',
+      gender(p.personal.gender) ? esc(gender(p.personal.gender)!) : null,
+    ],
+    [
+      'Marital Status',
+      text(p.personal.maritalStatus)
+        ? esc(text(p.personal.maritalStatus)!)
+        : null,
+    ],
+    [
+      'Nationality',
+      text(p.personal.nationality) ? esc(text(p.personal.nationality)!) : null,
+    ],
+    [
+      'National Id No.',
+      text(p.personal.nationalId) ? esc(text(p.personal.nationalId)!) : null,
+    ],
+    [
+      'Religion',
+      text(p.personal.religion) ? esc(text(p.personal.religion)!) : null,
+    ],
+    [
+      'Blood Group',
+      text(p.personal.bloodGroup)
+        ? esc(text(p.personal.bloodGroup)!.toUpperCase())
+        : null,
+    ],
+    ['Height (Meter)', height ? esc(String(height)) : null],
+    [
+      'Weight (Kg)',
+      p.personal.weightKg ? esc(String(p.personal.weightKg)) : null,
+    ],
+    // The present address heads the page; the permanent one only when it differs.
+    [
+      'Permanent Address',
+      permanent && permanent.toLowerCase() !== (current ?? '').toLowerCase()
+        ? esc(permanent)
+        : null,
+    ],
+  ]);
+  return body ? `${band('Personal Details')}${body}` : '';
+}
+
+function referenceBlock(r: CvReference): string {
+  return pairs([
+    ['Name', esc(r.name)],
+    ['Organization', text(r.organization) ? esc(text(r.organization)!) : null],
+    ['Designation', text(r.designation) ? esc(text(r.designation)!) : null],
+    ['Address', text(r.address) ? esc(text(r.address)!) : null],
+    ['Email', text(r.email) ? esc(text(r.email)!) : null],
+    ['Mobile', text(r.phone) ? esc(text(r.phone)!) : null],
+    ['Relation', text(r.relation) ? esc(text(r.relation)!) : null],
+  ]);
+}
+
+function referenceSection(p: CvProfile): string {
+  const refs = p.references ?? [];
+  if (!refs.length) return '';
+  // Two to a row with a rule between them, as on Bdjobs' page.
+  const rows: string[] = [];
+  for (let i = 0; i < refs.length; i += 2) {
+    const [a, b] = [refs[i], refs[i + 1]];
+    rows.push(`<tr style="${S.keep}">
+      <td style="width:50%;vertical-align:top;padding:0 10px 12px 0">${referenceBlock(a)}</td>
+      <td style="width:50%;vertical-align:top;padding:0 0 12px 10px;border-left:1px solid #e3e5e8">${b ? referenceBlock(b) : ''}</td>
+    </tr>`);
+  }
+  return `${band('Reference')}<table style="width:100%;border-collapse:collapse">${rows.join('')}</table>`;
 }
 
 /**
  * Render a CV.
  *
- * `now` is injectable so the "generated on" line and every duration can be
+ * `now` is injectable so every span and the "generated on" line can be
  * asserted in a test rather than drifting with the clock.
  */
 export function buildCvDocument(
@@ -343,58 +450,36 @@ export function buildCvDocument(
   const name = text(profile.personal.fullName) ?? 'Candidate name not supplied';
   const salutation = text(profile.personal.salutation);
 
-  const contact = [
-    text(profile.contact.email),
-    text(profile.contact.phone),
-    text(profile.contact.currentLocation),
-  ]
-    .filter(Boolean)
-    .map((v) => esc(v as string))
-    .join(' &nbsp;·&nbsp; ');
-  const links = [
-    profile.contact.linkedinUrl
-      ? `<a href="${esc(profile.contact.linkedinUrl)}" style="color:#1877c0">LinkedIn</a>`
-      : null,
-    profile.contact.facebookUrl
-      ? `<a href="${esc(profile.contact.facebookUrl)}" style="color:#1877c0">Facebook</a>`
-      : null,
-  ].filter(Boolean);
+  const address =
+    text(profile.contact.currentAddress) ??
+    text(profile.contact.currentLocation);
+  const contact: [keyof typeof ICON, string | null][] = [
+    ['address', address],
+    ['phone', text(profile.contact.phone)],
+    ['email', text(profile.contact.email)],
+    ['facebook', text(profile.contact.facebookUrl)],
+    ['linkedin', text(profile.contact.linkedinUrl)],
+  ];
+  // A row per line, icon in its own cell, so a long address wraps under its
+  // own first line rather than back under the icon.
+  const contactRows = contact
+    .filter(([, v]) => v)
+    .map(
+      ([k, v]) => `<table style="${S.contactRow}"><tr>
+        <td style="width:24px;vertical-align:top;padding:0">${icon(k)}</td>
+        <td style="vertical-align:top;padding:0">${esc(v as string)}</td>
+      </tr></table>`,
+    )
+    .join('');
+
   // Only an inline image is ever embedded; see candidate-photo.ts.
   const photoTag =
     photo && /^data:image\/(jpeg|png|webp);base64,/.test(photo)
-      ? `<img src="${photo}" alt="" style="width:96px;height:118px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;display:block">`
+      ? `<img src="${photo}" alt="" style="${S.photo}">`
       : '';
 
-  // The four things a recruiter looks for before reading anything else.
-  const facts: [string, string][] = [];
-  if (profile.summary.totalExperienceLabel)
-    facts.push(['Total experience', profile.summary.totalExperienceLabel]);
-  if (profile.summary.lastOrganization)
-    facts.push([
-      profile.summary.currentlyEmployed ? 'Currently at' : 'Last organization',
-      [profile.summary.lastOrganization, profile.summary.lastDesignation]
-        .filter(Boolean)
-        .join(' — '),
-    ]);
-  if (profile.summary.latestEducation)
-    facts.push(['Latest education', profile.summary.latestEducation]);
-  if (profile.compensation.expected)
-    facts.push([
-      'Expected salary',
-      profile.compensation.expected.toLocaleString('en-US'),
-    ]);
-  else if (profile.compensation.current)
-    facts.push([
-      'Current salary',
-      profile.compensation.current.toLocaleString('en-US'),
-    ]);
-
-  const factRow = facts.length
-    ? `<table style="${S.table};margin-top:14px;background:#f8fafc;border-radius:6px">
-        <tr>${facts.map(([k, v]) => factCell(k, v)).join('')}</tr>
-      </table>`
-    : '';
-
+  const objective = para(profile.careerObjective);
+  const cover = para(profile.coverLetter);
   const sourceLabel =
     profile.source === 'bdjobs'
       ? 'the BDJobs application'
@@ -402,39 +487,53 @@ export function buildCvDocument(
         ? 'an uploaded document'
         : 'details entered by the recruiter';
 
-  const objective = text(profile.careerObjective);
-
   return `<div style="${S.page}">
   <table style="width:100%;border-collapse:collapse"><tr>
-    <td style="vertical-align:top">
+    <td style="vertical-align:top;padding:6px 0 0 6px">
       <h1 style="${S.name}">${esc([salutation, name].filter(Boolean).join(' '))}</h1>
-      ${contact ? `<p style="${S.contact}">${contact}</p>` : ''}
-      ${links.length ? `<p style="${S.contact}">${links.join(' &nbsp;·&nbsp; ')}</p>` : ''}
+      ${contactRows}
     </td>
-    ${photoTag ? `<td style="vertical-align:top;width:96px;padding-left:16px">${photoTag}</td>` : ''}
+    ${photoTag ? `<td style="vertical-align:top;width:126px;padding:0 4px 0 16px">${photoTag}</td>` : ''}
   </tr></table>
   <hr style="${S.rule}" />
-  ${factRow}
-  ${objective ? `<h2 style="${S.h2}">Career Objective</h2><p style="margin:0;font-size:13px;line-height:1.6">${esc(objective)}</p>` : ''}
-  ${employmentSection(profile.employment, today)}
-  ${educationSection(profile.education)}
-  ${trainingSection(profile.training)}
-  ${certificationSection(profile.certifications)}
+  ${objective ? `${band('Career Objective')}<p style="${S.body}">${objective}</p>` : ''}
+  ${
+    cover && profile.coverLetter?.trim() !== profile.careerObjective?.trim()
+      ? `${band('Cover Letter')}<p style="${S.body}">${cover}</p>`
+      : ''
+  }
+  ${experienceSection(profile, today)}
+  ${educationSection(profile)}
+  ${trainingSection(profile)}
+  ${qualificationSection(profile)}
   ${careerSection(profile)}
-  ${skillsSection(profile.skills)}
-  ${languageSection(profile.languages)}
+  ${skillSection(profile)}
+  ${languageSection(profile)}
   ${personalSection(profile)}
-  ${referenceSection(profile.references)}
+  ${referenceSection(profile)}
   <p style="${S.footer}">
     Generated by DBL HRM from ${esc(sourceLabel)} on ${esc(
       now.toLocaleDateString('en-GB', {
         day: 'numeric',
         month: 'long',
         year: 'numeric',
+        timeZone: 'Asia/Dhaka',
       }),
-    )}.
-    This is a formatted record of the details the candidate submitted, not a CV
-    they wrote — anything missing was not asked for, rather than left out.
+    )} — a formatted record of the details the candidate submitted, not a CV
+    they wrote; anything missing was not asked for, rather than left out.
   </p>
 </div>`;
+}
+
+/** The same CV as a whole page, for a browser tab or the PDF printer. */
+export function buildCvPage(
+  profile: CvProfile,
+  now: Date = new Date(),
+  photo?: string | null,
+): string {
+  const title = `${text(profile.personal.fullName) ?? 'Candidate'} — CV`;
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;background:#fff">${buildCvDocument(profile, now, photo)}</body></html>`;
 }

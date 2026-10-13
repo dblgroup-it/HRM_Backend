@@ -22,7 +22,10 @@ import type {
 import { EDU_LEVELS } from './bdjobs.types';
 import { BdJobsInboundCandidateDto } from './dto/bdjobs-inbound.dto';
 import { bdjobsToCvProfile } from '../../candidates/cv/bdjobs-cv.mapper';
-import { bdjobsProfileToCandidateData } from '../../candidates/cv/bdjobs-profile.adapter';
+import {
+  bdjobsProfileToCandidateData,
+  flatProfilePhoto,
+} from '../../candidates/cv/bdjobs-profile.adapter';
 import { BdJobsInboundError } from './bdjobs-inbound.errors';
 import type { CvProfile } from '../../candidates/cv/cv-profile.types';
 import {
@@ -735,7 +738,10 @@ export class BdJobsService {
     // reply is sent, so BDJobs is never held open by somebody else's server.
     let inlinePhoto: LoadedPhoto | null = null;
     let photoStatus: 'stored' | 'downloading' | 'rejected' | 'none' = 'none';
-    const photoRef = dto.photo?.url?.trim();
+    // The nested variant sends `photo`; the flat one tucks it in `profile`.
+    const photoRef = (
+      dto.photo?.url ?? flatProfilePhoto(dto.profile)?.url
+    )?.trim();
     if (photoRef) {
       try {
         inlinePhoto = decodeDataUri(photoRef);

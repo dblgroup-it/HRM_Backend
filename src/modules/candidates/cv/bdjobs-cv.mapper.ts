@@ -41,7 +41,10 @@ function rows(v: unknown): Record<string, unknown>[] {
 }
 
 /** The first of several spellings that holds something. */
-function pick(row: Record<string, unknown>, ...keys: string[]): string | undefined {
+function pick(
+  row: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
   for (const k of keys) {
     const v = text(row[k]);
     if (v) return tidy(v);
@@ -57,14 +60,130 @@ function list(v: unknown): string[] | undefined {
   const parts = Array.isArray(v)
     ? v.map((x) => text(x))
     : (text(v) ?? '').split(/[|,]/).map((x) => text(x));
-  const out = [...new Set(parts.filter((x): x is string => Boolean(x)).map(tidy))];
+  const out = [
+    ...new Set(parts.filter((x): x is string => Boolean(x)).map(tidy)),
+  ];
   return out.length ? out : undefined;
 }
 
 /** Height or weight: a positive number, from "1.72" or 1.72. */
 function measure(v: unknown): number | undefined {
-  const n = positiveNumber(typeof v === 'string' ? v.replace(/[^\d.]/g, '') : v);
+  const n = positiveNumber(
+    typeof v === 'string' ? v.replace(/[^\d.]/g, '') : v,
+  );
   return n ? Math.round(n * 100) / 100 : undefined;
+}
+
+/**
+ * Height in metres, or nothing. Bdjobs has sent 0.129794 for a grown adult;
+ * printing that on a CV is worse than leaving the line off. A figure that is
+ * plainly centimetres (150–230) is read as such.
+ */
+function heightMeters(v: unknown, warnings?: string[]): number | undefined {
+  const n = measure(v);
+  if (n === undefined) return undefined;
+  if (n >= 0.5 && n <= 2.5) return n;
+  if (n >= 50 && n <= 250) return Math.round(n) / 100;
+  warnings?.push(
+    `height "${String(v)}" is not a plausible height in metres and was left off the CV.`,
+  );
+  return undefined;
+}
+
+function weightKg(v: unknown, warnings?: string[]): number | undefined {
+  const n = measure(v);
+  if (n === undefined) return undefined;
+  if (n >= 20 && n <= 300) return n;
+  warnings?.push(
+    `weight "${String(v)}" is not a plausible weight in kg and was left off the CV.`,
+  );
+  return undefined;
+}
+
+/**
+ * Marital status as words. The flat profile sends a bare number (2) whose
+ * code list Bdjobs has not published; guessing would print the wrong answer
+ * on somebody's CV, so a number is left off and reported instead.
+ */
+function maritalStatus(v: unknown, warnings?: string[]): string | undefined {
+  const t = text(v);
+  if (!t) return undefined;
+  if (/^\d+$/.test(t)) {
+    warnings?.push(
+      `maritalStatus "${t}" is a code, not a word — send "Married", "Unmarried" or "Single". It was left off the CV.`,
+    );
+    return undefined;
+  }
+  return tidy(t);
+}
+
+const ENTITIES: Record<string, string> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  rsquo: "'",
+  lsquo: "'",
+  ldquo: '"',
+  rdquo: '"',
+  ndash: '–',
+  mdash: '—',
+  bull: '•',
+};
+
+/**
+ * Free text that may arrive as HTML — Bdjobs sends the career objective,
+ * cover letter, duties and achievements as `<p>…</p>`. Kept as plain text
+ * with its line breaks (paragraphs and list items become lines), so the CV
+ * reads as written and nothing from the sender is ever rendered as markup.
+ */
+function richText(v: unknown): string | undefined {
+  const t = text(v);
+  if (!t) return undefined;
+  const plain = t
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '\n• ')
+    .replace(/<\s*\/\s*(p|div|li|ul|ol|h[1-6]|tr)\s*>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCharCode(Number(n)))
+    .replace(
+      /&([a-z]+);/gi,
+      (m, name: string) => ENTITIES[name.toLowerCase()] ?? m,
+    );
+  const lines = plain
+    .split(/\r?\n/)
+    .map((l) => tidy(l))
+    .filter(Boolean);
+  return lines.length ? lines.join('\n') : undefined;
+}
+
+/** The first of several spellings, as rich text (see `richText`). */
+function pickRich(
+  row: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const k of keys) {
+    const v = richText(row[k]);
+    if (v) return v;
+  }
+  return undefined;
+}
+
+/**
+ * "Area of Expertise" as a readable list. The flat profile sends it as quoted
+ * CSV — `"ASP.NET Core","ASP.NET Core MVC"` — which would print with the quotes.
+ */
+function expertise(row: Record<string, unknown>): string | undefined {
+  const raw = text(row.areaOfExpertise) ?? text(row.expertise);
+  if (!raw) return undefined;
+  const quoted = raw.match(/"([^"]*)"/g);
+  if (quoted && quoted.length) {
+    const items = quoted.map((q) => tidy(q.slice(1, -1))).filter(Boolean);
+    return items.length ? [...new Set(items)].join(', ') : undefined;
+  }
+  return richText(raw)?.replace(/\n+/g, ', ');
 }
 
 /** Only an http(s) link is kept — anything else is not a profile URL. */
@@ -74,7 +193,9 @@ function link(v: unknown): string | undefined {
   const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;
   try {
     const u = new URL(withScheme);
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.toString() : undefined;
+    return u.protocol === 'http:' || u.protocol === 'https:'
+      ? u.toString()
+      : undefined;
   } catch {
     return undefined;
   }
@@ -234,9 +355,9 @@ export function bdjobsToCvProfile(
           ? tidy(String(e.designation))
           : undefined,
         // Duties: `role` in the first version, `responsibilities` in v2.
-        role: pick(e, 'responsibilities', 'duties', 'role'),
+        role: pickRich(e, 'responsibilities', 'duties', 'role'),
         location: pick(e, 'companyLocation', 'location', 'branch'),
-        expertise: pick(e, 'areaOfExpertise', 'expertise'),
+        expertise: expertise(e),
         from,
         to,
         // Bdjobs has no "currently working" flag; an end date that has not
@@ -282,7 +403,7 @@ export function bdjobsToCvProfile(
         result: educationResult(q),
         major: pick(q, 'concentration', 'major', 'subject'),
         duration: pick(q, 'duration'),
-        achievement: pick(q, 'achievement', 'achievements'),
+        achievement: pickRich(q, 'achievement', 'achievements'),
       };
     }),
     (q) => `${q.institute}|${q.passYear ?? ''}|${q.result ?? ''}`,
@@ -309,12 +430,15 @@ export function bdjobsToCvProfile(
     );
   for (const key of ['facebookUrl', 'linkedinUrl'] as const)
     if (text(p[key]) && !link(p[key]))
-      warnings?.push(`personalData.${key} "${String(p[key])}" is not a web address and was ignored.`);
+      warnings?.push(
+        `personalData.${key} "${String(p[key])}" is not a web address and was ignored.`,
+      );
 
   const training: CvTraining[] = rows(data.trainings)
     .map((t, i) => {
       const title = pick(t, 'title', 'trainingTitle');
-      if (!title) warnings?.push(`trainings[${i}] has no title and was ignored.`);
+      if (!title)
+        warnings?.push(`trainings[${i}] has no title and was ignored.`);
       return {
         title: title ?? '',
         topic: pick(t, 'topic', 'topicsCovered'),
@@ -328,7 +452,9 @@ export function bdjobsToCvProfile(
     .filter((t) => t.title)
     .sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
 
-  const certifications: CvCertification[] = rows(data.professionalQualifications)
+  const certifications: CvCertification[] = rows(
+    data.professionalQualifications,
+  )
     .map((c, i) => {
       const name = pick(c, 'certification', 'name', 'title');
       if (!name)
@@ -355,8 +481,12 @@ export function bdjobsToCvProfile(
     })
     .filter((c) => c.name);
 
+  // Rows, or plain names — the flat profile sends `["ASP.NET Core MVC", …]`.
+  const skillRows = Array.isArray(data.skills)
+    ? data.skills.map((k: unknown) => (typeof k === 'string' ? { name: k } : k))
+    : data.skills;
   const skills: CvSkill[] = dedupe(
-    rows(data.skills)
+    rows(skillRows)
       .map((k) => ({
         name: pick(k, 'name', 'skill', 'fieldOfSkill') ?? '',
         description: pick(k, 'description', 'skillDescription'),
@@ -377,7 +507,8 @@ export function bdjobsToCvProfile(
   const references: CvReference[] = rows(data.references)
     .map((r, i) => {
       const name = pick(r, 'name');
-      if (!name) warnings?.push(`references[${i}] has no name and was ignored.`);
+      if (!name)
+        warnings?.push(`references[${i}] has no name and was ignored.`);
       return {
         name: name ?? '',
         organization: pick(r, 'organization', 'organisation', 'company'),
@@ -391,11 +522,15 @@ export function bdjobsToCvProfile(
     .filter((r) => r.name);
 
   const ci =
-    data.careerInfo && typeof data.careerInfo === 'object' && !Array.isArray(data.careerInfo)
+    data.careerInfo &&
+    typeof data.careerInfo === 'object' &&
+    !Array.isArray(data.careerInfo)
       ? (data.careerInfo as Record<string, unknown>)
       : {};
   const career = {
-    preferredJobCategories: list(ci.preferredJobCategories ?? ci.preferredJobCategory),
+    preferredJobCategories: list(
+      ci.preferredJobCategories ?? ci.preferredJobCategory,
+    ),
     jobLevel: pick(ci, 'jobLevel', 'lookingFor'),
     preferredDistricts: list(ci.preferredDistricts ?? ci.preferredDistrict),
     preferredOrganizationTypes: list(
@@ -422,15 +557,19 @@ export function bdjobsToCvProfile(
       motherName: text(p.motherName),
       gender: text(p.gender),
       dateOfBirth: isoDate(p.Dob ?? p.dateOfBirth),
-      maritalStatus: text(p.MaritalStatus ?? p.maritalStatus),
+      maritalStatus: maritalStatus(
+        p.MaritalStatus ?? p.maritalStatus,
+        warnings,
+      ),
       bloodGroup: text(p.BloodGroup ?? p.bloodGroup),
       nationalId: text(p.nationalId ?? p.aadharNo),
       religion: text(p.religion),
       nationality: text(p.nationality),
-      heightMeters: measure(p.heightMeters ?? p.height),
-      weightKg: measure(p.weightKg ?? p.weight),
+      heightMeters: heightMeters(p.heightMeters ?? p.height, warnings),
+      weightKg: weightKg(p.weightKg ?? p.weight, warnings),
     },
-    careerObjective: text(p.careerObjective) ? tidy(String(p.careerObjective)) : undefined,
+    careerObjective: richText(p.careerObjective),
+    coverLetter: richText(p.coverLetter),
     contact: {
       email: text(p.emailId),
       phone: phone || undefined,
@@ -493,7 +632,22 @@ export function bdjobsToCvProfile(
  */
 function educationResult(q: Record<string, unknown>): string | undefined {
   const result = text(q.result) ?? text(q.grade) ?? text(q.percentage);
-  if (!result) return undefined;
   const scale = text(q.resultScale ?? q.scale ?? q.outOf);
-  return scale && !/out of/i.test(result) ? `${result} out of ${scale}` : result;
+  // The flat profile sends a result *type* code in `result` and the CGPA in
+  // `resultScale` — `result: 11, resultScale: 3.54`. A result bigger than its
+  // scale cannot be "out of" it, and a scale of 5 or less is a CGPA.
+  const r = Number(result);
+  const sc = Number(scale);
+  if (
+    scale &&
+    Number.isFinite(sc) &&
+    sc > 0 &&
+    sc <= 5 &&
+    (!result || (Number.isFinite(r) && r > sc))
+  )
+    return `CGPA ${scale}`;
+  if (!result) return undefined;
+  return scale && !/out of/i.test(result)
+    ? `${result} out of ${scale}`
+    : result;
 }

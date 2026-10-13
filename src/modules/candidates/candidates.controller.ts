@@ -20,6 +20,8 @@ import {
   AuthUser,
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
+import { PdfService } from '../../common/pdf/pdf.service';
 import {
   BULK_PDF_UPLOAD,
   PDF_UPLOAD as CV_UPLOAD,
@@ -40,7 +42,43 @@ import {
 
 @Controller()
 export class CandidatesController {
-  constructor(private readonly candidates: CandidatesService) {}
+  constructor(
+    private readonly candidates: CandidatesService,
+    private readonly pdf: PdfService,
+  ) {}
+
+  /**
+   * The BDJobs CV as a PDF, opened in a new tab from `profileCvUrl`.
+   *
+   * `@Public()` because the signed grant in the path is the credential —
+   * minted in the candidate list behind the recruitment check, naming one
+   * candidate, expiring (see SecureFileController). Declared first so no
+   * `candidates/:id/...` route can claim the path. Where Chromium cannot
+   * start, the same CV is served as a page instead of failing.
+   */
+  @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('candidates/profile-cv/:grant')
+  async profileCv(@Param('grant') grant: string, @Res() res: Response) {
+    const { html, filename } = await this.candidates.profileCvPage(grant);
+    const pdf = await this.pdf.fromHtml(html, {
+      margin: { top: '14mm', bottom: '14mm', left: '14mm', right: '14mm' },
+    });
+    // A CV is personal data; it must not sit in a shared or disk cache.
+    res.setHeader('Cache-Control', 'no-store, private');
+    if (!pdf) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+      return;
+    }
+    const ascii = filename.replace(/[^\x20-\x7e]+/g, '-').replace(/"/g, '');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    res.send(pdf);
+  }
 
   @Get('requisitions/:reqId/recruitment')
   workspace(@Param('reqId') reqId: string, @CurrentUser() user: AuthUser) {

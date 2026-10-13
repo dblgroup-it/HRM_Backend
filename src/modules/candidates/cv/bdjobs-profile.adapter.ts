@@ -56,6 +56,8 @@ function carriesCv(p: BdJobsFlatProfile): boolean {
   return (
     objectRows(p.employmentHistory).length > 0 ||
     objectRows(p.educationHistory).length > 0 ||
+    objectRows(p.trainings).length > 0 ||
+    objectRows(p.professionalQualifications).length > 0 ||
     Boolean(
       text(p.currentEmployer) ??
       text(p.currentDesignation) ??
@@ -101,6 +103,26 @@ export function bdjobsProfileToCandidateData(
       currentSalary: profile.currentSalary,
       expectedSalary: profile.expectedSalary,
       currentCompanyName: text(profile.currentEmployer),
+      // Everything else the flat profile states about the person. Spelled as
+      // the mapper reads them; the mapper does the cleaning (HTML in the
+      // objective and cover letter, implausible heights, coded statuses).
+      fatherName: profile.fatherName,
+      motherName: profile.motherName,
+      nationality: profile.nationality,
+      nationalId: profile.nationalId,
+      religion: profile.religion,
+      bloodGroup: profile.bloodGroup,
+      maritalStatus: profile.maritalStatus,
+      heightMeters: profile.heightMeters ?? profile.height,
+      weightKg: profile.weightKg ?? profile.weight,
+      currentAddress1: profile.currentAddress1 ?? profile.presentAddress,
+      currentAddress2: profile.currentAddress2,
+      permanentAddress: profile.permanentAddress,
+      linkedinUrl: profile.linkedinUrl,
+      facebookUrl: profile.facebookUrl,
+      careerObjective: profile.careerObjective,
+      coverLetter: profile.coverLetter,
+      totalExperienceYears: profile.totalExperienceYears,
     },
 
     // `companyName` / `designation` / `role` / `fromDate` / `toDate` are spelled
@@ -127,7 +149,46 @@ export function bdjobsProfileToCandidateData(
     // Same fallback as above: `highestEducation` + `institution` + `passingYear`
     // is a qualification, and losing it would blank the sheet's Education column.
     qualifications: education.length ? education : flatQualification(profile),
+
+    // Spelled as the nested variant spells them, so they pass straight
+    // through; `skills` may be plain names, which the mapper accepts.
+    trainings: profile.trainings,
+    professionalQualifications: profile.professionalQualifications,
+    languages: profile.languages,
+    references: profile.references,
+    skills: profile.skills,
+    careerInfo: careerInfo(profile),
   };
+}
+
+/** "Career and Application Information", where the flat profile states it. */
+function careerInfo(p: BdJobsFlatProfile): Record<string, unknown> | undefined {
+  const keys = [
+    'preferredJobCategories',
+    'preferredJobCategory',
+    'jobLevel',
+    'lookingFor',
+    'preferredDistricts',
+    'preferredDistrict',
+    'preferredOrganizationTypes',
+    'preferredOrganizationType',
+  ];
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (p[k] !== undefined && p[k] !== null) out[k] = p[k];
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * The applicant's photo as the flat profile carries it — `profile.photo`
+ * rather than the top-level `photo` the nested variant uses.
+ */
+export function flatProfilePhoto(
+  profile: BdJobsFlatProfile | null | undefined,
+): { url: string; fileName?: string; mimeType?: string } | null {
+  const photo = profile?.photo;
+  if (!photo || typeof photo !== 'object' || Array.isArray(photo)) return null;
+  const url = text((photo as Record<string, unknown>).url);
+  return url ? { url } : null;
 }
 
 /**
