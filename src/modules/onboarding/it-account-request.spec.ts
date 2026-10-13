@@ -20,6 +20,40 @@ const REQUESTER = {
   employee: { designation: 'IT Infrastructure', department: 'Glory Complex' },
 };
 
+/** The users `findMany` looks up by employee code — leavers and Cc picks alike. */
+const DIRECTORY = [
+  {
+    employeeCode: '15108727',
+    name: 'Md. Rasel Rana',
+    email: 'rasel.rana@dbl-group.com',
+    employee: { designation: 'Executive' },
+  },
+  {
+    employeeCode: '15100001',
+    name: 'Moved Person',
+    email: 'moved@dbl-group.com',
+    employee: { designation: 'Officer' },
+  },
+  {
+    employeeCode: '15104846',
+    name: 'Nusrat Jahan',
+    email: 'nusrat.jahan@dbl-group.com',
+    employee: { designation: 'Manager, HR' },
+  },
+  {
+    employeeCode: '15109999',
+    name: 'No Mail',
+    email: null,
+    employee: { designation: 'Operator' },
+  },
+  {
+    employeeCode: '15100002',
+    name: 'IT Desk',
+    email: 'HR-LT-REQ@dbl-group.com',
+    employee: null,
+  },
+];
+
 function onboarding(over: Record<string, unknown> = {}) {
   return {
     id: 'ob-1',
@@ -92,10 +126,16 @@ function build(
     },
     user: {
       findUnique: jest.fn().mockResolvedValue(REQUESTER),
-      findMany: jest.fn().mockResolvedValue([
-        { employeeCode: '15108727', email: 'rasel.rana@dbl-group.com' },
-        { employeeCode: '15100001', email: 'moved@dbl-group.com' },
-      ]),
+      findMany: jest
+        .fn()
+        .mockImplementation(
+          ({ where }: { where: { employeeCode: { in: string[] } } }) =>
+            Promise.resolve(
+              DIRECTORY.filter((u) =>
+                where.employeeCode.in.includes(u.employeeCode),
+              ),
+            ),
+        ),
     },
     itAccountRequest: {
       create: jest.fn().mockImplementation(({ data }) => {
@@ -257,15 +297,18 @@ describe('ItAccountRequestService: sending the request', () => {
     ).rejects.toThrow("Enter X's email address");
   });
 
-  it('mails IT, copies the requester, and keeps only a hash of the link', async () => {
+  it('mails IT, copies nobody unasked, and keeps only a hash of the link', async () => {
     const { svc, mail, saved, prisma } = build();
     await svc.send('c-1', DTO, { id: 'hr-1' });
 
     expect(mail.send).toHaveBeenCalledTimes(1);
     const sent = mail.send.mock.calls[0][0];
     expect(sent.to).toBe('hr-lt-req@dbl-group.com');
-    expect(sent.cc).toBe('monir@dbl-group.com');
+    // The requester is not copied by default (owner's decision, 2026-10-13);
+    // an answer by email still reaches them.
+    expect(sent.cc).toBeUndefined();
     expect(sent.replyTo).toBe('monir@dbl-group.com');
+    expect(saved[0].cc).toEqual([]);
     expect(sent.subject).toBe(
       "Request for New Email Account Creation and Deletion of Terminated Employee's Email — Sudansha Kirtonia",
     );
@@ -285,6 +328,77 @@ describe('ItAccountRequestService: sending the request', () => {
     expect(prisma.itAccountRequest.update).toHaveBeenLastCalledWith(
       expect.objectContaining({ data: { messageId: '<abc@mail.gmail.com>' } }),
     );
+  });
+
+  it('copies the people HR picked from the directory, each once, never IT itself', async () => {
+    const { svc, mail, saved } = build();
+    await svc.send(
+      'c-1',
+      { ...DTO, ccCodes: ['15104846', ' 15104846', '15100002'] },
+      { id: 'hr-1' },
+    );
+    expect(mail.send.mock.calls[0][0].cc).toBe('nusrat.jahan@dbl-group.com');
+    expect(saved[0].cc).toEqual([
+      {
+        code: '15104846',
+        name: 'Nusrat Jahan',
+        designation: 'Manager, HR',
+        email: 'nusrat.jahan@dbl-group.com',
+      },
+    ]);
+  });
+
+  it('shows the copied people in the preview, and refuses one with no address', async () => {
+    const { svc, mail } = build();
+    const preview = await svc.preview(
+      'c-1',
+      { ...DTO, ccCodes: ['15109999', '15104846'] },
+      'hr-1',
+    );
+    expect(preview.cc.map((c) => [c.name, c.email])).toEqual([
+      ['No Mail', null],
+      ['Nusrat Jahan', 'nusrat.jahan@dbl-group.com'],
+    ]);
+    await expect(
+      svc.send('c-1', { ...DTO, ccCodes: ['15109999'] }, { id: 'hr-1' }),
+    ).rejects.toThrow('No Mail has no email address');
+    expect(mail.send).not.toHaveBeenCalled();
+  });
+
+  it('starts a re-send from the people copied last time', async () => {
+    const copied = [
+      {
+        code: '15104846',
+        name: 'Nusrat Jahan',
+        designation: 'Manager, HR',
+        email: 'nusrat.jahan@dbl-group.com',
+      },
+    ];
+    const { svc } = build({
+      ob: {
+        itRequest: {
+          id: 'it-1',
+          sentTo: 'hr-lt-req@dbl-group.com',
+          subject: 's',
+          sentAt: new Date(),
+          lastSentAt: new Date(),
+          sendCount: 1,
+          sentByName: REQUESTER.name,
+          preferredEmail: null,
+          platform: 'Google',
+          purpose: null,
+          deletions: [],
+          cc: copied,
+          tokenExpiresAt: new Date(Date.now() + 86_400_000),
+          completedAt: null,
+          deletionsDone: null,
+          confirmationSentAt: null,
+          closedAt: null,
+        },
+      },
+    });
+    expect((await svc.draft('c-1', 'hr-1')).cc).toEqual(copied);
+    expect((await build().svc.draft('c-1', 'hr-1')).cc).toEqual([]);
   });
 
   it('removes a first request whose email did not leave', async () => {
@@ -374,6 +488,29 @@ describe('ItAccountRequestService: IT answering from the link', () => {
     expect(notifications.notifyMany).toHaveBeenCalledWith(
       ['rec-1', 'hota-1'],
       expect.objectContaining({ title: 'Work email created' }),
+    );
+  });
+
+  it('replies to everyone HR copied, as a reply-all would', async () => {
+    const { svc, mail } = build({
+      row: row({
+        cc: [
+          {
+            code: '15104846',
+            name: 'Nusrat Jahan',
+            designation: null,
+            email: 'nusrat.jahan@dbl-group.com',
+          },
+          // The requester copied themselves: they are already the To.
+          { code: 'x', name: 'Me', designation: null, email: REQUESTER.email },
+        ],
+      }),
+    });
+    await svc.completeByToken(RAW, ANSWER);
+    const reply = mail.send.mock.calls[0][0];
+    expect(reply.to).toBe('monir@dbl-group.com');
+    expect(reply.cc).toBe(
+      'hr-lt-req@dbl-group.com, nusrat.jahan@dbl-group.com',
     );
   });
 

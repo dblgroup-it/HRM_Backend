@@ -1887,6 +1887,8 @@ model ItAccountRequest {
   purpose            String?
   /// Leavers whose accounts IT is asked to delete: [{ name, code, email, reason }].
   deletions          Json       @default("[]")
+  /// Copied on the request, picked from the directory — nobody by default: [{ code, name, designation, email }].
+  cc                 Json       @default("[]")
   bodyText           String     @map("body_text")
   /// Message-ID of the latest send, so IT's "completed" reply threads under it.
   messageId          String?    @map("message_id") @db.VarChar(300)

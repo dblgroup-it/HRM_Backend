@@ -12,7 +12,7 @@ import {
   generateActionToken,
   hashActionToken,
 } from '../../common/crypto/action-token';
-import { isEmailAddress } from '../../common/util/email-list';
+import { isEmailAddress, parseEmailList } from '../../common/util/email-list';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { PermissionsService } from '../rbac/permissions.service';
@@ -82,6 +82,27 @@ function leaversOf(value: Prisma.JsonValue | null | undefined): ItLeaver[] {
     }));
 }
 
+/** Someone copied on the request — a directory pick, with the address the server looked up. */
+export type ItCcPerson = {
+  code: string;
+  name: string;
+  designation: string | null;
+  /** Null when the directory has no address for them; sending is refused until they are removed. */
+  email: string | null;
+};
+
+function ccOf(value: Prisma.JsonValue | null | undefined): ItCcPerson[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((v): v is Prisma.JsonObject => Boolean(v) && typeof v === 'object')
+    .map((v) => ({
+      code: String(v.code ?? ''),
+      name: String(v.name ?? ''),
+      designation: v.designation ? String(v.designation) : null,
+      email: v.email ? String(v.email) : null,
+    }));
+}
+
 function doneOf(value: Prisma.JsonValue | null | undefined): ItLeaverDone[] {
   if (!Array.isArray(value)) return [];
   return leaversOf(value).map((l, i) => ({
@@ -104,6 +125,7 @@ export function itRequestView(r: ItAccountRequest | null | undefined) {
     preferredEmail: r.preferredEmail,
     platform: r.platform,
     deletions: leaversOf(r.deletions),
+    cc: ccOf(r.cc),
     expiresAt: r.tokenExpiresAt.toISOString(),
     completedAt: r.completedAt?.toISOString() ?? null,
     completedByName: r.completedByName,
@@ -163,6 +185,7 @@ export class ItAccountRequestService {
     return {
       recipients: config.recipients,
       salutation: config.salutation,
+      // Reply-To only — nobody is copied unless HR adds them.
       requesterEmail: me.email,
       deliverable,
       platforms: [...new Set([config.platform, ...PLATFORMS])],
@@ -190,6 +213,8 @@ export class ItAccountRequestService {
           include: prev ? Boolean(before) : l.include,
         };
       }),
+      // A re-send copies the same people; a first request copies nobody.
+      cc: prev ? ccOf(prev.cc) : [],
       previous: itRequestView(prev),
     };
   }
@@ -201,12 +226,13 @@ export class ItAccountRequestService {
       this.settings.getItRequestConfig(),
       this.requester(userId),
     ]);
+    const cc = await this.resolveCc(dto.ccCodes, config.recipients);
     const mail = renderItRequest(this.content(ob, dto, config, me, null));
     return {
       subject: mail.subject,
       html: mail.html,
       to: config.recipients,
-      cc: me.email,
+      cc,
     };
   }
 
@@ -227,6 +253,13 @@ export class ItAccountRequestService {
       this.settings.getItRequestConfig(),
       this.requester(actor.id),
     ]);
+    const cc = await this.resolveCc(dto.ccCodes, config.recipients);
+    const noAddress = cc.find((c) => !c.email);
+    if (noAddress) {
+      throw new BadRequestException(
+        `${noAddress.name} has no email address in the employee directory — remove them from Cc.`,
+      );
+    }
 
     const raw = generateActionToken();
     const frontendUrl =
@@ -248,6 +281,7 @@ export class ItAccountRequestService {
       platform: content.platform,
       purpose: content.purpose ?? null,
       deletions: content.deletions as unknown as Prisma.InputJsonValue,
+      cc: cc as unknown as Prisma.InputJsonValue,
       // The copy kept is what was sent minus the secret: the raw link would
       // make the hashed token pointless to anyone reading the database.
       bodyText: mail.text.split(raw).join('…'),
@@ -276,7 +310,7 @@ export class ItAccountRequestService {
     try {
       ({ messageId } = await this.mail.send({
         to: fields.sentTo,
-        cc: me.email ?? undefined,
+        cc: cc.map((c) => c.email).join(', ') || undefined,
         // Should IT answer by email anyway, it reaches the person who asked.
         replyTo: me.email ?? undefined,
         subject: mail.subject,
@@ -523,6 +557,52 @@ export class ItAccountRequestService {
     }
   }
 
+  /**
+   * The people HR chose to copy, looked up by employee code.
+   *
+   * In the order picked, each once, and never an address the request is
+   * already going to. A code the directory does not know comes back with no
+   * address, so the dialog can say so and sending can refuse it.
+   */
+  private async resolveCc(
+    codes: string[] | undefined,
+    recipients: string[],
+  ): Promise<ItCcPerson[]> {
+    const wanted = [
+      ...new Set((codes ?? []).map((c) => c.trim()).filter(Boolean)),
+    ];
+    if (!wanted.length) return [];
+    const users = await this.prisma.user.findMany({
+      where: { employeeCode: { in: wanted } },
+      select: {
+        employeeCode: true,
+        name: true,
+        email: true,
+        employee: { select: { designation: true } },
+      },
+    });
+    const going = new Set(recipients.map((r) => r.trim().toLowerCase()));
+    const out: ItCcPerson[] = [];
+    for (const code of wanted) {
+      const u = users.find((x) => x.employeeCode === code);
+      const email = u?.email?.trim() || null;
+      const key = email?.toLowerCase();
+      if (
+        key &&
+        (going.has(key) || out.some((o) => o.email?.toLowerCase() === key))
+      ) {
+        continue;
+      }
+      out.push({
+        code,
+        name: u?.name ?? code,
+        designation: u?.employee?.designation ?? null,
+        email: email && isEmailAddress(email) ? email : null,
+      });
+    }
+    return out;
+  }
+
   private async requester(userId: string): Promise<Requester> {
     const me = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -641,6 +721,7 @@ export class ItAccountRequestService {
           platform: prev.platform,
           purpose: prev.purpose,
           deletions: prev.deletions as Prisma.InputJsonValue,
+          cc: prev.cc as Prisma.InputJsonValue,
           bodyText: prev.bodyText,
           messageId: prev.messageId,
           tokenHash: prev.tokenHash,
@@ -700,10 +781,14 @@ export class ItAccountRequestService {
       note,
       completedByName: by,
     });
+    // Reply-all: IT, and whoever HR copied on the request.
+    const cc = parseEmailList(
+      [row.sentTo, ...ccOf(row.cc).map((c) => c.email ?? '')].join(', '),
+    ).valid.filter((e) => e.toLowerCase() !== to.toLowerCase());
     try {
       await this.mail.send({
         to,
-        cc: row.sentTo,
+        cc: cc.join(', ') || undefined,
         subject: reply.subject,
         text: reply.text,
         html: reply.html,

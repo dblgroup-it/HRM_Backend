@@ -54,6 +54,18 @@ export class SendItRequestDto {
   @ValidateNested({ each: true })
   @Type(() => ItLeaverDto)
   deletions?: ItLeaverDto[];
+
+  /**
+   * Employee codes to copy, picked from the directory. Nobody by default —
+   * the requester is not copied unless they add themselves. The service
+   * looks the addresses up, so the dialog never handles them in bulk.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(50, { each: true })
+  ccCodes?: string[];
 }
 
 /** IT's answer, from the link in the email. */
