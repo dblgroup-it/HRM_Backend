@@ -78,6 +78,24 @@ class UpdateItRequestSettingsDto {
   platform?: string;
 }
 
+class UpdateTutorialVideoSettingsDto {
+  /** As pasted: a playlist link, a video link with `list=`, or the id. Empty takes it off the page. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  playlist?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  channel?: string;
+}
+
 @Controller('settings')
 export class SettingsController {
   constructor(
@@ -147,6 +165,22 @@ export class SettingsController {
   ) {
     await this.requireSuperUser(user.id, 'change the IT request settings');
     return this.settings.setItRequestConfig(dto);
+  }
+
+  /** The video playlist on the Tutorials page (super user only; everyone sees it there). */
+  @Get('tutorial-videos')
+  async getTutorialVideos(@CurrentUser() user: AuthUser) {
+    await this.requireSuperUser(user.id, 'view the video tutorial settings');
+    return this.settings.getTutorialVideoConfig();
+  }
+
+  @Patch('tutorial-videos')
+  async updateTutorialVideos(
+    @Body() dto: UpdateTutorialVideoSettingsDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.requireSuperUser(user.id, 'change the video tutorial settings');
+    return this.settings.setTutorialVideoConfig(dto);
   }
 
   /** Anyone authenticated can read the pass marks (shown in Salary Fixation). */

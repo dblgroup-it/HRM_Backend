@@ -48,7 +48,21 @@ describe('TutorialsService: who sees which guide', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  function build(roles: { key: string; name: string }[], isSuperUser = false) {
+  const PLAYLIST = {
+    playlistId: 'PLMh1t_lzQ2ZM',
+    title: 'TalentHub Web Application Configuration',
+    channel: 'DBL GROUP IT Helpdesk',
+  };
+
+  function build(
+    roles: { key: string; name: string }[],
+    isSuperUser = false,
+    video: {
+      playlistId: string | null;
+      title: string;
+      channel: string;
+    } = PLAYLIST,
+  ) {
     const mint = jest.fn((slug: string) => `grant-${slug}`);
     const svc = new TutorialsService(
       {
@@ -57,6 +71,7 @@ describe('TutorialsService: who sees which guide', () => {
           .mockResolvedValue({ isSuperUser, roles, unitIds: [] }),
       } as never,
       { mint } as never,
+      { getTutorialVideoConfig: jest.fn().mockResolvedValue(video) } as never,
     );
     return { svc, mint };
   }
@@ -113,5 +128,34 @@ describe('TutorialsService: who sees which guide', () => {
       role: 'EMPLOYEE',
     });
     expect(list.guides).toEqual([]);
+  });
+
+  it('gives everyone the video playlist, whatever their roles', async () => {
+    for (const roles of [
+      [{ key: 'factory_hr', name: 'Factory HR' }],
+      [{ key: 'some_custom_role', name: 'Plant Manager' }],
+    ]) {
+      const list = await build(roles).svc.list({ id: 'u', role: 'EMPLOYEE' });
+      expect(list.videos).toEqual({
+        playlistId: 'PLMh1t_lzQ2ZM',
+        title: 'TalentHub Web Application Configuration',
+        channel: 'DBL GROUP IT Helpdesk',
+        url: 'https://www.youtube.com/playlist?list=PLMh1t_lzQ2ZM',
+        embedUrl:
+          'https://www.youtube-nocookie.com/embed/videoseries?list=PLMh1t_lzQ2ZM',
+      });
+    }
+  });
+
+  it('shows no videos once the playlist is taken off the page', async () => {
+    const list = await build(
+      [{ key: 'factory_hr', name: 'Factory HR' }],
+      false,
+      {
+        ...PLAYLIST,
+        playlistId: null,
+      },
+    ).svc.list({ id: 'u', role: 'EMPLOYEE' });
+    expect(list.videos).toBeNull();
   });
 });

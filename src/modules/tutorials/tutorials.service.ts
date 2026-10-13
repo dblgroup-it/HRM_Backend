@@ -9,12 +9,14 @@ import * as path from 'node:path';
 
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import { SettingsService } from '../settings/settings.service';
 import {
   canSee,
   readManifest,
   type TutorialEntry,
   type TutorialManifest,
 } from './tutorial-catalogue';
+import { playlistLinks } from './tutorial-videos';
 
 /**
  * A guide link stays good for a working day. Each opens one internal PDF and
@@ -37,6 +39,7 @@ export class TutorialsService {
   constructor(
     private readonly permissions: PermissionsService,
     private readonly grants: FileGrantService,
+    private readonly settings: SettingsService,
   ) {}
 
   private manifest(): TutorialManifest | null {
@@ -49,10 +52,14 @@ export class TutorialsService {
   /**
    * The guides for the roles this person holds — each with a signed link,
    * since a link opened in a new tab carries no session token. Super users
-   * and the platform administrator get every guide.
+   * and the platform administrator get every guide. The video playlist is
+   * for everyone, whatever their roles.
    */
   async list(user: { id: string; role: string }) {
-    const perms = await this.permissions.getUserPermissions(user.id);
+    const [perms, video] = await Promise.all([
+      this.permissions.getUserPermissions(user.id),
+      this.settings.getTutorialVideoConfig(),
+    ]);
     const keys = [...new Set(perms.roles.map((r) => r.key))];
     const everything = perms.isSuperUser || user.role === 'ADMIN';
     const roles = [
@@ -72,6 +79,14 @@ export class TutorialsService {
       scope: everything ? ('all' as const) : ('roles' as const),
       roles,
       guides: visible.map((g) => this.view(g)),
+      videos: video.playlistId
+        ? {
+            playlistId: video.playlistId,
+            title: video.title,
+            channel: video.channel || null,
+            ...playlistLinks(video.playlistId),
+          }
+        : null,
     };
   }
 

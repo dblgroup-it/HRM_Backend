@@ -4,6 +4,10 @@ import { Prisma } from '@prisma/client';
 import { parseEmailList } from '../../common/util/email-list';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiGraderService } from '../integrations/ai/ai-grader.service';
+import {
+  DEFAULT_TUTORIAL_PLAYLIST,
+  parsePlaylistId,
+} from '../tutorials/tutorial-videos';
 
 export interface AiConfig {
   /** Minimum CV match % (0-100) to auto-advance to AI Shortlisted. */
@@ -43,6 +47,17 @@ export interface ItRequestConfig {
   platform: string;
 }
 
+/**
+ * The video tutorials on the Tutorials page — one YouTube playlist, shown to
+ * everyone. Set on Integrations, since the IT Helpdesk publishes the videos.
+ */
+export interface TutorialVideoConfig {
+  /** Null when the administrator took the playlist off the page. */
+  playlistId: string | null;
+  title: string;
+  channel: string;
+}
+
 /** At most this many IT addresses — a request is for a desk, not a list. */
 export const IT_REQUEST_MAX_RECIPIENTS = 5;
 
@@ -50,6 +65,7 @@ const AI_KEY = 'ai';
 const NOTIFICATION_KEY = 'notifications';
 const SCREENING_KEY = 'screening';
 const IT_REQUEST_KEY = 'it_requests';
+const TUTORIAL_VIDEO_KEY = 'tutorial_videos';
 
 const DEFAULT_AI: AiConfig = {
   shortlistThreshold: 60,
@@ -266,6 +282,63 @@ export class SettingsService {
       where: { key: IT_REQUEST_KEY },
       create: {
         key: IT_REQUEST_KEY,
+        value: merged as unknown as Prisma.InputJsonValue,
+      },
+      update: { value: merged as unknown as Prisma.InputJsonValue },
+    });
+    return merged;
+  }
+
+  /** The playlist on the Tutorials page — DBL's own until someone changes it. */
+  async getTutorialVideoConfig(): Promise<TutorialVideoConfig> {
+    const row = await this.prisma.setting.findUnique({
+      where: { key: TUTORIAL_VIDEO_KEY },
+    });
+    const v = (row?.value as Partial<TutorialVideoConfig> | null) ?? null;
+    if (!v) return { ...DEFAULT_TUTORIAL_PLAYLIST };
+    return {
+      // Stored null means it was taken off the page on purpose.
+      playlistId:
+        typeof v.playlistId === 'string' ? parsePlaylistId(v.playlistId) : null,
+      title: v.title?.trim() || DEFAULT_TUTORIAL_PLAYLIST.title,
+      channel: v.channel?.trim() || '',
+    };
+  }
+
+  /**
+   * Change it. `playlist` is whatever was pasted — a playlist link, a video
+   * link with `list=`, or the id — and is refused if it is none of those; an
+   * empty one takes the videos off the page.
+   */
+  async setTutorialVideoConfig(input: {
+    playlist?: string;
+    title?: string;
+    channel?: string;
+  }): Promise<TutorialVideoConfig> {
+    const current = await this.getTutorialVideoConfig();
+    let playlistId = current.playlistId;
+    if (input.playlist !== undefined) {
+      if (!input.playlist.trim()) {
+        playlistId = null;
+      } else {
+        playlistId = parsePlaylistId(input.playlist);
+        if (!playlistId) {
+          throw new BadRequestException(
+            'That is not a YouTube playlist link. Copy it from the playlist’s Share button.',
+          );
+        }
+      }
+    }
+    const merged: TutorialVideoConfig = {
+      playlistId,
+      title: input.title?.trim() || current.title,
+      channel:
+        input.channel !== undefined ? input.channel.trim() : current.channel,
+    };
+    await this.prisma.setting.upsert({
+      where: { key: TUTORIAL_VIDEO_KEY },
+      create: {
+        key: TUTORIAL_VIDEO_KEY,
         value: merged as unknown as Prisma.InputJsonValue,
       },
       update: { value: merged as unknown as Prisma.InputJsonValue },
