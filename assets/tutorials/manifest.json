@@ -1,6 +1,6 @@
 {
-  "version": "1.4",
-  "date": "13 October 2026",
+  "version": "1.5",
+  "date": "14 October 2026",
   "guides": [
     {
       "slug": "master",
@@ -11,7 +11,7 @@
       "subtitle": "How DBL Group’s manpower requisition, recruitment and onboarding system works — end to end, role by role.",
       "audience": "DBL Group management, the CHRO and HR leadership, and everyone who sets up, runs or supports the hiring process.",
       "pages": 28,
-      "bytes": 1230209,
+      "bytes": 1230302,
       "roles": [
         "chro",
         "corporate_hr"
@@ -92,7 +92,7 @@
       "subtitle": "How to raise a manpower requisition and see it through job analysis and approval.",
       "audience": "Department and division heads, and anyone nominated to raise manpower requisitions for a unit or factory.",
       "pages": 10,
-      "bytes": 692799,
+      "bytes": 692706,
       "roles": [
         "requisition_raiser"
       ],
@@ -157,7 +157,7 @@
       "subtitle": "Job analysis for your unit’s requisitions, CVs sent in to the recruiter, and the first interviews handed to you.",
       "audience": "HR officers at each unit or factory who hold the Factory HR role.",
       "pages": 11,
-      "bytes": 715748,
+      "bytes": 715785,
       "roles": [
         "factory_hr"
       ],
@@ -222,7 +222,7 @@
       "subtitle": "How to review and sign off manpower requisitions when you are named in an approval chain.",
       "audience": "Unit approvers, SBU Heads, factory and division heads — anyone named as a level in a raiser’s approval chain.",
       "pages": 8,
-      "bytes": 631683,
+      "bytes": 631583,
       "roles": [
         "unit_approver",
         "sbu_head"
@@ -273,7 +273,7 @@
       "subtitle": "Final approval of every requisition, launching recruitment, Hiring Approval Sheets, medical requests and the settings that drive the workflow.",
       "audience": "Head of Talent Acquisition and the corporate talent-acquisition team holding this role.",
       "pages": 11,
-      "bytes": 707796,
+      "bytes": 707716,
       "roles": [
         "corporate_hr"
       ],
@@ -353,7 +353,7 @@
       "subtitle": "Escalated requisitions, Hiring Approval Sheets, signing letters, and oversight of the whole hiring process.",
       "audience": "The CHRO, and anyone holding the CHRO role in the system.",
       "pages": 9,
-      "bytes": 631623,
+      "bytes": 631116,
       "roles": [
         "chro"
       ],
@@ -418,7 +418,7 @@
       "subtitle": "Approving requisitions and Hiring Approval Sheets from an emailed link — no sign-in required.",
       "audience": "Members of DBL Group’s board who are asked to approve requisitions or selected candidates.",
       "pages": 6,
-      "bytes": 561163,
+      "bytes": 560576,
       "roles": [
         "chro",
         "corporate_hr"
@@ -469,7 +469,7 @@
       "subtitle": "Running a requisition’s hiring from job posting to the new hire’s first day: candidates, tests, interviews, salary fixation and onboarding.",
       "audience": "Corporate Recruiters assigned to requisitions by Head of Talent Acquisition.",
       "pages": 15,
-      "bytes": 794773,
+      "bytes": 794814,
       "roles": [
         "corporate_recruiter",
         "corporate_hr"
@@ -555,7 +555,7 @@
       "subtitle": "Approving the finalists your unit’s Factory HR puts through after a first interview, and sending CVs to the recruiter.",
       "audience": "Heads of HR at units and factories who hold the Factory HR Head role.",
       "pages": 7,
-      "bytes": 601893,
+      "bytes": 601918,
       "roles": [
         "factory_hr_head"
       ],
@@ -610,7 +610,7 @@
       "subtitle": "Scoring candidates and recommending an outcome — and running a first interview when candidates are handed to you.",
       "audience": "Managers and staff who sit on interview panels, and colleagues asked to run a candidate’s first interview.",
       "pages": 7,
-      "bytes": 595546,
+      "bytes": 595495,
       "roles": [
         "interviewer"
       ],
@@ -665,7 +665,7 @@
       "subtitle": "Recording pre-employment medical examinations and confirming every finding before a candidate is cleared.",
       "audience": "Examining Medical Officers and the Central Medical Officer.",
       "pages": 8,
-      "bytes": 630141,
+      "bytes": 630036,
       "roles": [
         "medical_officer",
         "central_medical_officer"
@@ -726,7 +726,7 @@
       "subtitle": "What applicants and new hires see and do — from the careers page to their joining date.",
       "audience": "HR teams who support applicants, and anyone who needs to understand the system from the candidate’s side.",
       "pages": 8,
-      "bytes": 626522,
+      "bytes": 626554,
       "roles": [
         "corporate_hr",
         "corporate_recruiter"
@@ -787,7 +787,7 @@
       "subtitle": "Access control, organisation set-up, integrations, monitoring and records — keeping the system running for everyone else.",
       "audience": "The platform administrator account, Super Users and the IT Department, DBL Group.",
       "pages": 10,
-      "bytes": 669607,
+      "bytes": 669651,
       "roles": [
         "super_user",
         "admin"

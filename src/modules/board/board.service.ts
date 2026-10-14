@@ -1881,10 +1881,9 @@ export class BoardService {
       { header: 'Remark', key: 'remark', width: 22 },
       { header: 'Requisition', key: 'code', width: 15 },
       { header: 'Vacancy approved by', key: 'chain', width: 46 },
-      { header: 'CV', key: 'cv', width: 12 },
-      { header: 'BDJobs CV', key: 'bdjobsCv', width: 12 },
+      { header: 'CV', key: 'cv', width: 10 },
     ];
-    const LAST_COL = 'P';
+    const LAST_COL = 'O';
 
     // ── Title block ────────────────────────────────────────────────────
     ws.mergeCells(`A1:${LAST_COL}1`);
@@ -1944,8 +1943,7 @@ export class BoardService {
         remark: r.remark,
         code: r.requisitionCode,
         chain: r.approvalChain,
-        cv: r.cvUrl ? 'Open CV' : '',
-        bdjobsCv: r.profileCvUrl ? 'Open CV' : '',
+        cv: r.cvUrl || r.profileCvUrl ? 'Open CV' : '',
       });
       const bg = i % 2 === 0 ? 'FFFFFFFF' : ZEBRA;
       row.eachCell({ includeEmpty: true }, (cell, col) => {
@@ -1975,18 +1973,12 @@ export class BoardService {
       salary.numFmt = '#,##0';
       salary.alignment = { vertical: 'top', horizontal: 'right' };
       salary.font = { size: 10, bold: true, color: { argb: INK } };
-      if (r.cvUrl) {
+      // The candidate's own CV, or the BDJobs CV when there is none.
+      const cvHref = r.cvUrl ?? r.profileCvUrl;
+      if (cvHref) {
         const cv = row.getCell('cv');
         // Absolute: the workbook is opened outside the browser.
-        cv.value = { text: 'Open CV', hyperlink: this.absoluteUrl(r.cvUrl) };
-        cv.font = { size: 10, color: { argb: BRAND }, underline: true };
-      }
-      if (r.profileCvUrl) {
-        const cv = row.getCell('bdjobsCv');
-        cv.value = {
-          text: 'Open CV',
-          hyperlink: this.absoluteUrl(r.profileCvUrl),
-        };
+        cv.value = { text: 'Open CV', hyperlink: this.absoluteUrl(cvHref) };
         cv.font = { size: 10, color: { argb: BRAND }, underline: true };
       }
       row.getCell('chain').font = { size: 9, color: { argb: MUTED } };
@@ -2164,15 +2156,19 @@ export class BoardService {
       url
         ? `<a href="${esc(this.absoluteUrl(url))}" target="_blank" rel="noreferrer" style="display:inline-block;white-space:nowrap;font-weight:400;font-size:${size};color:#1877c0;text-decoration:underline">${label}</a>`
         : '';
-    /** "Personal CV" and "BDJobs CV" for a BDJobs applicant; "View CV" otherwise. */
-    const cvLinks = (r: (typeof rows)[number], size: string, sep: string) => {
+    /**
+     * The one CV: the candidate's own first, the BDJobs CV only when there
+     * is none. Named for which it is when the candidate came from BDJobs.
+     */
+    const theCv = (r: (typeof rows)[number], size: string) => {
       const bdjobs = r.profileCvSource === 'bdjobs';
-      return [
-        cvLink(r.cvUrl, size, bdjobs ? 'Personal CV' : 'View CV'),
-        cvLink(r.profileCvUrl ?? null, size, bdjobs ? 'BDJobs CV' : 'View CV'),
-      ]
-        .filter(Boolean)
-        .join(sep);
+      return r.cvUrl
+        ? cvLink(r.cvUrl, size, bdjobs ? 'Personal CV' : 'View CV')
+        : cvLink(
+            r.profileCvUrl ?? null,
+            size,
+            bdjobs ? 'BDJobs CV' : 'View CV',
+          );
     };
 
     // Budgeted so the long fields have room; the short ones never wrap at all.
@@ -2187,7 +2183,7 @@ export class BoardService {
         <td style="${td};${nowrap};text-align:center;color:#7b8a9c">${i + 1}</td>
         <td style="${td}">
           <span style="font-weight:700">${esc(r.name)}</span>
-          ${r.cvUrl || r.profileCvUrl ? `<br>${cvLinks(r, '10.5px', '<br>')}` : ''}
+          ${r.cvUrl || r.profileCvUrl ? `<br>${theCv(r, '10.5px')}` : ''}
         </td>
         <td style="${td}">${esc(r.position)}</td>
         <td style="${td}">${esc(r.department)}</td>
@@ -2234,7 +2230,7 @@ export class BoardService {
           </table>
           <p style="margin:4px 0 0;font-size:12px;color:#5a6b7f;line-height:1.5">${esc(r.position)} · ${esc(r.department)}</p>
           <p style="margin:1px 0 0;font-size:12px;color:#5a6b7f;line-height:1.5">${esc(r.unit)}</p>
-          ${r.cvUrl || r.profileCvUrl ? `<p style="margin:7px 0 0">${cvLinks(r, '12px', ' &nbsp;·&nbsp; ')}</p>` : ''}
+          ${r.cvUrl || r.profileCvUrl ? `<p style="margin:7px 0 0">${theCv(r, '12px')}</p>` : ''}
         </td></tr>
         <tr><td style="padding:10px 14px">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
@@ -2509,28 +2505,23 @@ export class BoardService {
              }
            </p>`;
 
-    // A BDJobs applicant has two: the CV they attached, and their
-    // application as BDJobs' CV. Either may be missing.
+    // One CV: the candidate's own first, the BDJobs CV only when there is
+    // none — named for which it is when they came from BDJobs.
     const bdjobs = candidate.profileCvSource === 'bdjobs';
-    const cvAnchor = (href: string, label: string) =>
-      `<a href="${href}" style="color:#1877c0;font-size:13px;font-weight:600;text-decoration:none">${label} →</a>`;
-    const cvAnchors = [
-      candidate.cvUrl
-        ? cvAnchor(candidate.cvUrl, bdjobs ? 'Personal CV' : 'View CV / Resume')
-        : null,
-      candidate.profileCvUrl
-        ? cvAnchor(
-            candidate.profileCvUrl,
-            bdjobs ? 'BDJobs CV' : 'View CV / Resume',
-          )
-        : null,
-    ].filter(Boolean);
-    const cvRow = cvAnchors.length
+    const cvHref = candidate.cvUrl ?? candidate.profileCvUrl ?? null;
+    const cvLabel = !bdjobs
+      ? 'View CV / Resume'
+      : candidate.cvUrl
+        ? 'Personal CV'
+        : 'BDJobs CV';
+    const cvRow = cvHref
       ? `
       <tr>
         <td style="padding:14px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#6b7c93;vertical-align:middle">Curriculum Vitae</td>
         <td style="padding:14px 0 0 20px;font-family:Arial,Helvetica,sans-serif;vertical-align:middle">
-          ${cvAnchors.join('&nbsp;&nbsp;&nbsp;')}
+          <a href="${cvHref}" style="color:#1877c0;font-size:13px;font-weight:600;text-decoration:none">
+            ${cvLabel} →
+          </a>
         </td>
       </tr>`
       : '';

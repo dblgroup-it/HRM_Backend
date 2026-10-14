@@ -3331,8 +3331,9 @@ function serializeCandidate(c: CandidateRow, files: FileGrantService) {
      * document. Lets the UI offer the generated CV instead of showing nothing.
      */
     hasGeneratedCv: Boolean(c.cvProfile),
-    // "BDJobs CV" — the application as a PDF (see profile-cv-link.ts).
-    ...profileCvLink(files, c),
+    // The BDJobs CV. The pipeline row shows it beside a personal CV; every
+    // other screen opens one, personal first (profile-cv-link.ts, CvLink).
+    ...profileCvLink(files, c, { alongsidePersonal: true }),
     notes: c.notes ?? '',
     /** Employee referral — who put them forward, as they were at the time. */
     referral: c.referredByCode
