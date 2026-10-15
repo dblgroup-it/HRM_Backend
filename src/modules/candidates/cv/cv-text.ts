@@ -127,9 +127,15 @@ export function cvProfileToText(profile: CvProfile): string {
 
   const objective = text(profile.careerObjective);
   if (objective) blocks.splice(1, 0, `CAREER OBJECTIVE\n${objective}`);
+  // The applicant's own statements, in Bdjobs' order, after the objective.
+  let at = objective ? 2 : 1;
+  const summary = text(profile.careerSummary);
+  if (summary) blocks.splice(at++, 0, `CAREER SUMMARY\n${summary}`);
+  const special = text(profile.specialQualification);
+  if (special) blocks.splice(at++, 0, `SPECIAL QUALIFICATION\n${special}`);
   const cover = text(profile.coverLetter);
-  if (cover && cover !== objective)
-    blocks.splice(objective ? 2 : 1, 0, `COVER LETTER\n${cover}`);
+  if (cover && ![objective, summary, special].includes(cover))
+    blocks.splice(at, 0, `COVER LETTER\n${cover}`);
   if (s.statedExperienceYears)
     blocks.push(
       `STATED EXPERIENCE\nThe candidate states ${s.statedExperienceYears} years of experience.`,

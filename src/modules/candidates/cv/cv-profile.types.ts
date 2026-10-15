@@ -45,6 +45,10 @@ export interface CvProfile {
   careerObjective?: string;
   /** The covering letter sent with the application, when there is one. */
   coverLetter?: string;
+  /** "Career Summary" on a Bdjobs CV — the applicant's own précis. Plain text, line breaks kept. */
+  careerSummary?: string;
+  /** "Special Qualification" on a Bdjobs CV. Plain text, line breaks kept. */
+  specialQualification?: string;
 
   contact: {
     email?: string;

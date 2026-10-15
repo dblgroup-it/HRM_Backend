@@ -60,9 +60,13 @@ export class CandidatesController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('candidates/profile-cv/:grant')
   async profileCv(@Param('grant') grant: string, @Res() res: Response) {
-    const { html, filename } = await this.candidates.profileCvPage(grant);
-    const pdf = await this.pdf.fromHtml(html, {
-      margin: { top: '14mm', bottom: '14mm', left: '14mm', right: '14mm' },
+    const { html, printHtml, footer, filename } =
+      await this.candidates.profileCvPage(grant);
+    const pdf = await this.pdf.fromHtml(printHtml, {
+      // The bottom margin holds the page footer: the note and "Page 1 of 3".
+      margin: { top: '14mm', bottom: '16mm', left: '14mm', right: '14mm' },
+      headerHtml: '<span></span>',
+      footerHtml: footer,
     });
     // A CV is personal data; it must not sit in a shared or disk cache.
     res.setHeader('Cache-Control', 'no-store, private');

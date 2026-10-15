@@ -122,6 +122,8 @@ export function bdjobsProfileToCandidateData(
       facebookUrl: profile.facebookUrl,
       careerObjective: profile.careerObjective,
       coverLetter: profile.coverLetter,
+      careerSummary: profile.careerSummary,
+      specialQualification: profile.specialQualification,
       totalExperienceYears: profile.totalExperienceYears,
     },
 
@@ -170,6 +172,7 @@ function careerInfo(p: BdJobsFlatProfile): Record<string, unknown> | undefined {
     'lookingFor',
     'preferredDistricts',
     'preferredDistrict',
+    'preferredLocations',
     'preferredOrganizationTypes',
     'preferredOrganizationType',
   ];

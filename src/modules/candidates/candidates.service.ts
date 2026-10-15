@@ -35,7 +35,7 @@ import { RecruitmentService } from './recruitment.service';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { SecureFileService } from '../../common/files/secure-file.service';
 import type { CvProfile } from './cv/cv-profile.types';
-import { buildCvPage } from './cv/cv-document';
+import { buildCvPage, cvPrintFooter } from './cv/cv-document';
 import { photoDataUri } from './cv/candidate-photo';
 import { loadRemoteCv } from './cv/remote-cv';
 import { profileCvLink } from './cv/profile-cv-link';
@@ -637,7 +637,7 @@ export class CandidatesService {
    */
   async profileCvPage(
     grant: string,
-  ): Promise<{ html: string; filename: string }> {
+  ): Promise<{ html: string; printHtml: string; footer: string; filename: string }> {
     const { fileId: candidateId, purpose } = this.files.verify(grant);
     if (purpose !== 'cv-profile') {
       throw new ForbiddenException('This link does not open a CV.');
@@ -654,12 +654,14 @@ export class CandidatesService {
       where: { candidateId },
       select: { mimeType: true, data: true },
     });
+    const now = new Date();
+    const image = photo ? photoDataUri(photo) : null;
     return {
-      html: buildCvPage(
-        profile,
-        new Date(),
-        photo ? photoDataUri(photo) : null,
-      ),
+      // For a browser tab, when no PDF can be printed: the note at the end.
+      html: buildCvPage(profile, now, image),
+      // For the PDF: the note and page numbers go in the page footer.
+      printHtml: buildCvPage(profile, now, image, { print: true }),
+      footer: cvPrintFooter(profile, now),
       filename: `${cand.name} — ${profile.source === 'bdjobs' ? 'BDJobs CV' : 'CV'}.pdf`,
     };
   }

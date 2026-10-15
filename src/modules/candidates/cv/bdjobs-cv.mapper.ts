@@ -532,7 +532,10 @@ export function bdjobsToCvProfile(
       ci.preferredJobCategories ?? ci.preferredJobCategory,
     ),
     jobLevel: pick(ci, 'jobLevel', 'lookingFor'),
-    preferredDistricts: list(ci.preferredDistricts ?? ci.preferredDistrict),
+    // `preferredLocations` is the flat profile's name for the same answer.
+    preferredDistricts: list(
+      ci.preferredDistricts ?? ci.preferredDistrict ?? ci.preferredLocations,
+    ),
     preferredOrganizationTypes: list(
       ci.preferredOrganizationTypes ?? ci.preferredOrganizationType,
     ),
@@ -570,6 +573,11 @@ export function bdjobsToCvProfile(
     },
     careerObjective: richText(p.careerObjective),
     coverLetter: richText(p.coverLetter),
+    // Added to the flat profile on 2026-10-15; v2 may send them in careerInfo.
+    careerSummary: richText(p.careerSummary ?? ci.careerSummary),
+    specialQualification: richText(
+      p.specialQualification ?? ci.specialQualification,
+    ),
     contact: {
       email: text(p.emailId),
       phone: phone || undefined,
