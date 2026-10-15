@@ -102,6 +102,7 @@ function build(opts: {
     {} as never,
     {} as never,
     candidateMail,
+    {} as never, // FirstInterviewApprovalService
   );
   return { svc, sent, updates, notifications };
 }

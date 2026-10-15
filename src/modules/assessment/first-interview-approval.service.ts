@@ -3,8 +3,14 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
+import {
+  generateActionToken,
+  hashActionToken,
+} from '../../common/crypto/action-token';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { sameUnit } from '../../common/util/normalize-unit';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -12,11 +18,69 @@ import { PermissionsService } from '../rbac/permissions.service';
 import { NotificationsService } from '../realtime/notifications.service';
 import { CRITERIA } from '../salary-fixation/salary-fixation.constants';
 import {
+  FACTORY_HR_HEAD_ROLE_KEY,
   headDecisionNoteError,
   headScope,
   type HeadDecision,
 } from './first-interview-approval';
-import { profileCvLink } from '../candidates/cv/profile-cv-link';
+import {
+  CANDIDATE_APPROVAL_LINK_DAYS,
+  candidateApprovalEmail,
+  panelSummary,
+} from './candidate-approval-email';
+import { profileCvLink, ttlUntil } from '../candidates/cv/profile-cv-link';
+
+/** What a Candidate Approval row shows, wherever it is shown. */
+const APPROVAL_INCLUDE = {
+  submittedBy: { select: { name: true } },
+  decidedBy: { select: { name: true } },
+  requisition: {
+    select: {
+      id: true,
+      code: true,
+      designation: true,
+      department: true,
+      unitFactory: true,
+    },
+  },
+  candidate: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      cvFileId: true,
+      cvUrl: true,
+      cvProfile: true,
+      matchScore: true,
+      presentSalary: true,
+      salaryExpectation: true,
+      interviews: {
+        where: {
+          kind: 'FIRST',
+          status: { notIn: ['CANCELLED', 'ABSENT'] },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: {
+          scheduledAt: true,
+          evaluations: {
+            select: {
+              total: true,
+              recommendation: true,
+              comments: true,
+              evaluator: { select: { name: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.FirstInterviewApprovalInclude;
+
+type ApprovalRow = Prisma.FirstInterviewApprovalGetPayload<{
+  include: typeof APPROVAL_INCLUDE;
+}>;
 
 /** Highest total a first-interview evaluation can reach. */
 const MAX_TOTAL = CRITERIA.reduce((sum, c) => sum + c.max, 0);
@@ -44,51 +108,7 @@ export class FirstInterviewApprovalService {
     const rows = await this.prisma.firstInterviewApproval.findMany({
       where: { status: 'PENDING', candidate: { deletedAt: null } },
       orderBy: { submittedAt: 'asc' },
-      include: {
-        submittedBy: { select: { name: true } },
-        requisition: {
-          select: {
-            id: true,
-            code: true,
-            designation: true,
-            department: true,
-            unitFactory: true,
-          },
-        },
-        candidate: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            cvFileId: true,
-            cvUrl: true,
-            cvProfile: true,
-            matchScore: true,
-            presentSalary: true,
-            salaryExpectation: true,
-            interviews: {
-              where: {
-                kind: 'FIRST',
-                status: { notIn: ['CANCELLED', 'ABSENT'] },
-              },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-              select: {
-                scheduledAt: true,
-                evaluations: {
-                  select: {
-                    total: true,
-                    recommendation: true,
-                    comments: true,
-                    evaluator: { select: { name: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
+      include: APPROVAL_INCLUDE,
     });
 
     return rows
@@ -97,43 +117,221 @@ export class FirstInterviewApprovalService {
           scope.all ||
           scope.unitNames.some((u) => sameUnit(u, r.requisition.unitFactory)),
       )
-      .map((r) => {
-        const round = r.candidate.interviews[0];
-        const evals = round?.evaluations ?? [];
-        const avg = evals.length
-          ? evals.reduce((s, e) => s + e.total, 0) / evals.length
-          : null;
-        return {
-          candidateId: r.candidate.id,
-          candidateName: r.candidate.name,
-          email: r.candidate.email ?? '',
-          phone: r.candidate.phone ?? '',
-          // Minted only because the Head has passed the check above.
-          cvUrl:
-            this.files.url(r.candidate.cvFileId, 'cv', {
-              filename: `${r.candidate.name} — CV`,
-            }) ?? r.candidate.cvUrl,
-          ...profileCvLink(this.files, r.candidate),
-          matchScore: r.candidate.matchScore,
-          presentSalary: r.candidate.presentSalary,
-          salaryExpectation: r.candidate.salaryExpectation,
-          requisition: r.requisition,
-          submittedBy: r.submittedBy?.name ?? null,
-          submittedAt: r.submittedAt.toISOString(),
-          note: r.submitNote,
-          interview: {
-            scheduledAt: round?.scheduledAt?.toISOString() ?? null,
-            maxTotal: MAX_TOTAL,
-            averageTotal: avg === null ? null : Math.round(avg * 10) / 10,
-            panel: evals.map((e) => ({
-              name: e.evaluator.name,
-              total: e.total,
-              recommendation: e.recommendation?.toLowerCase() ?? null,
-              comments: e.comments ?? '',
-            })),
-          },
-        };
+      .map((r) => this.toRow(r));
+  }
+
+  /**
+   * One row as the Head sees it — on the page or behind the emailed link.
+   * The CV links are minted only because the caller passed that check, and
+   * last as long as that access does.
+   */
+  private toRow(r: ApprovalRow, cvTtlSeconds?: number) {
+    const round = r.candidate.interviews[0];
+    const evals = round?.evaluations ?? [];
+    const avg = evals.length
+      ? evals.reduce((s, e) => s + e.total, 0) / evals.length
+      : null;
+    return {
+      candidateId: r.candidate.id,
+      candidateName: r.candidate.name,
+      email: r.candidate.email ?? '',
+      phone: r.candidate.phone ?? '',
+      cvUrl:
+        this.files.url(r.candidate.cvFileId, 'cv', {
+          filename: `${r.candidate.name} — CV`,
+          ttlSeconds: cvTtlSeconds,
+        }) ?? r.candidate.cvUrl,
+      ...profileCvLink(this.files, r.candidate, { ttlSeconds: cvTtlSeconds }),
+      matchScore: r.candidate.matchScore,
+      presentSalary: r.candidate.presentSalary,
+      salaryExpectation: r.candidate.salaryExpectation,
+      requisition: r.requisition,
+      submittedBy: r.submittedBy?.name ?? null,
+      submittedAt: r.submittedAt.toISOString(),
+      note: r.submitNote,
+      interview: {
+        scheduledAt: round?.scheduledAt?.toISOString() ?? null,
+        maxTotal: MAX_TOTAL,
+        averageTotal: avg === null ? null : Math.round(avg * 10) / 10,
+        panel: evals.map((e) => ({
+          name: e.evaluator.name,
+          total: e.total,
+          recommendation: e.recommendation?.toLowerCase() ?? null,
+          comments: e.comments ?? '',
+        })),
+      },
+    };
+  }
+
+  // --- by email (2026-10-15) ------------------------------------------------
+
+  /**
+   * Ask the Factory HR Head(s) to approve candidates Factory HR just sent.
+   *
+   * ONE email per Head per send — a single candidate, or all of a batch —
+   * with a personal link to decide without signing in (see
+   * candidate-approval-email.ts for why the decisions live on that page and
+   * not in the mail). The in-app notice carries the same email, so the
+   * Head's email preference and the master switch apply as for any notice.
+   * Never throws: the candidates are already with the Head, and a mail
+   * problem must not undo that.
+   */
+  async askForApproval(
+    candidateIds: string[],
+    submitter: { id: string; name: string },
+    note?: string | null,
+  ): Promise<void> {
+    try {
+      const rows = await this.prisma.firstInterviewApproval.findMany({
+        where: {
+          candidateId: { in: [...new Set(candidateIds)] },
+          status: 'PENDING',
+        },
+        include: APPROVAL_INCLUDE,
+        orderBy: { submittedAt: 'asc' },
       });
+      if (!rows.length) return;
+
+      // Which Heads cover which of these candidates.
+      const byHead = new Map<string, ApprovalRow[]>();
+      for (const unit of new Set(rows.map((r) => r.requisition.unitFactory))) {
+        const heads = await this.permissions.roleHolderUserIds(
+          FACTORY_HR_HEAD_ROLE_KEY,
+          unit,
+        );
+        for (const head of heads) {
+          if (head === submitter.id) continue;
+          const mine = byHead.get(head) ?? [];
+          mine.push(...rows.filter((r) => r.requisition.unitFactory === unit));
+          byHead.set(head, mine);
+        }
+      }
+
+      const expiresAt = new Date(
+        Date.now() + CANDIDATE_APPROVAL_LINK_DAYS * 86_400_000,
+      );
+      for (const [headId, mine] of byHead) {
+        const token = generateActionToken();
+        await this.prisma.candidateApprovalLink.create({
+          data: {
+            userId: headId,
+            // Only the hash is kept; the raw token lives in the email alone.
+            tokenHash: hashActionToken(token),
+            candidateIds: mine.map((r) => r.candidateId),
+            submittedByName: submitter.name.slice(0, 150),
+            tokenExpiresAt: expiresAt,
+          },
+        });
+        const one = mine.length === 1;
+        await this.notifications.notify(headId, {
+          type: 'first_interview_approval',
+          title: one
+            ? 'Candidate awaiting your approval'
+            : `${mine.length} candidates awaiting your approval`,
+          message: one
+            ? `${submitter.name} put ${mine[0].candidate.name} through the first interview for ${mine[0].requisition.designation}.`
+            : `${submitter.name} put ${mine.length} candidates through the first interview: ${mine.map((r) => r.candidate.name).join(', ')}.`,
+          link: '/first-interview-approvals',
+          email: ({ name, origin }) =>
+            candidateApprovalEmail({
+              headName: name,
+              submittedBy: submitter.name,
+              note,
+              link: `${origin}/candidate-approval/${token}`,
+              rows: mine.map((r) => {
+                const row = this.toRow(r);
+                return {
+                  name: row.candidateName,
+                  post: row.requisition.designation,
+                  code: row.requisition.code,
+                  unit: row.requisition.unitFactory,
+                  score:
+                    row.interview.averageTotal === null
+                      ? null
+                      : `${row.interview.averageTotal} / ${row.interview.maxTotal}`,
+                  panel: panelSummary(
+                    row.interview.panel.map(
+                      (p) =>
+                        p.recommendation as
+                          | 'select'
+                          | 'reject'
+                          | 'talent_pool'
+                          | null,
+                    ),
+                  ),
+                };
+              }),
+            }),
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Could not ask the Factory HR Head for approval: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /** What the emailed link shows: every candidate it covers, decided or not. */
+  async linkInfo(token: string) {
+    const link = await this.findLink(token);
+    const expired = link.tokenExpiresAt.getTime() < Date.now();
+    const rows = await this.prisma.firstInterviewApproval.findMany({
+      where: { candidateId: { in: link.candidateIds } },
+      include: APPROVAL_INCLUDE,
+      orderBy: { submittedAt: 'asc' },
+    });
+    const ttl = ttlUntil(link.tokenExpiresAt);
+    return {
+      headName: link.user.name,
+      submittedBy: link.submittedByName,
+      sentAt: link.createdAt.toISOString(),
+      expiresAt: link.tokenExpiresAt.toISOString(),
+      expired,
+      candidates: rows.map((r) => ({
+        ...(expired
+          ? { ...this.toRow(r), cvUrl: null, profileCvUrl: null }
+          : this.toRow(r, ttl)),
+        status: r.status.toLowerCase(),
+        decidedBy: r.decidedBy?.name ?? null,
+        decidedAt: r.decidedAt?.toISOString() ?? null,
+        decisionNote: r.decisionNote,
+      })),
+    };
+  }
+
+  /**
+   * A decision from the emailed link — the same as from the page, made as
+   * the Head the link was sent to, and only on the candidates it covers.
+   */
+  async decideByLink(
+    token: string,
+    dto: { candidateIds: string[]; decision: HeadDecision; note?: string },
+  ) {
+    const link = await this.findLink(token);
+    if (link.tokenExpiresAt.getTime() < Date.now()) {
+      throw new BadRequestException(
+        'This approval link has expired. Open Candidate Approvals in DBL HRM instead.',
+      );
+    }
+    const covered = new Set(link.candidateIds);
+    const ids = dto.candidateIds.filter((id) => covered.has(id));
+    if (!ids.length) {
+      throw new BadRequestException(
+        'None of these candidates are on this link.',
+      );
+    }
+    return this.decideMany(link.userId, { ...dto, candidateIds: ids });
+  }
+
+  private async findLink(token: string) {
+    const link = await this.prisma.candidateApprovalLink.findUnique({
+      where: { tokenHash: hashActionToken(token) },
+      include: { user: { select: { name: true } } },
+    });
+    if (!link) {
+      throw new NotFoundException('This approval link is not valid.');
+    }
+    return link;
   }
 
   /**
@@ -359,7 +557,7 @@ export class FirstInterviewApprovalService {
     const scope = headScope(await this.permissions.getUserPermissions(userId));
     if (!scope.all && !scope.unitNames.length) {
       throw new ForbiddenException(
-        'Only a Factory HR Head can approve first-interview finalists',
+        'Only a Factory HR Head can approve candidates',
       );
     }
     return scope;

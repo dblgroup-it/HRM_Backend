@@ -293,6 +293,7 @@ model User {
   interviewDelegationsHeld      InterviewDelegation[]  @relation("InterviewDelegatedTo")
   interviewDelegationsMade      InterviewDelegation[]  @relation("InterviewDelegatedBy")
   firstInterviewSubmissions     FirstInterviewApproval[] @relation("FirstInterviewApprovalSubmittedBy")
+  candidateApprovalLinks        CandidateApprovalLink[]  @relation("CandidateApprovalLinkHead")
   firstInterviewDecisions       FirstInterviewApproval[] @relation("FirstInterviewApprovalDecidedBy")
   boardApprovalVotes            BoardApprovalVote[]
   referenceChecksConducted      ReferenceCheck[]       @relation("ReferenceCheckConductedBy")
@@ -1114,6 +1115,25 @@ model FirstInterviewApproval {
   @@index([status])
   @@index([requisitionId])
   @@map("first_interview_approvals")
+}
+
+/// Candidate Approval by email (2026-10-15): the personal link a Factory HR
+/// Head decides from without signing in — one per send, covering the
+/// candidates Factory HR sent together. The decision is written to
+/// FirstInterviewApproval, so the page and the link cannot disagree.
+model CandidateApprovalLink {
+  id              String   @id @default(cuid())
+  userId          String   @map("user_id")
+  user            User     @relation("CandidateApprovalLinkHead", fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the emailed token; the raw value is never stored.
+  tokenHash       String   @unique @map("token_hash") @db.VarChar(64)
+  candidateIds    String[] @map("candidate_ids")
+  submittedByName String?  @map("submitted_by_name") @db.VarChar(150)
+  tokenExpiresAt  DateTime @map("token_expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("candidate_approval_links")
 }
 
 /// Phase 3 — a committee member assigned to an interview round's panel.

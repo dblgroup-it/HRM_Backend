@@ -85,6 +85,7 @@ import {
   RejectAtInterviewDto,
 } from './dto/interview.dto';
 import type { EvaluationRecommendationKey } from './recommendation';
+import { FirstInterviewApprovalService } from './first-interview-approval.service';
 
 /**
  * The interviewer's suggestion, across the wire in the frontend's lowercase
@@ -186,6 +187,7 @@ export class InterviewService {
     private readonly secureFiles: SecureFileService,
     private readonly candidates: CandidatesService,
     private readonly candidateMail: CandidateMailService,
+    private readonly headApprovals: FirstInterviewApprovalService,
   ) {}
 
   async listForRequisition(reqId: string, userId: string) {
@@ -1909,6 +1911,8 @@ export class InterviewService {
     outcome: 'final' | 'rejected',
     actor: { id: string; name: string },
     note?: string,
+    /** A batch asks the Head once, for all of it, when it has finished. */
+    opts: { batch?: boolean } = {},
   ) {
     const cand = await this.loadCandidate(candidateId, actor.id);
 
@@ -2011,17 +2015,9 @@ export class InterviewService {
           },
         }),
       ]);
-      for (const id of heads.filter((h) => h !== actor.id)) {
-        try {
-          await this.notifications.notify(id, {
-            type: 'first_interview_approval',
-            title: 'Finalist awaiting your approval',
-            message: `${actor.name} put ${cand.name} through the first interview for ${postTitle(cand.requisition)}.`,
-            link: '/first-interview-approvals',
-          });
-        } catch {
-          this.logger.warn('Could not notify the Factory HR Head');
-        }
+      // One email per send, with a link to approve without signing in.
+      if (!opts.batch) {
+        await this.headApprovals.askForApproval([cand.id], actor, trimmed);
       }
       this.notifications.broadcastChange('candidate', cand.requisitionId, {
         action: 'first_interview_submitted',
@@ -2133,6 +2129,7 @@ export class InterviewService {
           outcome,
           actor,
           note,
+          { batch: true },
         );
         results.push({ candidateId: id, ok: true, ...r });
       } catch (err) {
@@ -2142,6 +2139,18 @@ export class InterviewService {
           error: (err as Error).message || 'Could not record the outcome',
         });
       }
+    }
+    // Everyone in this batch who went to the Factory HR Head, in ONE email
+    // per Head — not one per candidate.
+    const toHead = results
+      .filter((r) => r.ok && r.awaitingApproval)
+      .map((r) => r.candidateId);
+    if (toHead.length) {
+      await this.headApprovals.askForApproval(
+        toHead,
+        actor,
+        note?.trim() || null,
+      );
     }
     return {
       done: results.filter((r) => r.ok).length,

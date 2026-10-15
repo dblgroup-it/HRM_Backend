@@ -7,6 +7,7 @@ import { InterviewService } from './interview.service';
 import { FirstInterviewApprovalService } from './first-interview-approval.service';
 import { InterviewController } from './interview.controller';
 import { EvalPublicController } from './eval-public.controller';
+import { CandidateApprovalPublicController } from './candidate-approval-public.controller';
 
 @Module({
   // For CandidatesService: the interview flow reads a candidate's CV into
@@ -21,6 +22,7 @@ import { EvalPublicController } from './eval-public.controller';
     AssessmentController,
     InterviewController,
     EvalPublicController,
+    CandidateApprovalPublicController,
   ],
 })
 export class AssessmentModule {}
