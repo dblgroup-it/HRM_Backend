@@ -69,57 +69,57 @@
       "slug": "factory-hr",
       "file": "DBL-HRM-02-Role-Guide-Factory-HR.mp4",
       "title": "Factory HR",
-      "durationMs": 1182489,
-      "bytes": 116021265,
+      "durationMs": 535005,
+      "bytes": 155691676,
       "renditions": {
         "720": "DBL-HRM-02-Role-Guide-Factory-HR.720p.mp4"
       },
-      "bytes720": 42086523,
+      "bytes720": 47449678,
       "chapters": [
         {
           "n": 1,
           "title": "Your role at a glance",
-          "startMs": 4000
+          "startMs": 3500
         },
         {
           "n": 2,
           "title": "Access and signing in",
-          "startMs": 87943
+          "startMs": 45187
         },
         {
           "n": 3,
           "title": "Writing the job analysis",
-          "startMs": 162373
+          "startMs": 86877
         },
         {
           "n": 4,
           "title": "Sending CVs to the recruiter",
-          "startMs": 440101
+          "startMs": 211977
         },
         {
           "n": 5,
           "title": "Running first interviews",
-          "startMs": 546641
+          "startMs": 265617
         },
         {
           "n": 6,
           "title": "Availability and what you can see",
-          "startMs": 885951
+          "startMs": 420336
         },
         {
           "n": 7,
           "title": "Notifications",
-          "startMs": 995429
+          "startMs": 456645
         },
         {
           "n": 8,
           "title": "Questions and answers",
-          "startMs": 1046949
+          "startMs": 475505
         },
         {
           "n": 9,
           "title": "Quick reference and closing",
-          "startMs": 1107029
+          "startMs": 502685
         }
       ],
       "subtitles": {
@@ -127,7 +127,115 @@
         "en": "DBL-HRM-02-Role-Guide-Factory-HR.en.vtt"
       },
       "poster": "DBL-HRM-02-Role-Guide-Factory-HR.jpg",
-      "publishedAt": "2026-10-20"
+      "publishedAt": "2026-10-21"
+    },
+    {
+      "slug": "factory-hr-head",
+      "file": "DBL-HRM-08-Role-Guide-Factory-HR-Head.mp4",
+      "title": "Factory HR Head",
+      "durationMs": 266350,
+      "bytes": 70693432,
+      "renditions": {
+        "720": "DBL-HRM-08-Role-Guide-Factory-HR-Head.720p.mp4"
+      },
+      "bytes720": 21542452,
+      "chapters": [
+        {
+          "n": 1,
+          "title": "Your role at a glance",
+          "startMs": 3500
+        },
+        {
+          "n": 2,
+          "title": "Access and signing in",
+          "startMs": 29240
+        },
+        {
+          "n": 3,
+          "title": "Approving first-interview finalists",
+          "startMs": 60260
+        },
+        {
+          "n": 4,
+          "title": "Sending CVs to the recruiter",
+          "startMs": 176850
+        },
+        {
+          "n": 5,
+          "title": "Notifications",
+          "startMs": 201310
+        },
+        {
+          "n": 6,
+          "title": "Questions and answers",
+          "startMs": 213580
+        },
+        {
+          "n": 7,
+          "title": "Quick reference",
+          "startMs": 245000
+        }
+      ],
+      "subtitles": {
+        "bn": "DBL-HRM-08-Role-Guide-Factory-HR-Head.bn.vtt",
+        "en": "DBL-HRM-08-Role-Guide-Factory-HR-Head.en.vtt"
+      },
+      "poster": "DBL-HRM-08-Role-Guide-Factory-HR-Head.jpg",
+      "publishedAt": "2026-10-21"
+    },
+    {
+      "slug": "panelist",
+      "file": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.mp4",
+      "title": "Interview Panelist & Interviewer",
+      "durationMs": 277849,
+      "bytes": 87079753,
+      "renditions": {
+        "720": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.720p.mp4"
+      },
+      "bytes720": 26978275,
+      "chapters": [
+        {
+          "n": 1,
+          "title": "Your role at a glance",
+          "startMs": 3500
+        },
+        {
+          "n": 2,
+          "title": "Your invitation",
+          "startMs": 38840
+        },
+        {
+          "n": 3,
+          "title": "Scoring a candidate",
+          "startMs": 73499
+        },
+        {
+          "n": 4,
+          "title": "My Interviews",
+          "startMs": 167599
+        },
+        {
+          "n": 5,
+          "title": "Running a first interview handed to you",
+          "startMs": 197979
+        },
+        {
+          "n": 6,
+          "title": "Questions and answers",
+          "startMs": 230839
+        },
+        {
+          "n": 7,
+          "title": "Quick reference",
+          "startMs": 259539
+        }
+      ],
+      "subtitles": {
+        "bn": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.bn.vtt",
+        "en": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.en.vtt"
+      },
+      "poster": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.jpg",
+      "publishedAt": "2026-10-21"
     }
   ]
 }
