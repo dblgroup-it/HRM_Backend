@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "videos": [
+    {
+      "slug": "raiser",
+      "file": "DBL-HRM-01-Role-Guide-Requisition-Raiser.mp4",
+      "title": "Requisition Raiser",
+      "durationMs": 1142208,
+      "bytes": 147814739,
+      "chapters": [
+        {
+          "n": 1,
+          "title": "Introduction",
+          "startMs": 4000
+        },
+        {
+          "n": 2,
+          "title": "Signing in and getting started",
+          "startMs": 30930
+        },
+        {
+          "n": 3,
+          "title": "Creating a new requisition",
+          "startMs": 150198
+        },
+        {
+          "n": 4,
+          "title": "What happens after submission?",
+          "startMs": 535518
+        },
+        {
+          "n": 5,
+          "title": "Handling returned requisitions",
+          "startMs": 693238
+        },
+        {
+          "n": 6,
+          "title": "After approval",
+          "startMs": 870988
+        },
+        {
+          "n": 7,
+          "title": "Notifications and updates",
+          "startMs": 943658
+        },
+        {
+          "n": 8,
+          "title": "Frequently asked questions",
+          "startMs": 1017608
+        },
+        {
+          "n": 9,
+          "title": "Closing",
+          "startMs": 1109398
+        }
+      ],
+      "subtitles": {
+        "bn": "DBL-HRM-01-Role-Guide-Requisition-Raiser.bn.vtt",
+        "en": "DBL-HRM-01-Role-Guide-Requisition-Raiser.en.vtt"
+      },
+      "poster": "DBL-HRM-01-Role-Guide-Requisition-Raiser.jpg"
+    },
+    {
+      "slug": "factory-hr",
+      "file": "DBL-HRM-02-Role-Guide-Factory-HR.mp4",
+      "title": "Factory HR",
+      "durationMs": 1182489,
+      "bytes": 116021265,
+      "chapters": [
+        {
+          "n": 1,
+          "title": "Your role at a glance",
+          "startMs": 4000
+        },
+        {
+          "n": 2,
+          "title": "Access and signing in",
+          "startMs": 87943
+        },
+        {
+          "n": 3,
+          "title": "Writing the job analysis",
+          "startMs": 162373
+        },
+        {
+          "n": 4,
+          "title": "Sending CVs to the recruiter",
+          "startMs": 440101
+        },
+        {
+          "n": 5,
+          "title": "Running first interviews",
+          "startMs": 546641
+        },
+        {
+          "n": 6,
+          "title": "Availability and what you can see",
+          "startMs": 885951
+        },
+        {
+          "n": 7,
+          "title": "Notifications",
+          "startMs": 995429
+        },
+        {
+          "n": 8,
+          "title": "Questions and answers",
+          "startMs": 1046949
+        },
+        {
+          "n": 9,
+          "title": "Quick reference and closing",
+          "startMs": 1107029
+        }
+      ],
+      "subtitles": {
+        "bn": "DBL-HRM-02-Role-Guide-Factory-HR.bn.vtt",
+        "en": "DBL-HRM-02-Role-Guide-Factory-HR.en.vtt"
+      },
+      "poster": "DBL-HRM-02-Role-Guide-Factory-HR.jpg"
+    }
+  ]
+}

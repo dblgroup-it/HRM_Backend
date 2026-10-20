@@ -16,6 +16,12 @@ import {
   type TutorialEntry,
   type TutorialManifest,
 } from './tutorial-catalogue';
+import {
+  byteRange,
+  readVideoCatalogue,
+  type TutorialVideoCatalogue,
+  type TutorialVideoEntry,
+} from './tutorial-video-catalogue';
 import { playlistLinks } from './tutorial-videos';
 
 /**
@@ -35,6 +41,14 @@ export class TutorialsService {
     path.resolve(__dirname, '..', '..', '..', 'assets', 'tutorials');
   private cache: { at: number; manifest: TutorialManifest | null } | null =
     null;
+  /** `HRM_Backend/assets/tutorial-videos` — the recorded role-guide videos. */
+  private readonly videoDir =
+    process.env.TUTORIAL_VIDEOS_DIR ||
+    path.resolve(__dirname, '..', '..', '..', 'assets', 'tutorial-videos');
+  private videoCache: {
+    at: number;
+    catalogue: TutorialVideoCatalogue | null;
+  } | null = null;
 
   constructor(
     private readonly permissions: PermissionsService,
@@ -47,6 +61,20 @@ export class TutorialsService {
       this.cache = { at: Date.now(), manifest: readManifest(this.dir) };
     }
     return this.cache.manifest;
+  }
+
+  private videoCatalogue(): TutorialVideoCatalogue | null {
+    if (!this.videoCache || Date.now() - this.videoCache.at > CACHE_MS) {
+      this.videoCache = {
+        at: Date.now(),
+        catalogue: readVideoCatalogue(this.videoDir),
+      };
+    }
+    return this.videoCache.catalogue;
+  }
+
+  private videoFor(slug: string): TutorialVideoEntry | undefined {
+    return this.videoCatalogue()?.videos.find((v) => v.slug === slug);
   }
 
   /**
@@ -95,6 +123,7 @@ export class TutorialsService {
       filename: g.file,
       ttlSeconds: LINK_TTL_SECONDS,
     });
+    const video = this.videoFor(g.slug);
     return {
       slug: g.slug,
       number: g.number,
@@ -110,6 +139,25 @@ export class TutorialsService {
       url: `/api/tutorials/file/${grant}`,
       downloadUrl: `/api/tutorials/file/${grant}?download=1`,
       thumbUrl: g.thumb ? `/api/tutorials/thumb/${grant}` : null,
+      // The guide's video, cut into its chapters — the same signed link, so a
+      // person who may read the guide may watch it, and nobody else.
+      video: video
+        ? {
+            url: `/api/tutorials/video/${grant}`,
+            durationMs: video.durationMs,
+            bytes: video.bytes,
+            chapters: video.chapters,
+            subtitles: Object.fromEntries(
+              Object.keys(video.subtitles).map((lang) => [
+                lang,
+                `/api/tutorials/video/${grant}/subtitles/${lang}.vtt`,
+              ]),
+            ),
+            posterUrl: video.poster
+              ? `/api/tutorials/video/${grant}/poster`
+              : null,
+          }
+        : null,
     };
   }
 
@@ -154,6 +202,101 @@ export class TutorialsService {
       `${download ? 'attachment' : 'inline'}; filename="${guide.file}"`,
     );
     res.setHeader('Cache-Control', 'private, max-age=600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    fs.createReadStream(file).pipe(res);
+  }
+
+  private videoOf(grant: string): {
+    guide: TutorialEntry;
+    video: TutorialVideoEntry;
+  } {
+    const guide = this.guideFor(grant);
+    const video = this.videoFor(guide.slug);
+    if (!video) throw new NotFoundException('This guide has no video.');
+    return { guide, video };
+  }
+
+  /**
+   * Stream a guide's video. A video element asks for byte ranges as the viewer
+   * seeks and as the chapters jump, so ranges are honoured (206); without one
+   * the whole file goes (200). Either way the link is the same signed grant
+   * that opens the PDF.
+   */
+  async streamVideo(
+    grant: string,
+    rangeHeader: string | undefined,
+    res: Response,
+  ): Promise<void> {
+    const { video } = this.videoOf(grant);
+    const file = path.join(this.videoDir, video.file);
+    const stat = await fs.promises.stat(file).catch(() => null);
+    if (!stat?.isFile())
+      throw new NotFoundException('This video is no longer available.');
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const range = byteRange(rangeHeader, stat.size);
+    if (rangeHeader && !range) {
+      res.status(416);
+      res.setHeader('Content-Range', `bytes */${stat.size}`);
+      res.end();
+      return;
+    }
+    if (range) {
+      res.status(206);
+      res.setHeader(
+        'Content-Range',
+        `bytes ${range.start}-${range.end}/${stat.size}`,
+      );
+      res.setHeader('Content-Length', String(range.end - range.start + 1));
+      fs.createReadStream(file, { start: range.start, end: range.end }).pipe(
+        res,
+      );
+      return;
+    }
+    res.setHeader('Content-Length', String(stat.size));
+    fs.createReadStream(file).pipe(res);
+  }
+
+  /** A video's subtitles in one language, as WebVTT. */
+  async videoSubtitles(
+    grant: string,
+    lang: string,
+    res: Response,
+  ): Promise<void> {
+    const { video } = this.videoOf(grant);
+    const name = video.subtitles[lang.replace(/\.vtt$/, '')];
+    if (!name) throw new NotFoundException('No subtitles in that language.');
+    const file = path.join(this.videoDir, name);
+    const stat = await fs.promises.stat(file).catch(() => null);
+    if (!stat?.isFile())
+      throw new NotFoundException('No subtitles in that language.');
+    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    fs.createReadStream(file).pipe(res);
+  }
+
+  /** The still shown before the video plays. */
+  async videoPoster(grant: string, res: Response): Promise<void> {
+    const { video } = this.videoOf(grant);
+    if (!video.poster) throw new NotFoundException('No poster.');
+    const file = path.join(this.videoDir, video.poster);
+    const stat = await fs.promises.stat(file).catch(() => null);
+    if (!stat?.isFile()) throw new NotFoundException('No poster.');
+    const ext = path.extname(video.poster).toLowerCase();
+    res.setHeader(
+      'Content-Type',
+      ext === '.png'
+        ? 'image/png'
+        : ext === '.webp'
+          ? 'image/webp'
+          : 'image/jpeg',
+    );
+    res.setHeader('Content-Length', String(stat.size));
+    res.setHeader('Cache-Control', 'private, max-age=3600');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     fs.createReadStream(file).pipe(res);
   }

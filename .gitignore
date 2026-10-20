@@ -18,3 +18,6 @@ backups/
 
 # One-time OAuth output — a long-lived Google credential, never commit it
 google-refresh-token.txt
+
+# Tutorial videos: large mp4s are copied to the server, not committed (videos.json, .vtt and posters are)
+assets/tutorial-videos/*.mp4

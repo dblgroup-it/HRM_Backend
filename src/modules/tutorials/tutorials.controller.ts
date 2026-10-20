@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import { Controller, Get, Headers, Param, Query, Res } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 
@@ -42,5 +42,35 @@ export class TutorialsController {
     @Res() res: Response,
   ) {
     return this.tutorials.stream(grant, download === '1', res);
+  }
+
+  /** A guide's video — the same signed link as its PDF; byte ranges honoured for seeking. */
+  @Public()
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  @Get('video/:grant')
+  video(
+    @Param('grant') grant: string,
+    @Headers('range') range: string | undefined,
+    @Res() res: Response,
+  ) {
+    return this.tutorials.streamVideo(grant, range, res);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Get('video/:grant/subtitles/:lang')
+  videoSubtitles(
+    @Param('grant') grant: string,
+    @Param('lang') lang: string,
+    @Res() res: Response,
+  ) {
+    return this.tutorials.videoSubtitles(grant, lang, res);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  @Get('video/:grant/poster')
+  videoPoster(@Param('grant') grant: string, @Res() res: Response) {
+    return this.tutorials.videoPoster(grant, res);
   }
 }
