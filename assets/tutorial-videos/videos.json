@@ -6,7 +6,11 @@
       "file": "DBL-HRM-01-Role-Guide-Requisition-Raiser.mp4",
       "title": "Requisition Raiser",
       "durationMs": 1142208,
-      "bytes": 147814739,
+      "bytes": 117996506,
+      "renditions": {
+        "720": "DBL-HRM-01-Role-Guide-Requisition-Raiser.720p.mp4"
+      },
+      "bytes720": 42099774,
       "chapters": [
         {
           "n": 1,
@@ -59,7 +63,7 @@
         "en": "DBL-HRM-01-Role-Guide-Requisition-Raiser.en.vtt"
       },
       "poster": "DBL-HRM-01-Role-Guide-Requisition-Raiser.jpg",
-      "publishedAt": "2026-10-21"
+      "publishedAt": "2026-10-20"
     },
     {
       "slug": "factory-hr",
@@ -67,6 +71,10 @@
       "title": "Factory HR",
       "durationMs": 1182489,
       "bytes": 116021265,
+      "renditions": {
+        "720": "DBL-HRM-02-Role-Guide-Factory-HR.720p.mp4"
+      },
+      "bytes720": 42086523,
       "chapters": [
         {
           "n": 1,
@@ -119,7 +127,7 @@
         "en": "DBL-HRM-02-Role-Guide-Factory-HR.en.vtt"
       },
       "poster": "DBL-HRM-02-Role-Guide-Factory-HR.jpg",
-      "publishedAt": "2026-10-21"
+      "publishedAt": "2026-10-20"
     }
   ]
 }

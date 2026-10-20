@@ -10,6 +10,7 @@ describe('tutorial video catalogue', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tutorial-videos-'));
     fs.writeFileSync(path.join(dir, 'a.mp4'), 'x');
     fs.writeFileSync(path.join(dir, 'a.bn.vtt'), 'WEBVTT');
+    fs.writeFileSync(path.join(dir, 'a.720p.mp4'), 'x');
     fs.writeFileSync(
       path.join(dir, 'videos.json'),
       JSON.stringify({
@@ -32,6 +33,8 @@ describe('tutorial video catalogue', () => {
               xx1: 'a.bn.vtt',
             },
             poster: 'nope.jpg',
+            publishedAt: '2026-10-21',
+            renditions: { '720': 'a.720p.mp4', '480': 'a.480p.mp4' },
           },
           { slug: 'gone', file: 'gone.mp4', chapters: [] },
           { slug: 'odd', file: '../x.mp4', chapters: [] },
@@ -49,6 +52,12 @@ describe('tutorial video catalogue', () => {
     expect(v.durationMs).toBe(1000);
     expect(v.subtitles).toEqual({ bn: 'a.bn.vtt' });
     expect(v.poster).toBeUndefined();
+  });
+
+  it('offers a lighter rendition only when its file is there', () => {
+    const v = readVideoCatalogue(dir)!.videos[0];
+    expect(v.renditions).toEqual({ '720': 'a.720p.mp4' });
+    expect(v.publishedAt).toBe('2026-10-21');
   });
 
   it('is null without a catalogue', () => {

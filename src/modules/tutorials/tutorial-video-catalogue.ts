@@ -28,7 +28,16 @@ export interface TutorialVideoEntry {
   poster?: string;
   /** ISO date the video was published to the app. */
   publishedAt?: string;
+  /**
+   * Lighter encodes of the same video, by height: `{ '720': file }`. The
+   * player starts on the recorded 1080p and steps down to 720p on a link
+   * that keeps stalling; a rendition whose file is missing is not offered.
+   */
+  renditions?: Partial<Record<Rendition, string>>;
 }
+
+export type Rendition = '720';
+export const RENDITIONS: readonly Rendition[] = ['720'];
 
 export interface TutorialVideoCatalogue {
   version: number;
@@ -95,6 +104,18 @@ export function readVideoCatalogue(dir: string): TutorialVideoCatalogue | null {
         fs.existsSync(path.join(dir, v.poster))
           ? v.poster
           : undefined,
+      publishedAt:
+        typeof v.publishedAt === 'string' ? v.publishedAt : undefined,
+      renditions: Object.fromEntries(
+        RENDITIONS.flatMap((q) => {
+          const file = (v.renditions ?? {})[q];
+          return typeof file === 'string' &&
+            SAFE_FILE.test(file) &&
+            fs.existsSync(path.join(dir, file))
+            ? [[q, file]]
+            : [];
+        }),
+      ) as Partial<Record<Rendition, string>>,
     }));
   return { version: Number(c.version ?? 1), videos };
 }

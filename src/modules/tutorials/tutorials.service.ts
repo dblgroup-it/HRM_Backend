@@ -19,6 +19,8 @@ import {
 import {
   byteRange,
   readVideoCatalogue,
+  RENDITIONS,
+  type Rendition,
   type TutorialVideoCatalogue,
   type TutorialVideoEntry,
 } from './tutorial-video-catalogue';
@@ -144,6 +146,16 @@ export class TutorialsService {
       video: video
         ? {
             url: `/api/tutorials/video/${grant}`,
+            // The recorded 1080p, and each lighter rendition on the server.
+            sources: {
+              '1080': `/api/tutorials/video/${grant}`,
+              ...Object.fromEntries(
+                Object.keys(video.renditions ?? {}).map((q) => [
+                  q,
+                  `/api/tutorials/video/${grant}?q=${q}`,
+                ]),
+              ),
+            },
             durationMs: video.durationMs,
             bytes: video.bytes,
             chapters: video.chapters,
@@ -227,9 +239,17 @@ export class TutorialsService {
     grant: string,
     rangeHeader: string | undefined,
     res: Response,
+    quality?: string,
   ): Promise<void> {
     const { video } = this.videoOf(grant);
-    const file = path.join(this.videoDir, video.file);
+    // `?q=720` asks for a lighter rendition; anything else (or none) is the recorded 1080p.
+    const rendition =
+      quality && (RENDITIONS as readonly string[]).includes(quality)
+        ? video.renditions?.[quality as Rendition]
+        : undefined;
+    if (quality && quality !== '1080' && !rendition)
+      throw new NotFoundException('This video has no such quality.');
+    const file = path.join(this.videoDir, rendition ?? video.file);
     const stat = await fs.promises.stat(file).catch(() => null);
     if (!stat?.isFile())
       throw new NotFoundException('This video is no longer available.');

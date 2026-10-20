@@ -44,16 +44,17 @@ export class TutorialsController {
     return this.tutorials.stream(grant, download === '1', res);
   }
 
-  /** A guide's video — the same signed link as its PDF; byte ranges honoured for seeking. */
+  /** A guide's video — the same signed link as its PDF; byte ranges honoured for seeking; `?q=720` the lighter rendition. */
   @Public()
   @Throttle({ default: { limit: 600, ttl: 60_000 } })
   @Get('video/:grant')
   video(
     @Param('grant') grant: string,
     @Headers('range') range: string | undefined,
+    @Query('q') quality: string | undefined,
     @Res() res: Response,
   ) {
-    return this.tutorials.streamVideo(grant, range, res);
+    return this.tutorials.streamVideo(grant, range, res, quality);
   }
 
   @Public()
