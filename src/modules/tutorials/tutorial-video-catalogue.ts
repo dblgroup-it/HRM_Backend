@@ -26,6 +26,8 @@ export interface TutorialVideoEntry {
   /** Language → WebVTT file name. */
   subtitles: Record<string, string>;
   poster?: string;
+  /** ISO date the video was published to the app. */
+  publishedAt?: string;
 }
 
 export interface TutorialVideoCatalogue {

@@ -58,7 +58,8 @@
         "bn": "DBL-HRM-01-Role-Guide-Requisition-Raiser.bn.vtt",
         "en": "DBL-HRM-01-Role-Guide-Requisition-Raiser.en.vtt"
       },
-      "poster": "DBL-HRM-01-Role-Guide-Requisition-Raiser.jpg"
+      "poster": "DBL-HRM-01-Role-Guide-Requisition-Raiser.jpg",
+      "publishedAt": "2026-10-21"
     },
     {
       "slug": "factory-hr",
@@ -117,7 +118,8 @@
         "bn": "DBL-HRM-02-Role-Guide-Factory-HR.bn.vtt",
         "en": "DBL-HRM-02-Role-Guide-Factory-HR.en.vtt"
       },
-      "poster": "DBL-HRM-02-Role-Guide-Factory-HR.jpg"
+      "poster": "DBL-HRM-02-Role-Guide-Factory-HR.jpg",
+      "publishedAt": "2026-10-21"
     }
   ]
 }

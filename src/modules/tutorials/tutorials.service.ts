@@ -156,6 +156,7 @@ export class TutorialsService {
             posterUrl: video.poster
               ? `/api/tutorials/video/${grant}/poster`
               : null,
+            publishedAt: video.publishedAt ?? null,
           }
         : null,
     };
