@@ -1,6 +1,6 @@
 {
-  "version": "1.6",
-  "date": "15 October 2026",
+  "version": "2.0",
+  "date": "21 October 2026",
   "guides": [
     {
       "slug": "master",
@@ -10,8 +10,8 @@
       "kicker": "System Workflow · Master Document",
       "subtitle": "How DBL Group’s manpower requisition, recruitment and onboarding system works — end to end, role by role.",
       "audience": "DBL Group management, the CHRO and HR leadership, and everyone who sets up, runs or supports the hiring process.",
-      "pages": 28,
-      "bytes": 1230276,
+      "pages": 29,
+      "bytes": 869817,
       "roles": [
         "chro",
         "corporate_hr"
@@ -67,19 +67,19 @@
         },
         {
           "title": "Notifications, emails and reminders",
-          "page": 22
+          "page": 23
         },
         {
           "title": "Administration and configuration",
-          "page": 24
-        },
-        {
-          "title": "Records, security and data protection",
           "page": 25
         },
         {
-          "title": "Appendices",
+          "title": "Records, security and data protection",
           "page": 26
+        },
+        {
+          "title": "Appendices",
+          "page": 27
         }
       ]
     },
@@ -91,8 +91,8 @@
       "kicker": "Role Guide 01",
       "subtitle": "How to raise a manpower requisition and see it through job analysis and approval.",
       "audience": "Department and division heads, and anyone nominated to raise manpower requisitions for a unit or factory.",
-      "pages": 10,
-      "bytes": 692634,
+      "pages": 14,
+      "bytes": 865436,
       "roles": [
         "requisition_raiser"
       ],
@@ -116,35 +116,35 @@
         },
         {
           "title": "Access and signing in",
-          "page": 3
+          "page": 4
         },
         {
           "title": "Raising a requisition",
-          "page": 5
-        },
-        {
-          "title": "What happens after you submit",
           "page": 6
         },
         {
+          "title": "What happens after you submit",
+          "page": 8
+        },
+        {
           "title": "When a requisition comes back to you",
-          "page": 7
+          "page": 10
         },
         {
           "title": "After approval",
-          "page": 8
+          "page": 11
         },
         {
           "title": "Notifications",
-          "page": 8
+          "page": 11
         },
         {
           "title": "Questions and answers",
-          "page": 9
+          "page": 12
         },
         {
           "title": "Quick reference",
-          "page": 10
+          "page": 14
         }
       ]
     },
@@ -156,8 +156,8 @@
       "kicker": "Role Guide 02",
       "subtitle": "Job analysis for your unit’s requisitions, CVs sent in to the recruiter, and the first interviews handed to you.",
       "audience": "HR officers at each unit or factory who hold the Factory HR role.",
-      "pages": 11,
-      "bytes": 715819,
+      "pages": 16,
+      "bytes": 1102085,
       "roles": [
         "factory_hr"
       ],
@@ -181,35 +181,35 @@
         },
         {
           "title": "Access and signing in",
-          "page": 3
+          "page": 4
         },
         {
           "title": "Writing the job analysis",
-          "page": 5
-        },
-        {
-          "title": "Sending CVs to the recruiter",
           "page": 6
         },
         {
+          "title": "Sending CVs to the recruiter",
+          "page": 9
+        },
+        {
           "title": "Running first interviews",
-          "page": 7
-        },
-        {
-          "title": "Availability and what you can see",
-          "page": 9
-        },
-        {
-          "title": "Notifications",
-          "page": 9
-        },
-        {
-          "title": "Questions and answers",
           "page": 10
         },
         {
+          "title": "Availability and what you can see",
+          "page": 13
+        },
+        {
+          "title": "Notifications",
+          "page": 14
+        },
+        {
+          "title": "Questions and answers",
+          "page": 15
+        },
+        {
           "title": "Quick reference",
-          "page": 11
+          "page": 16
         }
       ]
     },
@@ -221,8 +221,8 @@
       "kicker": "Role Guide 03",
       "subtitle": "How to review and sign off manpower requisitions when you are named in an approval chain.",
       "audience": "Unit approvers, SBU Heads, factory and division heads — anyone named as a level in a raiser’s approval chain.",
-      "pages": 8,
-      "bytes": 631518,
+      "pages": 9,
+      "bytes": 271304,
       "roles": [
         "unit_approver",
         "sbu_head"
@@ -244,7 +244,7 @@
         },
         {
           "title": "Access and signing in",
-          "page": 3
+          "page": 4
         },
         {
           "title": "Reviewing and deciding",
@@ -252,7 +252,7 @@
         },
         {
           "title": "Notifications and reminders",
-          "page": 6
+          "page": 7
         },
         {
           "title": "Questions and answers",
@@ -260,7 +260,7 @@
         },
         {
           "title": "Quick reference",
-          "page": 8
+          "page": 9
         }
       ]
     },
@@ -272,8 +272,8 @@
       "kicker": "Role Guide 04",
       "subtitle": "Final approval of every requisition, launching recruitment, Hiring Approval Sheets, medical requests and the settings that drive the workflow.",
       "audience": "Head of Talent Acquisition and the corporate talent-acquisition team holding this role.",
-      "pages": 11,
-      "bytes": 707697,
+      "pages": 13,
+      "bytes": 374471,
       "roles": [
         "corporate_hr"
       ],
@@ -316,31 +316,31 @@
         },
         {
           "title": "Overseeing recruitment",
-          "page": 7
-        },
-        {
-          "title": "Hiring Approval Sheets",
           "page": 8
         },
         {
-          "title": "Medical Requests",
+          "title": "Hiring Approval Sheets",
           "page": 9
+        },
+        {
+          "title": "Medical Requests",
+          "page": 10
         },
         {
           "title": "Settings you look after",
-          "page": 9
+          "page": 10
         },
         {
           "title": "Notifications",
-          "page": 10
+          "page": 11
         },
         {
           "title": "Questions and answers",
-          "page": 10
+          "page": 11
         },
         {
           "title": "Quick reference",
-          "page": 11
+          "page": 13
         }
       ]
     },
@@ -353,7 +353,7 @@
       "subtitle": "Escalated requisitions, Hiring Approval Sheets, signing letters, and oversight of the whole hiring process.",
       "audience": "The CHRO, and anyone holding the CHRO role in the system.",
       "pages": 9,
-      "bytes": 631062,
+      "bytes": 278939,
       "roles": [
         "chro"
       ],
@@ -377,7 +377,7 @@
         },
         {
           "title": "Access and signing in",
-          "page": 3
+          "page": 4
         },
         {
           "title": "Escalated requisitions",
@@ -389,7 +389,7 @@
         },
         {
           "title": "Signing offer and appointment letters",
-          "page": 6
+          "page": 7
         },
         {
           "title": "Oversight and configuration",
@@ -397,11 +397,11 @@
         },
         {
           "title": "Notifications",
-          "page": 7
+          "page": 8
         },
         {
           "title": "Questions and answers",
-          "page": 7
+          "page": 8
         },
         {
           "title": "Quick reference",
@@ -417,8 +417,8 @@
       "kicker": "Role Guide 06",
       "subtitle": "Approving requisitions and Hiring Approval Sheets from an emailed link — no sign-in required.",
       "audience": "Members of DBL Group’s board who are asked to approve requisitions or selected candidates.",
-      "pages": 6,
-      "bytes": 560564,
+      "pages": 7,
+      "bytes": 198297,
       "roles": [
         "chro",
         "corporate_hr"
@@ -448,7 +448,7 @@
         },
         {
           "title": "Keeping it secure",
-          "page": 4
+          "page": 5
         },
         {
           "title": "Questions and answers",
@@ -456,7 +456,7 @@
         },
         {
           "title": "Quick reference",
-          "page": 6
+          "page": 7
         }
       ]
     },
@@ -468,8 +468,8 @@
       "kicker": "Role Guide 07",
       "subtitle": "Running a requisition’s hiring from job posting to the new hire’s first day: candidates, tests, interviews, salary fixation and onboarding.",
       "audience": "Corporate Recruiters assigned to requisitions by Head of Talent Acquisition.",
-      "pages": 15,
-      "bytes": 794835,
+      "pages": 17,
+      "bytes": 467277,
       "roles": [
         "corporate_recruiter",
         "corporate_hr"
@@ -506,43 +506,43 @@
         },
         {
           "title": "Collecting CVs",
-          "page": 5
-        },
-        {
-          "title": "Working the pipeline",
           "page": 6
         },
         {
-          "title": "Screening tests",
+          "title": "Working the pipeline",
           "page": 7
         },
         {
-          "title": "Interviews",
+          "title": "Screening tests",
           "page": 8
         },
         {
-          "title": "Salary fixation and selection",
-          "page": 10
+          "title": "Interviews",
+          "page": 9
         },
         {
-          "title": "Onboarding",
+          "title": "Salary fixation and selection",
           "page": 11
         },
         {
+          "title": "Onboarding",
+          "page": 12
+        },
+        {
           "title": "Regret letters, Talent Bank and leave",
-          "page": 13
-        },
-        {
-          "title": "Notifications",
-          "page": 13
-        },
-        {
-          "title": "Questions and answers",
           "page": 14
         },
         {
-          "title": "Quick reference",
+          "title": "Notifications",
           "page": 15
+        },
+        {
+          "title": "Questions and answers",
+          "page": 15
+        },
+        {
+          "title": "Quick reference",
+          "page": 17
         }
       ]
     },
@@ -554,8 +554,8 @@
       "kicker": "Role Guide 08",
       "subtitle": "Approving the finalists your unit’s Factory HR puts through after a first interview, and sending CVs to the recruiter.",
       "audience": "Heads of HR at units and factories who hold the Factory HR Head role.",
-      "pages": 8,
-      "bytes": 621537,
+      "pages": 9,
+      "bytes": 265901,
       "roles": [
         "factory_hr_head"
       ],
@@ -577,7 +577,7 @@
         },
         {
           "title": "Access and signing in",
-          "page": 3
+          "page": 4
         },
         {
           "title": "Approving first-interview finalists",
@@ -585,11 +585,11 @@
         },
         {
           "title": "Sending CVs to the recruiter",
-          "page": 6
+          "page": 7
         },
         {
           "title": "Notifications",
-          "page": 6
+          "page": 7
         },
         {
           "title": "Questions and answers",
@@ -597,7 +597,7 @@
         },
         {
           "title": "Quick reference",
-          "page": 8
+          "page": 9
         }
       ]
     },
@@ -609,8 +609,8 @@
       "kicker": "Role Guide 09",
       "subtitle": "Scoring candidates and recommending an outcome — and running a first interview when candidates are handed to you.",
       "audience": "Managers and staff who sit on interview panels, and colleagues asked to run a candidate’s first interview.",
-      "pages": 7,
-      "bytes": 595490,
+      "pages": 8,
+      "bytes": 237742,
       "roles": [
         "interviewer"
       ],
@@ -632,7 +632,7 @@
         },
         {
           "title": "Your invitation",
-          "page": 3
+          "page": 4
         },
         {
           "title": "Scoring a candidate",
@@ -640,7 +640,7 @@
         },
         {
           "title": "My Interviews",
-          "page": 5
+          "page": 6
         },
         {
           "title": "Running a first interview handed to you",
@@ -648,11 +648,11 @@
         },
         {
           "title": "Questions and answers",
-          "page": 6
+          "page": 7
         },
         {
           "title": "Quick reference",
-          "page": 7
+          "page": 8
         }
       ]
     },
@@ -664,8 +664,8 @@
       "kicker": "Role Guide 10",
       "subtitle": "Recording pre-employment medical examinations and confirming every finding before a candidate is cleared.",
       "audience": "Examining Medical Officers and the Central Medical Officer.",
-      "pages": 8,
-      "bytes": 629979,
+      "pages": 9,
+      "bytes": 270653,
       "roles": [
         "medical_officer",
         "central_medical_officer"
@@ -689,7 +689,7 @@
         },
         {
           "title": "Access and signing in",
-          "page": 3
+          "page": 4
         },
         {
           "title": "How a candidate reaches you",
@@ -697,7 +697,7 @@
         },
         {
           "title": "Medical Officer: recording the examination",
-          "page": 5
+          "page": 6
         },
         {
           "title": "Central Medical Officer: confirming findings",
@@ -705,15 +705,15 @@
         },
         {
           "title": "Notifications",
-          "page": 6
-        },
-        {
-          "title": "Questions and answers",
           "page": 7
         },
         {
-          "title": "Quick reference",
+          "title": "Questions and answers",
           "page": 8
+        },
+        {
+          "title": "Quick reference",
+          "page": 9
         }
       ]
     },
@@ -725,8 +725,8 @@
       "kicker": "Guide 11",
       "subtitle": "What applicants and new hires see and do — from the careers page to their joining date.",
       "audience": "HR teams who support applicants, and anyone who needs to understand the system from the candidate’s side.",
-      "pages": 8,
-      "bytes": 626473,
+      "pages": 9,
+      "bytes": 270001,
       "roles": [
         "corporate_hr",
         "corporate_recruiter"
@@ -750,7 +750,7 @@
         },
         {
           "title": "Finding a job and applying",
-          "page": 3
+          "page": 4
         },
         {
           "title": "Tests and interviews",
@@ -762,7 +762,7 @@
         },
         {
           "title": "Emails a candidate receives",
-          "page": 6
+          "page": 7
         },
         {
           "title": "Privacy and security",
@@ -770,11 +770,11 @@
         },
         {
           "title": "Questions applicants ask",
-          "page": 7
+          "page": 8
         },
         {
           "title": "Quick reference",
-          "page": 8
+          "page": 9
         }
       ]
     },
@@ -786,8 +786,8 @@
       "kicker": "Role Guide 12",
       "subtitle": "Access control, organisation set-up, integrations, monitoring and records — keeping the system running for everyone else.",
       "audience": "The platform administrator account, Super Users and the IT Department, DBL Group.",
-      "pages": 10,
-      "bytes": 669634,
+      "pages": 11,
+      "bytes": 320452,
       "roles": [
         "super_user",
         "admin"
@@ -825,11 +825,11 @@
         },
         {
           "title": "Integrations and automation",
-          "page": 7
+          "page": 8
         },
         {
           "title": "Monitoring and records",
-          "page": 8
+          "page": 9
         },
         {
           "title": "Deleting a requisition",
@@ -837,15 +837,15 @@
         },
         {
           "title": "Security overview",
-          "page": 9
+          "page": 10
         },
         {
           "title": "Questions and answers",
-          "page": 9
+          "page": 10
         },
         {
           "title": "Quick reference",
-          "page": 10
+          "page": 11
         }
       ]
     }
