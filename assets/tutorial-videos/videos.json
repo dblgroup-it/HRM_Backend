@@ -5,57 +5,57 @@
       "slug": "raiser",
       "file": "DBL-HRM-01-Role-Guide-Requisition-Raiser.mp4",
       "title": "Requisition Raiser",
-      "durationMs": 1142208,
-      "bytes": 117996506,
+      "durationMs": 532250,
+      "bytes": 156459463,
       "renditions": {
         "720": "DBL-HRM-01-Role-Guide-Requisition-Raiser.720p.mp4"
       },
-      "bytes720": 42099774,
+      "bytes720": 45489901,
       "chapters": [
         {
           "n": 1,
           "title": "Introduction",
-          "startMs": 4000
+          "startMs": 3500
         },
         {
           "n": 2,
           "title": "Signing in and getting started",
-          "startMs": 30930
+          "startMs": 18650
         },
         {
           "n": 3,
           "title": "Creating a new requisition",
-          "startMs": 150198
+          "startMs": 69810
         },
         {
           "n": 4,
           "title": "What happens after submission?",
-          "startMs": 535518
+          "startMs": 276950
         },
         {
           "n": 5,
           "title": "Handling returned requisitions",
-          "startMs": 693238
+          "startMs": 341710
         },
         {
           "n": 6,
           "title": "After approval",
-          "startMs": 870988
+          "startMs": 432800
         },
         {
           "n": 7,
           "title": "Notifications and updates",
-          "startMs": 943658
+          "startMs": 459740
         },
         {
           "n": 8,
           "title": "Frequently asked questions",
-          "startMs": 1017608
+          "startMs": 484840
         },
         {
           "n": 9,
           "title": "Closing",
-          "startMs": 1109398
+          "startMs": 514260
         }
       ],
       "subtitles": {
