@@ -69,12 +69,12 @@
       "slug": "factory-hr",
       "file": "DBL-HRM-02-Role-Guide-Factory-HR.mp4",
       "title": "Factory HR",
-      "durationMs": 532305,
-      "bytes": 123248292,
+      "durationMs": 533345,
+      "bytes": 123637426,
       "renditions": {
         "720": "DBL-HRM-02-Role-Guide-Factory-HR.720p.mp4"
       },
-      "bytes720": 48375319,
+      "bytes720": 48399199,
       "chapters": [
         {
           "n": 1,
@@ -104,22 +104,22 @@
         {
           "n": 6,
           "title": "Availability and what you can see",
-          "startMs": 417636
+          "startMs": 418676
         },
         {
           "n": 7,
           "title": "Notifications",
-          "startMs": 453945
+          "startMs": 454985
         },
         {
           "n": 8,
           "title": "Questions and answers",
-          "startMs": 472805
+          "startMs": 473845
         },
         {
           "n": 9,
           "title": "Quick reference and closing",
-          "startMs": 499985
+          "startMs": 501025
         }
       ],
       "subtitles": {
