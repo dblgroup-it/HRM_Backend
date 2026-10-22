@@ -5,12 +5,12 @@
       "slug": "raiser",
       "file": "DBL-HRM-01-Role-Guide-Requisition-Raiser.mp4",
       "title": "Requisition Raiser",
-      "durationMs": 582813,
-      "bytes": 121081539,
+      "durationMs": 597226,
+      "bytes": 125647553,
       "renditions": {
         "720": "DBL-HRM-01-Role-Guide-Requisition-Raiser.720p.mp4"
       },
-      "bytes720": 47650825,
+      "bytes720": 49398404,
       "chapters": [
         {
           "n": 1,
@@ -20,42 +20,42 @@
         {
           "n": 2,
           "title": "Signing in and getting started",
-          "startMs": 16990
+          "startMs": 17630
         },
         {
           "n": 3,
           "title": "Creating a new requisition",
-          "startMs": 75510
+          "startMs": 69270
         },
         {
           "n": 4,
           "title": "What happens after submission?",
-          "startMs": 293438
+          "startMs": 298786
         },
         {
           "n": 5,
           "title": "Handling returned requisitions",
-          "startMs": 362598
+          "startMs": 375566
         },
         {
           "n": 6,
           "title": "After approval",
-          "startMs": 463334
+          "startMs": 473296
         },
         {
           "n": 7,
           "title": "Notifications and updates",
-          "startMs": 495744
+          "startMs": 511596
         },
         {
           "n": 8,
           "title": "Frequently asked questions",
-          "startMs": 523483
+          "startMs": 540616
         },
         {
           "n": 9,
           "title": "Closing",
-          "startMs": 559543
+          "startMs": 570836
         }
       ],
       "subtitles": {
@@ -70,11 +70,11 @@
       "file": "DBL-HRM-02-Role-Guide-Factory-HR.mp4",
       "title": "Factory HR",
       "durationMs": 533345,
-      "bytes": 123637426,
+      "bytes": 126621355,
       "renditions": {
         "720": "DBL-HRM-02-Role-Guide-Factory-HR.720p.mp4"
       },
-      "bytes720": 48399199,
+      "bytes720": 49374316,
       "chapters": [
         {
           "n": 1,
