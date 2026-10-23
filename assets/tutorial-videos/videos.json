@@ -6,11 +6,11 @@
       "file": "DBL-HRM-01-Role-Guide-Requisition-Raiser.mp4",
       "title": "Requisition Raiser",
       "durationMs": 597226,
-      "bytes": 125647553,
+      "bytes": 126454311,
       "renditions": {
         "720": "DBL-HRM-01-Role-Guide-Requisition-Raiser.720p.mp4"
       },
-      "bytes720": 49398404,
+      "bytes720": 49586523,
       "chapters": [
         {
           "n": 1,
@@ -63,18 +63,18 @@
         "en": "DBL-HRM-01-Role-Guide-Requisition-Raiser.en.vtt"
       },
       "poster": "DBL-HRM-01-Role-Guide-Requisition-Raiser.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "factory-hr",
       "file": "DBL-HRM-02-Role-Guide-Factory-HR.mp4",
       "title": "Factory HR",
-      "durationMs": 533345,
-      "bytes": 126621355,
+      "durationMs": 726147,
+      "bytes": 149126781,
       "renditions": {
         "720": "DBL-HRM-02-Role-Guide-Factory-HR.720p.mp4"
       },
-      "bytes720": 49374316,
+      "bytes720": 60376880,
       "chapters": [
         {
           "n": 1,
@@ -84,42 +84,42 @@
         {
           "n": 2,
           "title": "Access and signing in",
-          "startMs": 42487
+          "startMs": 40380
         },
         {
           "n": 3,
           "title": "Writing the job analysis",
-          "startMs": 84177
+          "startMs": 91190
         },
         {
           "n": 4,
           "title": "Sending CVs to the recruiter",
-          "startMs": 209277
+          "startMs": 259090
         },
         {
           "n": 5,
           "title": "Running first interviews",
-          "startMs": 262917
+          "startMs": 323370
         },
         {
           "n": 6,
           "title": "Availability and what you can see",
-          "startMs": 418676
+          "startMs": 549297
         },
         {
           "n": 7,
           "title": "Notifications",
-          "startMs": 454985
+          "startMs": 606427
         },
         {
           "n": 8,
           "title": "Questions and answers",
-          "startMs": 473845
+          "startMs": 631767
         },
         {
           "n": 9,
           "title": "Quick reference and closing",
-          "startMs": 501025
+          "startMs": 675507
         }
       ],
       "subtitles": {
@@ -127,18 +127,18 @@
         "en": "DBL-HRM-02-Role-Guide-Factory-HR.en.vtt"
       },
       "poster": "DBL-HRM-02-Role-Guide-Factory-HR.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "approver",
       "file": "DBL-HRM-03-Role-Guide-Requisition-Approver.mp4",
       "title": "Requisition Approver",
       "durationMs": 293219,
-      "bytes": 79236312,
+      "bytes": 77545153,
       "renditions": {
         "720": "DBL-HRM-03-Role-Guide-Requisition-Approver.720p.mp4"
       },
-      "bytes720": 29621081,
+      "bytes720": 29148557,
       "chapters": [
         {
           "n": 1,
@@ -176,18 +176,18 @@
         "en": "DBL-HRM-03-Role-Guide-Requisition-Approver.en.vtt"
       },
       "poster": "DBL-HRM-03-Role-Guide-Requisition-Approver.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "hota",
       "file": "DBL-HRM-04-Role-Guide-Head-of-Talent-Acquisition.mp4",
       "title": "Head of Talent Acquisition",
-      "durationMs": 576801,
-      "bytes": 120705514,
+      "durationMs": 575041,
+      "bytes": 121104496,
       "renditions": {
         "720": "DBL-HRM-04-Role-Guide-Head-of-Talent-Acquisition.720p.mp4"
       },
-      "bytes720": 48363722,
+      "bytes720": 48684417,
       "chapters": [
         {
           "n": 1,
@@ -242,12 +242,12 @@
         {
           "n": 11,
           "title": "Questions and answers",
-          "startMs": 533501
+          "startMs": 531741
         },
         {
           "n": 12,
           "title": "Quick reference",
-          "startMs": 548891
+          "startMs": 547131
         }
       ],
       "subtitles": {
@@ -255,18 +255,18 @@
         "en": "DBL-HRM-04-Role-Guide-Head-of-Talent-Acquisition.en.vtt"
       },
       "poster": "DBL-HRM-04-Role-Guide-Head-of-Talent-Acquisition.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "chro",
       "file": "DBL-HRM-05-Role-Guide-CHRO.mp4",
       "title": "CHRO",
       "durationMs": 369129,
-      "bytes": 85635856,
+      "bytes": 87595575,
       "renditions": {
         "720": "DBL-HRM-05-Role-Guide-CHRO.720p.mp4"
       },
-      "bytes720": 33540236,
+      "bytes720": 34013795,
       "chapters": [
         {
           "n": 1,
@@ -319,18 +319,18 @@
         "en": "DBL-HRM-05-Role-Guide-CHRO.en.vtt"
       },
       "poster": "DBL-HRM-05-Role-Guide-CHRO.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "board",
       "file": "DBL-HRM-06-Role-Guide-Board-Member.mp4",
       "title": "Board Member",
       "durationMs": 261171,
-      "bytes": 34545832,
+      "bytes": 33949944,
       "renditions": {
         "720": "DBL-HRM-06-Role-Guide-Board-Member.720p.mp4"
       },
-      "bytes720": 15284538,
+      "bytes720": 15092807,
       "chapters": [
         {
           "n": 1,
@@ -368,18 +368,18 @@
         "en": "DBL-HRM-06-Role-Guide-Board-Member.en.vtt"
       },
       "poster": "DBL-HRM-06-Role-Guide-Board-Member.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "recruiter",
       "file": "DBL-HRM-07-Role-Guide-Corporate-Recruiter.mp4",
       "title": "Corporate Recruiter",
-      "durationMs": 716298,
-      "bytes": 200763913,
+      "durationMs": 718758,
+      "bytes": 198795935,
       "renditions": {
         "720": "DBL-HRM-07-Role-Guide-Corporate-Recruiter.720p.mp4"
       },
-      "bytes720": 75571989,
+      "bytes720": 74972402,
       "chapters": [
         {
           "n": 1,
@@ -389,62 +389,62 @@
         {
           "n": 2,
           "title": "Access and signing in",
-          "startMs": 33900
+          "startMs": 33800
         },
         {
           "n": 3,
           "title": "Publishing the job",
-          "startMs": 54090
+          "startMs": 53940
         },
         {
           "n": 4,
           "title": "Collecting CVs",
-          "startMs": 104450
+          "startMs": 104100
         },
         {
           "n": 5,
           "title": "Working the pipeline",
-          "startMs": 164090
+          "startMs": 163540
         },
         {
           "n": 6,
           "title": "Screening tests",
-          "startMs": 224018
+          "startMs": 223268
         },
         {
           "n": 7,
           "title": "Interviews",
-          "startMs": 286088
+          "startMs": 285488
         },
         {
           "n": 8,
           "title": "Salary fixation and selection",
-          "startMs": 392238
+          "startMs": 395798
         },
         {
           "n": 9,
           "title": "Onboarding",
-          "startMs": 445158
+          "startMs": 448518
         },
         {
           "n": 10,
           "title": "Regret letters, Talent Bank and leave",
-          "startMs": 621193
+          "startMs": 623953
         },
         {
           "n": 11,
           "title": "Notifications",
-          "startMs": 661316
+          "startMs": 663926
         },
         {
           "n": 12,
           "title": "Questions and answers",
-          "startMs": 679826
+          "startMs": 682386
         },
         {
           "n": 13,
           "title": "Quick reference",
-          "startMs": 699668
+          "startMs": 702178
         }
       ],
       "subtitles": {
@@ -452,18 +452,18 @@
         "en": "DBL-HRM-07-Role-Guide-Corporate-Recruiter.en.vtt"
       },
       "poster": "DBL-HRM-07-Role-Guide-Corporate-Recruiter.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "factory-hr-head",
       "file": "DBL-HRM-08-Role-Guide-Factory-HR-Head.mp4",
       "title": "Factory HR Head",
       "durationMs": 269570,
-      "bytes": 54995323,
+      "bytes": 54429417,
       "renditions": {
         "720": "DBL-HRM-08-Role-Guide-Factory-HR-Head.720p.mp4"
       },
-      "bytes720": 21673474,
+      "bytes720": 21581953,
       "chapters": [
         {
           "n": 1,
@@ -506,18 +506,18 @@
         "en": "DBL-HRM-08-Role-Guide-Factory-HR-Head.en.vtt"
       },
       "poster": "DBL-HRM-08-Role-Guide-Factory-HR-Head.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "panelist",
       "file": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.mp4",
       "title": "Interview Panelist & Interviewer",
-      "durationMs": 276109,
-      "bytes": 64717784,
+      "durationMs": 275949,
+      "bytes": 65487964,
       "renditions": {
         "720": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.720p.mp4"
       },
-      "bytes720": 24837191,
+      "bytes720": 25131247,
       "chapters": [
         {
           "n": 1,
@@ -527,32 +527,32 @@
         {
           "n": 2,
           "title": "Your invitation",
-          "startMs": 37100
+          "startMs": 38620
         },
         {
           "n": 3,
           "title": "Scoring a candidate",
-          "startMs": 71759
+          "startMs": 73279
         },
         {
           "n": 4,
           "title": "My Interviews",
-          "startMs": 165859
+          "startMs": 167379
         },
         {
           "n": 5,
           "title": "Running a first interview handed to you",
-          "startMs": 196239
+          "startMs": 197759
         },
         {
           "n": 6,
           "title": "Questions and answers",
-          "startMs": 229099
+          "startMs": 228939
         },
         {
           "n": 7,
           "title": "Quick reference",
-          "startMs": 257799
+          "startMs": 257639
         }
       ],
       "subtitles": {
@@ -560,18 +560,18 @@
         "en": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.en.vtt"
       },
       "poster": "DBL-HRM-09-Role-Guide-Interview-Panelist-and-Interviewer.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "medical",
       "file": "DBL-HRM-10-Role-Guide-Medical-Officer-and-CMO.mp4",
       "title": "Medical Officer & CMO",
       "durationMs": 340589,
-      "bytes": 67443822,
+      "bytes": 69798694,
       "renditions": {
         "720": "DBL-HRM-10-Role-Guide-Medical-Officer-and-CMO.720p.mp4"
       },
-      "bytes720": 27383272,
+      "bytes720": 28077705,
       "chapters": [
         {
           "n": 1,
@@ -619,18 +619,18 @@
         "en": "DBL-HRM-10-Role-Guide-Medical-Officer-and-CMO.en.vtt"
       },
       "poster": "DBL-HRM-10-Role-Guide-Medical-Officer-and-CMO.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     },
     {
       "slug": "candidate",
       "file": "DBL-HRM-11-Role-Guide-Candidate-Journey.mp4",
       "title": "The Candidate Journey",
       "durationMs": 387850,
-      "bytes": 83727809,
+      "bytes": 88192804,
       "renditions": {
         "720": "DBL-HRM-11-Role-Guide-Candidate-Journey.720p.mp4"
       },
-      "bytes720": 32678646,
+      "bytes720": 33567244,
       "chapters": [
         {
           "n": 1,
@@ -678,7 +678,7 @@
         "en": "DBL-HRM-11-Role-Guide-Candidate-Journey.en.vtt"
       },
       "poster": "DBL-HRM-11-Role-Guide-Candidate-Journey.jpg",
-      "publishedAt": "2026-10-22"
+      "publishedAt": "2026-10-23"
     }
   ]
 }
