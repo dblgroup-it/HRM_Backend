@@ -3,10 +3,13 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  HttpCode,
   Patch,
+  Post,
 } from '@nestjs/common';
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -20,6 +23,9 @@ import {
   AuthUser,
   CurrentUser,
 } from '../../common/decorators/current-user.decorator';
+import type { AiProviderName } from '../integrations/ai/ai-provider';
+import { AiGraderService } from '../integrations/ai/ai-grader.service';
+import { AiProviderConfigService } from '../integrations/ai/ai-provider-config.service';
 import { PermissionsService } from '../rbac/permissions.service';
 import { SettingsService } from './settings.service';
 
@@ -37,6 +43,53 @@ class UpdateAiSettingsDto {
   @IsOptional()
   @IsBoolean()
   autoRoleProfile?: boolean;
+}
+
+class UpdateAiProviderDto {
+  @IsOptional()
+  @IsIn(['claude', 'gemini'])
+  provider?: AiProviderName;
+
+  @IsOptional()
+  @IsBoolean()
+  fallback?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  claudeModel?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  geminiModel?: string;
+
+  /** A new key; an empty string removes the saved one. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  claudeKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  geminiKey?: string;
+}
+
+class TestAiProviderDto {
+  @IsIn(['claude', 'gemini'])
+  provider!: AiProviderName;
+
+  /** Test a key typed on the page before saving it; else the saved one. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(400)
+  apiKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  model?: string;
 }
 
 class UpdateNotificationSettingsDto {
@@ -102,6 +155,8 @@ export class SettingsController {
     private readonly settings: SettingsService,
     private readonly permissions: PermissionsService,
     private readonly config: ConfigService,
+    private readonly aiProvider: AiProviderConfigService,
+    private readonly aiGrader: AiGraderService,
   ) {}
 
   /** Anyone authenticated can read AI config (used to label the UI). */
@@ -118,6 +173,40 @@ export class SettingsController {
   ) {
     await this.requireAiSettingsAccess(user.id);
     return this.settings.setAiConfig(dto);
+  }
+
+  /**
+   * Which AI provider answers first, each one's model and key, and whether the
+   * other takes over on a failure (super user only — Integrations). Keys are
+   * never returned: only whether one is set, where from, and its last four.
+   */
+  @Get('ai-provider')
+  async getAiProvider(@CurrentUser() user: AuthUser) {
+    await this.requireSuperUser(user.id, 'view the AI provider settings');
+    return this.aiProvider.view();
+  }
+
+  @Patch('ai-provider')
+  async updateAiProvider(
+    @Body() dto: UpdateAiProviderDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.requireSuperUser(user.id, 'change the AI provider settings');
+    return this.aiProvider.update(dto);
+  }
+
+  /** One tiny request to one provider — is this key and model working? */
+  @Post('ai-provider/test')
+  @HttpCode(200)
+  async testAiProvider(
+    @Body() dto: TestAiProviderDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.requireSuperUser(user.id, 'test the AI provider');
+    return this.aiGrader.testProvider(dto.provider, {
+      apiKey: dto.apiKey,
+      model: dto.model,
+    });
   }
 
   /** Read notification config + mail SMTP status (super user only). */

@@ -1,9 +1,13 @@
+import Anthropic from '@anthropic-ai/sdk';
 import {
+  HttpException,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+
+import { AiProviderName, claudeAnswer, claudeTakesEffort } from './ai-provider';
+import { AiProviderConfigService } from './ai-provider-config.service';
 
 export interface GradeInput {
   prompt: string;
@@ -367,29 +371,130 @@ export interface RouteCvResult {
 interface GeminiResp {
   candidates?: { content?: { parts?: { text?: string }[] } }[];
 }
-interface ClaudeResp {
-  content?: { text?: string }[];
-}
 
 /**
- * Provider-agnostic AI grader for written exam answers. Uses Gemini or Claude
- * depending on `AI_PROVIDER`; switching providers is a one-line config change.
- * Calls the providers' REST APIs directly (no SDK dependency).
+ * Provider-agnostic AI grader for written exam answers, CV screening and the
+ * rest. Claude or Gemini answers first as chosen on Integrations › AI provider
+ * (`AiProviderConfigService`, falling back to `.env`); with fallback on, a
+ * request the first one fails goes to the other. Claude is called through the
+ * official SDK, Gemini through its REST API.
  */
 @Injectable()
 export class AiGraderService {
   private readonly logger = new Logger(AiGraderService.name);
+  private claude: { key: string; client: Anthropic } | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly ai: AiProviderConfigService) {}
 
+  /** The provider that answers first. */
   get provider(): string {
-    return (this.config.get<string>('ai.provider') ?? 'gemini').toLowerCase();
+    return this.ai.current.provider;
   }
 
   isConfigured(): boolean {
-    return this.provider === 'claude'
-      ? Boolean(this.config.get<string>('ai.anthropic.apiKey'))
-      : Boolean(this.config.get<string>('ai.gemini.apiKey'));
+    return this.ai.order().length > 0;
+  }
+
+  /**
+   * Run one request: the first provider in order, then the next if it fails
+   * or answers nothing. The last failure is what the caller sees.
+   */
+  private async run(
+    call: (p: AiProviderName) => Promise<string>,
+  ): Promise<string> {
+    const order = this.ai.order();
+    if (!order.length) {
+      throw new ServiceUnavailableException('AI is not configured');
+    }
+    let last: unknown = null;
+    for (const [i, p] of order.entries()) {
+      try {
+        const out = await call(p);
+        if (out.trim()) return out;
+        last = new Error(`${p} returned an empty answer`);
+      } catch (e) {
+        last = e;
+      }
+      const why = last instanceof Error ? last.message : String(last);
+      if (i < order.length - 1) {
+        this.logger.warn(`AI ${p} failed (${why}); trying ${order[i + 1]}`);
+      } else {
+        this.logger.warn(`AI ${p} failed: ${why}`);
+      }
+    }
+    throw last instanceof HttpException
+      ? last
+      : new ServiceUnavailableException('AI request failed');
+  }
+
+  /** A JSON-answer prompt, to whichever provider answers. */
+  private ask(prompt: string, maxTokens?: number): Promise<string> {
+    return this.run((p) =>
+      p === 'claude'
+        ? this.callClaude(prompt, maxTokens)
+        : this.callGemini(prompt),
+    );
+  }
+
+  /** A prompt with one file (image or PDF), to whichever provider answers. */
+  private askVision(
+    prompt: string,
+    mimeType: string,
+    base64: string,
+  ): Promise<string> {
+    return this.run((p) =>
+      p === 'claude'
+        ? this.callClaudeVision(prompt, mimeType, base64)
+        : this.callGeminiVision(prompt, mimeType, base64),
+    );
+  }
+
+  /**
+   * Integrations' *Test*: one tiny request to one provider, with the key and
+   * model typed on the page or else the saved ones. Never falls back — the
+   * point is to know whether *this* provider works.
+   */
+  async testProvider(
+    provider: AiProviderName,
+    override?: { apiKey?: string; model?: string },
+  ): Promise<{
+    ok: boolean;
+    provider: AiProviderName;
+    model: string;
+    ms: number;
+    reply?: string;
+    error?: string;
+  }> {
+    const saved = this.ai.current[provider];
+    const apiKey = override?.apiKey?.trim() || saved.apiKey;
+    const model = override?.model?.trim() || saved.model;
+    const started = Date.now();
+    if (!apiKey) {
+      return { ok: false, provider, model, ms: 0, error: 'No API key' };
+    }
+    const prompt =
+      'This is a connection test from TalentHub. Reply with exactly: {"ok":true}';
+    try {
+      const reply =
+        provider === 'claude'
+          ? await this.claudeMessage(prompt, 50, { apiKey, model })
+          : await this.callGemini(prompt, { apiKey, model });
+      return {
+        ok: true,
+        provider,
+        model,
+        ms: Date.now() - started,
+        reply: reply.trim().slice(0, 120),
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        provider,
+        model,
+        ms: Date.now() - started,
+        error: (e instanceof Error ? e.message : String(e)).slice(0, 300),
+      };
+    }
   }
 
   /**
@@ -401,14 +506,15 @@ export class AiGraderService {
     if (!this.isConfigured()) {
       throw new ServiceUnavailableException('AI is not configured');
     }
-    return this.provider === 'claude'
-      ? this.callClaude(prompt, maxTokens)
-      : this.callGeminiText(prompt);
+    return this.run((p) =>
+      p === 'claude'
+        ? this.callClaude(prompt, maxTokens)
+        : this.callGeminiText(prompt),
+    );
   }
 
   private async callGeminiText(text: string): Promise<string> {
-    const model = this.config.get<string>('ai.gemini.model');
-    const key = this.config.get<string>('ai.gemini.apiKey') ?? '';
+    const { model, apiKey: key } = this.ai.current.gemini;
     const res = await this.fetchJson<GeminiResp>(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
@@ -428,10 +534,7 @@ export class AiGraderService {
       throw new ServiceUnavailableException('AI grading is not configured');
     }
     const promptText = this.buildPrompt(input);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(promptText)
-        : await this.callGemini(promptText);
+    const raw = await this.ask(promptText);
     return this.parse(raw, input.maxMarks);
   }
 
@@ -453,10 +556,7 @@ export class AiGraderService {
       };
     }
     const prompt = this.buildExtractPrompt(input.label);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaudeVision(prompt, input.mimeType, input.base64)
-        : await this.callGeminiVision(prompt, input.mimeType, input.base64);
+    const raw = await this.askVision(prompt, input.mimeType, input.base64);
     return this.parseExtract(raw);
   }
 
@@ -495,10 +595,7 @@ Set isPortrait to FALSE when there is no usable human face, for example:
 Judge only whether it is a usable face photograph. Do NOT judge who the person is, their appearance, age, sex, race, attractiveness or suitability for the job.`;
 
     try {
-      const raw =
-        this.provider === 'claude'
-          ? await this.callClaudeVision(prompt, input.mimeType, input.base64)
-          : await this.callGeminiVision(prompt, input.mimeType, input.base64);
+      const raw = await this.askVision(prompt, input.mimeType, input.base64);
       return this.parsePortrait(raw);
     } catch (e) {
       this.logger.warn(
@@ -548,8 +645,7 @@ Use clear field names that match the document, for example: Full Name, Document 
     mimeType: string,
     base64: string,
   ): Promise<string> {
-    const model = this.config.get<string>('ai.gemini.model');
-    const key = this.config.get<string>('ai.gemini.apiKey') ?? '';
+    const { model, apiKey: key } = this.ai.current.gemini;
     const res = await this.fetchJson<GeminiResp>(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
@@ -579,9 +675,7 @@ Use clear field names that match the document, for example: Full Name, Document 
     mimeType: string,
     base64: string,
   ): Promise<string> {
-    const model = this.config.get<string>('ai.anthropic.model');
-    const key = this.config.get<string>('ai.anthropic.apiKey') ?? '';
-    const fileBlock =
+    const file: Anthropic.ContentBlockParam =
       mimeType === 'application/pdf'
         ? {
             type: 'document',
@@ -593,27 +687,13 @@ Use clear field names that match the document, for example: Full Name, Document 
           }
         : {
             type: 'image',
-            source: { type: 'base64', media_type: mimeType, data: base64 },
+            source: {
+              type: 'base64',
+              media_type: mimeType as Anthropic.Base64ImageSource['media_type'],
+              data: base64,
+            },
           };
-    const res = await this.fetchJson<ClaudeResp>(
-      'https://api.anthropic.com/v1/messages',
-      {
-        method: 'POST',
-        headers: {
-          'x-api-key': key,
-          'anthropic-version': '2023-06-01',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 700,
-          messages: [
-            { role: 'user', content: [{ type: 'text', text }, fileBlock] },
-          ],
-        }),
-      },
-    );
-    return res.content?.[0]?.text ?? '';
+    return this.claudeMessage([{ type: 'text', text }, file], 700);
   }
 
   private parseExtract(raw: string): ExtractResult {
@@ -655,10 +735,7 @@ Use clear field names that match the document, for example: Full Name, Document 
       throw new ServiceUnavailableException('AI is not configured');
     }
     const prompt = this.buildRoleProfilePrompt(input);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt);
     return this.parseRoleProfile(raw);
   }
 
@@ -693,10 +770,7 @@ Rules:
 - Use the CV's own wording for titles and company names.
 - gender is the one field you must always answer and may judge rather than copy: always give "male" or "female", never leave it out. Use the strongest evidence the CV has, in this order: a stated Gender or Sex line; a title (Mr., Mrs., Ms., Miss), the prefixes Md./Mohammad/Muhammad (male) or Mst./Mosammat/Mosammet (female), or a "son of" / "daughter of" / "wife of" line; the full name as it is used in Bangladesh; the candidate's own photograph on the CV. If it is still uncertain, give your best judgement.`;
 
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaudeVision(prompt, input.mimeType, input.base64)
-        : await this.callGeminiVision(prompt, input.mimeType, input.base64);
+    const raw = await this.askVision(prompt, input.mimeType, input.base64);
     return this.parseExtractedCv(raw);
   }
 
@@ -749,7 +823,9 @@ Rules:
           .slice(0, 25),
       };
     } catch {
-      this.logger.warn(`Could not parse AI CV extraction: ${raw.slice(0, 120)}`);
+      this.logger.warn(
+        `Could not parse AI CV extraction: ${raw.slice(0, 120)}`,
+      );
       return { education: [], employment: [] };
     }
   }
@@ -767,10 +843,7 @@ Rules:
       throw new ServiceUnavailableException('AI is not configured');
     }
     const prompt = this.buildJobAnalysisPrompt(input);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, 1200)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, 1200);
     return this.parseJobAnalysis(raw);
   }
 
@@ -836,10 +909,7 @@ Respond with ONLY a compact JSON object and nothing else:
     }
     const prompt = this.buildProficiencyQuestionsPrompt(input);
     const maxTokens = Math.min(4000, 220 * input.count + 400);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, maxTokens)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, maxTokens);
     return this.parseProficiencyQuestions(raw, input.count);
   }
 
@@ -928,10 +998,7 @@ CANDIDATE'S BDJOBS PROFILE (structured application data from the job board, rend
 ${profile.slice(0, 20_000)}
 """`
       : this.buildScreenPrompt(input, true);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaudeVision(prompt, input.cvMimeType, input.cvBase64)
-        : await this.callGeminiVision(prompt, input.cvMimeType, input.cvBase64);
+    const raw = await this.askVision(prompt, input.cvMimeType, input.cvBase64);
     return this.parseScreen(raw);
   }
 
@@ -968,10 +1035,7 @@ CANDIDATE CV (structured application data from the job board, rendered as text):
 """
 ${cv.slice(0, 20_000)}
 """`;
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, 1600)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, 1600);
     return this.parseScreen(raw);
   }
 
@@ -1111,10 +1175,7 @@ Respond with ONLY a compact JSON object and nothing else:
       throw new ServiceUnavailableException('AI is not configured');
     }
     const prompt = this.buildDraftPrompt(input);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, 1600)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, 1600);
     return this.parseDraft(raw, input);
   }
 
@@ -1325,12 +1386,8 @@ Pick a vacancy ONLY when the evidence genuinely points to it (role named in the 
 Respond with ONLY a compact JSON object and nothing else:
 {"code":"<vacancy code or null>","confidence":"high|medium|low","reason":"<one short sentence>"}`;
     const raw = supported
-      ? this.provider === 'claude'
-        ? await this.callClaudeVision(prompt, input.cvMimeType, input.cvBase64)
-        : await this.callGeminiVision(prompt, input.cvMimeType, input.cvBase64)
-      : this.provider === 'claude'
-        ? await this.callClaude(prompt)
-        : await this.callGemini(prompt);
+      ? await this.askVision(prompt, input.cvMimeType, input.cvBase64)
+      : await this.ask(prompt);
     return this.parseRoute(
       raw,
       input.openings.map((o) => o.code),
@@ -1392,10 +1449,7 @@ Analyse the query — extract the role/designation, factory or unit (e.g. JTML =
 
 Respond with ONLY a compact JSON object and nothing else:
 {"summary":"<one sentence on what you found>","results":[{"id":"<candidate id exactly as given>","relevance":<integer 0-100>,"reason":"<one short sentence why this candidate fits the query>"}]}`;
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, 900)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, 900);
     return this.parseTalentBankSearch(
       raw,
       input.candidates.map((c) => c.id),
@@ -1448,10 +1502,7 @@ Score each candidate's fit for the open role (0-100), considering designation, u
 
 Respond with ONLY a compact JSON object and nothing else:
 {"summary":"<one sentence on what you found>","results":[{"id":"<candidate id exactly as given>","relevance":<integer 0-100>,"reason":"<one short sentence why this candidate fits the role>"}]}`;
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, 900)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, 900);
     return this.parseTalentBankSearch(
       raw,
       input.candidates.map((c) => c.id),
@@ -1507,10 +1558,7 @@ Respond with ONLY a compact JSON object and nothing else:
       throw new ServiceUnavailableException('AI is not configured');
     }
     const prompt = this.buildCrossCheckPrompt(input);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, 900)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, 900);
     return this.parseCrossCheck(raw);
   }
 
@@ -1600,10 +1648,7 @@ Use "consistent" with an empty findings array when everything lines up.`;
       throw new ServiceUnavailableException('AI is not configured');
     }
     const prompt = this.buildComparePrompt(input);
-    const raw =
-      this.provider === 'claude'
-        ? await this.callClaude(prompt, 1400)
-        : await this.callGemini(prompt);
+    const raw = await this.ask(prompt, 1400);
     // Build label→id map: { C1: "db-id-1", C2: "db-id-2", … }
     const labelToId = Object.fromEntries(
       input.finalists.map((f, idx) => [`C${idx + 1}`, f.id]),
@@ -1779,9 +1824,11 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
 {"score": <integer between 0 and ${i.maxMarks}>, "feedback": "<one or two short sentences>"}`;
   }
 
-  private async callGemini(text: string): Promise<string> {
-    const model = this.config.get<string>('ai.gemini.model');
-    const key = this.config.get<string>('ai.gemini.apiKey') ?? '';
+  private async callGemini(
+    text: string,
+    use: { apiKey: string; model: string } = this.ai.current.gemini,
+  ): Promise<string> {
+    const { model, apiKey: key } = use;
     const res = await this.fetchJson<GeminiResp>(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
@@ -1799,26 +1846,53 @@ Grade strictly and fairly. Respond with ONLY a compact JSON object and nothing e
     return res.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   }
 
-  private async callClaude(text: string, maxTokens = 400): Promise<string> {
-    const model = this.config.get<string>('ai.anthropic.model');
-    const key = this.config.get<string>('ai.anthropic.apiKey') ?? '';
-    const res = await this.fetchJson<ClaudeResp>(
-      'https://api.anthropic.com/v1/messages',
-      {
-        method: 'POST',
-        headers: {
-          'x-api-key': key,
-          'anthropic-version': '2023-06-01',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          messages: [{ role: 'user', content: text }],
-        }),
-      },
-    );
-    return res.content?.[0]?.text ?? '';
+  private callClaude(text: string, maxTokens = 400): Promise<string> {
+    return this.claudeMessage(text, maxTokens);
+  }
+
+  /**
+   * One Claude request through the SDK. Current models think before they
+   * answer and the thinking counts against `max_tokens`, so the request asks
+   * for low effort and leaves room for it on top of the answer's own budget;
+   * the answer is read from the text blocks, never `content[0]`. A refusal or
+   * an empty answer throws, so the other provider can take over.
+   */
+  private async claudeMessage(
+    content: string | Anthropic.ContentBlockParam[],
+    maxTokens: number,
+    use: { apiKey: string; model: string } = this.ai.current.claude,
+  ): Promise<string> {
+    const { apiKey, model } = use;
+    const effort = claudeTakesEffort(model);
+    const res = await this.claudeClient(apiKey).messages.create({
+      model,
+      max_tokens: maxTokens + (effort ? 4000 : 0),
+      ...(effort ? { output_config: { effort: 'low' as const } } : {}),
+      messages: [{ role: 'user', content }],
+    });
+    if (res.stop_reason === 'refusal') {
+      throw new ServiceUnavailableException('Claude declined this request');
+    }
+    const text = claudeAnswer(res.content);
+    if (!text.trim()) {
+      throw new ServiceUnavailableException(
+        `Claude returned no answer (${res.stop_reason ?? 'unknown'})`,
+      );
+    }
+    return text;
+  }
+
+  /** One SDK client per key (a key changed on Integrations gets a new one). */
+  private claudeClient(apiKey: string): Anthropic {
+    if (this.claude?.key !== apiKey) {
+      // the SDK retries 429 / 5xx / connection errors itself; one retry keeps
+      // a dead provider from holding a request long before the fallback runs
+      this.claude = {
+        key: apiKey,
+        client: new Anthropic({ apiKey, timeout: 85_000, maxRetries: 1 }),
+      };
+    }
+    return this.claude.client;
   }
 
   private async fetchJson<T>(url: string, init: RequestInit): Promise<T> {
