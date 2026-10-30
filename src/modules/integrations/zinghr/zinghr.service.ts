@@ -8,6 +8,7 @@ import { Prisma, SyncLog } from '@prisma/client';
 
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
+import { defaultPasswordFor } from '../../auth/default-password';
 import {
   runWithContext,
   systemContext,
@@ -332,7 +333,12 @@ export class ZingHrService implements OnModuleInit {
           name,
           email: raw.Email,
           phone: raw.Mobile,
-          passwordHash: await bcrypt.hash(employeeCode, SALT_ROUNDS),
+          passwordHash: await bcrypt.hash(
+            defaultPasswordFor(employeeCode),
+            SALT_ROUNDS,
+          ),
+          // A password other people know: the first sign-in must replace it.
+          mustChangePassword: true,
           role: 'MANAGEMENT',
         },
       });

@@ -22,6 +22,7 @@ import { buildAvatarUrl } from '../../common/avatar.util';
 import { FileGrantService } from '../../common/files/file-grant.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { defaultPasswordFor, sharedDefaultPassword } from './default-password';
 
 const ISSUER = 'DBL HRM';
 /** A real bcrypt hash of a value nobody knows — compared against when no
@@ -78,8 +79,9 @@ export class AuthService {
   ) {}
 
   /**
-   * Super-user-only: reset a user's password back to the default (their
-   * employee code) and clear any 2FA — for when someone is locked out.
+   * Super-user-only: reset a user's password back to the default
+   * (`defaultPasswordFor` — the shared default, or their employee code) and
+   * clear any 2FA — for when someone is locked out.
    */
   async resetPasswordToDefault(targetUserId: string, actorId: string) {
     if (!(await this.permissions.isSuperUser(actorId))) {
@@ -98,7 +100,8 @@ export class AuthService {
     });
     if (!target) throw new NotFoundException('User not found');
 
-    const passwordHash = await bcrypt.hash(target.employeeCode, 10);
+    const defaultPassword = defaultPasswordFor(target.employeeCode);
+    const passwordHash = await bcrypt.hash(defaultPassword, 10);
     await this.prisma.user.update({
       where: { id: targetUserId },
       data: {
@@ -107,9 +110,9 @@ export class AuthService {
         // the old password keeps working after an admin resets it — which is
         // exactly the situation a reset is usually responding to.
         tokenVersion: { increment: 1 },
-        // The new password is the employee code, which is not a secret: it is
-        // printed in the directory every signed-in user can read. The account
-        // can do nothing but change it.
+        // The new password is not a secret: the shared default is told to
+        // everyone, and the employee code is printed in the directory every
+        // signed-in user can read. The account can do nothing but change it.
         mustChangePassword: true,
         failedLoginAttempts: 0,
         lockedUntil: null,
@@ -127,13 +130,13 @@ export class AuthService {
       entityId: target.id,
       entityLabel: target.name,
       summary:
-        'Password reset to the employee code by a super user; the account must change it at next sign-in',
+        'Password reset to the default by a super user; the account must change it at next sign-in',
       source: 'system',
     });
     return {
       ok: true,
       name: target.name,
-      defaultPassword: target.employeeCode,
+      defaultPassword,
     };
   }
 
@@ -856,6 +859,14 @@ export function assertPasswordPolicy(
   if (lower.includes(user.employeeCode.toLowerCase())) {
     throw new BadRequestException(
       'Your password cannot contain your employee code.',
+    );
+  }
+  // The shared default is told to everyone, so keeping it — or choosing it
+  // later — leaves the account as open as the employee code would.
+  const shared = sharedDefaultPassword();
+  if (shared && lower === shared.toLowerCase()) {
+    throw new BadRequestException(
+      'Your password cannot be the default password — choose one of your own.',
     );
   }
   const OBVIOUS = new Set([

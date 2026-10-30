@@ -787,7 +787,7 @@
       "subtitle": "Access control, organisation set-up, integrations, monitoring and records — keeping the system running for everyone else.",
       "audience": "The platform administrator account, Super Users and the IT Department, DBL Group.",
       "pages": 11,
-      "bytes": 319201,
+      "bytes": 319206,
       "roles": [
         "super_user",
         "admin"
