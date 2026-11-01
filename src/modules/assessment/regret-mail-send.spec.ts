@@ -103,6 +103,7 @@ function build(opts: {
     {} as never,
     candidateMail,
     {} as never, // FirstInterviewApprovalService
+    {} as never, // AccessNoticeService
   );
   return { svc, sent, updates, notifications };
 }

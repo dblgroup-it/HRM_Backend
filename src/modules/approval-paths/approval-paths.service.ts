@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import { AccessNoticeService } from '../rbac/access-notice.service';
 import { sameUnit } from '../../common/util/normalize-unit';
 import { ReplaceApprovalPathDto } from './dto/approval-path.dto';
 
@@ -56,6 +57,7 @@ export class ApprovalPathsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
+    private readonly accessNotice: AccessNoticeService,
   ) {}
 
   // --- access -------------------------------------------------------------
@@ -305,11 +307,12 @@ export class ApprovalPathsService {
       return;
     }
 
-    await this.prisma.roleAssignment.create({
+    const created = await this.prisma.roleAssignment.create({
       data: { roleId: role.id, userId, unitId, assignedById: grantedById },
     });
     this.permissions.invalidate(userId);
     this.logger.log(`Granted ${roleKey} on ${unitName} to user ${userId}`);
+    await this.accessNotice.roleGranted(userId, created.id);
   }
 
   /** Named approvers must be real, active users — and not the raiser. */

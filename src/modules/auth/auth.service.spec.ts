@@ -53,6 +53,7 @@ describe('AuthService.login', () => {
       secrets,
       audit as never,
       grants as never,
+      {} as never, // AccessNoticeService
     );
   }
 

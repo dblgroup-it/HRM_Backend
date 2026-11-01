@@ -40,7 +40,7 @@ describe('RbacService — removing a role clears what it held up', () => {
     } as unknown as PrismaService;
     const permissions = { invalidate: jest.fn() } as unknown as PermissionsService;
     return {
-      service: new RbacService(prisma, permissions),
+      service: new RbacService(prisma, permissions, {} as never),
       prisma,
       deletedLevels,
       levelUpdates,
@@ -149,7 +149,7 @@ describe('RbacService — removing a Factory HR', () => {
       invalidate: jest.fn(),
     } as unknown as PermissionsService;
     return {
-      service: new RbacService(prisma, permissions),
+      service: new RbacService(prisma, permissions, {} as never),
       prisma,
       prioritySet,
     };

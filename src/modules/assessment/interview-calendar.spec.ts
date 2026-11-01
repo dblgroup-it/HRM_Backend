@@ -74,6 +74,7 @@ function build(emailEnabled = true) {
     {} as never,
     {} as never,
     {} as never, // FirstInterviewApprovalService
+    {} as never, // AccessNoticeService
   );
   // The sync helpers are private; they are what every path goes through.
   const sync = svc as unknown as {

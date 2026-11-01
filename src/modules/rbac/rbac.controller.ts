@@ -18,6 +18,7 @@ import {
 } from '../../common/decorators/current-user.decorator';
 import { RbacService } from './rbac.service';
 import { PermissionsService } from './permissions.service';
+import { AccessNoticeService } from './access-notice.service';
 import {
   CreateAssignmentDto,
   CreateRoleDto,
@@ -31,6 +32,7 @@ export class RbacController {
   constructor(
     private readonly rbac: RbacService,
     private readonly permissions: PermissionsService,
+    private readonly accessNotice: AccessNoticeService,
   ) {}
 
   // --- current user permissions (any authenticated user) ------------------
@@ -111,5 +113,32 @@ export class RbacController {
   @Delete('role-assignments/:id')
   deleteAssignment(@Param('id') id: string) {
     return this.rbac.deleteAssignment(id);
+  }
+
+  /**
+   * Everyone who can sign in and still holds the default password: how many
+   * would be emailed, who has no address, and the last bulk send.
+   */
+  @Roles(UserRole.ADMIN)
+  @Get('access-notices/default-password')
+  defaultPasswordAudience() {
+    return this.accessNotice.defaultPasswordAudience();
+  }
+
+  /** The bulk send's progress — cheap, polled while it runs. */
+  @Roles(UserRole.ADMIN)
+  @Get('access-notices/default-password/run')
+  defaultPasswordRun() {
+    return { run: this.accessNotice.defaultPasswordRun() };
+  }
+
+  /** Email each of them their sign-in details, in the background. */
+  @Roles(UserRole.ADMIN)
+  @Post('access-notices/default-password')
+  sendDefaultPasswordNotices(@CurrentUser() user: AuthUser) {
+    return this.accessNotice.sendDefaultPasswordNotices({
+      id: user.id,
+      name: user.name,
+    });
   }
 }

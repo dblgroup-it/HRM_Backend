@@ -86,6 +86,7 @@ import {
 } from './dto/interview.dto';
 import type { EvaluationRecommendationKey } from './recommendation';
 import { FirstInterviewApprovalService } from './first-interview-approval.service';
+import { AccessNoticeService } from '../rbac/access-notice.service';
 
 /**
  * The interviewer's suggestion, across the wire in the frontend's lowercase
@@ -188,6 +189,7 @@ export class InterviewService {
     private readonly candidates: CandidatesService,
     private readonly candidateMail: CandidateMailService,
     private readonly headApprovals: FirstInterviewApprovalService,
+    private readonly accessNotice: AccessNoticeService,
   ) {}
 
   async listForRequisition(reqId: string, userId: string) {
@@ -1690,7 +1692,7 @@ export class InterviewService {
     });
     if (already) return;
 
-    await this.prisma.roleAssignment.create({
+    const created = await this.prisma.roleAssignment.create({
       data: {
         roleId: role.id,
         userId,
@@ -1700,6 +1702,7 @@ export class InterviewService {
     });
     this.permissions.invalidate(userId);
     this.logger.log(`Granted interviewer on ${unit.name} to user ${userId}`);
+    await this.accessNotice.roleGranted(userId, created.id);
   }
 
   /**

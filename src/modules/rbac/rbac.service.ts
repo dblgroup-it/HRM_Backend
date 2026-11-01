@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionsService } from './permissions.service';
+import { AccessNoticeService } from './access-notice.service';
 import { sameUnit } from '../../common/util/normalize-unit';
 import { LAYERED_ROLE_KEYS, layerOrder } from './layering';
 import {
@@ -31,6 +32,7 @@ export class RbacService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionsService,
+    private readonly accessNotice: AccessNoticeService,
   ) {}
 
   // --- Roles --------------------------------------------------------------
@@ -175,21 +177,26 @@ export class RbacService {
         include: { role: true, unit: true, user: { select: { name: true } } },
       });
       this.permissions.invalidate(dto.userId);
+      // They are emailed what they were given and how to sign in; the page
+      // says whether that letter is on its way.
+      const accessNotice = await this.accessNotice.roleGranted(
+        dto.userId,
+        created.id,
+      );
       // A new Factory HR joins the end of the unit's layering.
       if (unitId && LAYERED_ROLE_KEYS.includes(role.key)) {
         await this.renumberLayer(dto.roleId, unitId);
-        return (
-          (await this.prisma.roleAssignment.findUnique({
-            where: { id: created.id },
-            include: {
-              role: true,
-              unit: true,
-              user: { select: { name: true } },
-            },
-          })) ?? created
-        );
+        const renumbered = await this.prisma.roleAssignment.findUnique({
+          where: { id: created.id },
+          include: {
+            role: true,
+            unit: true,
+            user: { select: { name: true } },
+          },
+        });
+        return { ...(renumbered ?? created), accessNotice };
       }
-      return created;
+      return { ...created, accessNotice };
     } catch (e) {
       throw this.handleUnique(e, 'This person already holds that role here');
     }

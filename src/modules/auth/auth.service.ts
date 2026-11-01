@@ -17,6 +17,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SecretEncryptionService } from '../../common/crypto/secret-encryption.service';
 import { AuditService } from '../audit/audit.service';
 import { PermissionsService } from '../rbac/permissions.service';
+import { AccessNoticeService } from '../rbac/access-notice.service';
 import { MailService } from '../integrations/mail/mail.service';
 import { buildAvatarUrl } from '../../common/avatar.util';
 import { FileGrantService } from '../../common/files/file-grant.service';
@@ -76,6 +77,7 @@ export class AuthService {
     private readonly secrets: SecretEncryptionService,
     private readonly audit: AuditService,
     private readonly grants: FileGrantService,
+    private readonly accessNotice: AccessNoticeService,
   ) {}
 
   /**
@@ -133,10 +135,18 @@ export class AuthService {
         'Password reset to the default by a super user; the account must change it at next sign-in',
       source: 'system',
     });
+    // They are told by email, with the password and why; the page says
+    // whether that letter is on its way.
+    const email = await this.accessNotice.passwordReset(
+      target,
+      defaultPassword,
+      target.twoFactorEnabled,
+    );
     return {
       ok: true,
       name: target.name,
       defaultPassword,
+      email,
     };
   }
 
